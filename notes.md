@@ -403,6 +403,12 @@ dotnet ef database update
 
 
 
+### Product DTO
+- --- Creamos los DTO para response, create, upd, etc.
+
+- --- Creamos el Profile para el Mapping con AutoMapper
+
+
 
 
 
