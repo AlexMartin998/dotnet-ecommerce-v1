@@ -387,6 +387,31 @@ dotnet ef database update
 
 
 
+## Product
+- --- Relaciones DB
+  - -- Creamos el modelo `Product.cs`
+  - -- Lo registramos en el `AppDbContext.cs`
+  - -- Creamos migracion
+    - `dotnet ef migrations add CreateTableProduct`
+      - Price en SQL Server req una anotacion/property mas para la precision
+        - `[Column(TypeName = "decimal(18,2)")]` // Precision and scale for SQL Server
+      - `dotnet ef migrations remove` si algo salio mal y quiero Elminar la migracion (archivo)
+  - -- Aplicar la migracion para afectar la DB
+    - `dotnet ef database update`
+
+  - https://learn.microsoft.com/es-mx/ef/core/modeling/relationships
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

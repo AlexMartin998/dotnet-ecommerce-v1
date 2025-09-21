@@ -13,4 +13,6 @@ public class AppDbContext : DbContext
   // generar tabla en base a la clase con migraciones ---
   public DbSet<Category> Categories { get; set; }
 
+  public DbSet<Product> Products { get; set; }
+
 }
