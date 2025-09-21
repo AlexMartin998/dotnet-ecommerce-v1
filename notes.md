@@ -355,7 +355,8 @@ dotnet ef database update
 
 
   - -- Levantar el API:
-    - `dotnet run --urls "http://0.0.0.0:8021"`
+    - `dotnet run --urls "http://0.0.0.0:8021"`         // solo una vez el build no para dev
+    - `dotnet watch run --urls "http://0.0.0.0:8021"`   // para dev - watcher
 
 
 
