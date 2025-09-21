@@ -207,10 +207,38 @@ app.Run();
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ### Init Api
 - --- Levantamos con Docker el SQLServer y nos conectamos con VSCode 
   - -- Conexion a la db
     - Se hace con `ConnectionStrings` con el `ConexionSql` en el `appsettings.json`
+
+
 
 - --- Librerias para conexion a la BD
   - -- Podemos usar VSCode para gestionar paquetes con `NuGet Package`
@@ -219,6 +247,8 @@ app.Run();
       - `Microsoft.EntityFrameworkCore Tools`         <- Migraciones
   - -- Verificamos en `ApiEcommerce.csproj` q se hayan instalado
       - https://code.visualstudio.com/docs/csharp/package-management
+
+
 
 
 - --- Archivo de Contexto (clave para cuando se usa EntityFrameworkCore)
@@ -230,6 +260,8 @@ app.Run();
 - --- Registramos este  `AppDbContext`  en el  `Program.cs`
   - -- Se hace en base al AppDbContext q se creo, y se registra la STRING definida en ConnectionStrings del `appsettings.json`
     - En este caso es  ConexionSql
+
+
 
 
 - --- MIGRACIONES
@@ -265,6 +297,95 @@ dotnet ef database update
         - down:   revierte la migracion si nos equivocamos
     - CORRER migraciones: `db upd`  <--   Afecta a DB
       - Done. <- todo fue bien :D
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Patron Repository
+- --- Con interface y su Impl como en Spring Boot, nada especial
+  - -- Salvo el `.Save()` method q es el que commitea basicamente en la db para cada operacion idempotente en la db
+
+
+
+
+## AutoMapper - `Mapster`  <- (Model Mapper in spring boot)
+- --- AutoMapper sera de PAGO, pero algo medio parecido y gratis es Mapster
+  - -- Esto es basicamente el Simil de MODEL MAPPER de Spring Boot
+
+  - -- Install AutoMapper con NuGet
+    - `AutoMapper` tal cual, la ultima version
+    - Lo verificamos en el `ApiEcommerce.csproj` q se haya instalado
+
+    - Si se instalo otra version, simplemente se puede cambiar en el .csproj y luego correr en la terminal: `dotnet restore`
+
+  - -- Creamos los Mappers, aunque ya usamos AutoMapper, como a futuro va a ser de pago ,o si cambia algo, pues ya todo queda aislado en su propio Wrapper, para este caso, cada mapper
+    - Creamos el `CategoryProfile`
+      - Q es el que definira las methdos para esos mappers con AutoMapper
+
+
+    - https://medium.com/@rictorres.uyu/automapper-vs-mapster-a-comparative-analysis-for-net-developers-77d8dba4942f
+
+
+
+
+
+
+### Controllers
+- --- Como en Spring Boot se maneja por Anotaciones e igual hay para MVC y para APIs
+  - -- API:   El que es especifico para REST
+  - -- MVC:   El que retorna Views html y demas 
+
+
+  - -- Swagger 
+    - Como lo hice con vscode no vino instalado y tiene que instalarse, lo que NO es necesario desde el CLI propio de dotnet
+      - `dotnet add package Swashbuckle.AspNetCore`
+    - Configurar el Swagger en el `Program.cs`
+      - http://localhost:8021/swagger/index.html
+
+
+
+  - -- Levantar el API:
+    - `dotnet run --urls "http://0.0.0.0:8021"`
+
+
+
+
+  - https://learn.microsoft.com/es-mx/aspnet/core/web-api/?view=aspnetcore-8.0#return-values
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
