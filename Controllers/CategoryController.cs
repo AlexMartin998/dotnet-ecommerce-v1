@@ -85,5 +85,35 @@ namespace ApiEcommerce.Controllers
             return CreatedAtRoute("GetCategory", new { id = category.Id }, category);
         }
 
+
+        [HttpPatch("{id:int}", Name = "UpdateCategory")] // api/category/1
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public IActionResult UpdateCategory(int id, [FromBody] CreateCategoryDto updateCategoryDto)
+        {
+            if (updateCategoryDto == null || id <= 0)
+            {
+                return BadRequest(ModelState);
+            }
+
+            if (!_categoryRepository.CategoryExists(id))
+            {
+                return NotFound($"Category with id {id} not found");
+            }
+
+            var category = _mapper.Map<Category>(updateCategoryDto);
+            category.Id = id;
+
+            if (!_categoryRepository.UpdateCategory(category))
+            {
+                ModelState.AddModelError("CustomError", $"Something went wrong when updating the record {category.Name}");
+                return StatusCode(500, ModelState);
+            }
+
+            return NoContent(); // 204
+        }
+
     }
 }
