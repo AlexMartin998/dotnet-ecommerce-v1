@@ -208,8 +208,63 @@ app.Run();
 
 
 ### Init Api
-- --- s
+- --- Levantamos con Docker el SQLServer y nos conectamos con VSCode 
+  - -- Conexion a la db
+    - Se hace con `ConnectionStrings` con el `ConexionSql` en el `appsettings.json`
 
+- --- Librerias para conexion a la BD
+  - -- Podemos usar VSCode para gestionar paquetes con `NuGet Package`
+    - Con Ctrl + Shift + P >>> Add NuGet Package >>> Seleccionamos los diferentes packages
+      - `Microsoft.EntityFrameworkCore SqlServer`     <- Conexion a db SqlServer
+      - `Microsoft.EntityFrameworkCore Tools`         <- Migraciones
+  - -- Verificamos en `ApiEcommerce.csproj` q se hayan instalado
+      - https://code.visualstudio.com/docs/csharp/package-management
+
+
+- --- Archivo de Contexto (clave para cuando se usa EntityFrameworkCore)
+  - -- Mapea las clases a tablas de db (como un ORM)
+  - -- Creamos el `AppDbContext` para mapear esta conexion
+    - Aca registramos todos los modelos a mapear en la DB
+
+
+- --- Registramos este  `AppDbContext`  en el  `Program.cs`
+  - -- Se hace en base al AppDbContext q se creo, y se registra la STRING definida en ConnectionStrings del `appsettings.json`
+    - En este caso es  ConexionSql
+
+
+- --- MIGRACIONES
+  - -- Instalamos de manera GLOBAL las herramientas de dotnet-ef
+```sh
+dotnet tool install --global dotnet-ef
+```
+    - Verificar su version isntalada
+```sh
+➜  ApiEcommerce git:(main) ✗ dotnet ef --version                   
+Entity Framework Core .NET Command-line Tools
+9.0.9
+```
+  - -- Instalar package desde el CLI `dotnet add package` en lugar de NuGet
+    - En ese taso instalamos `Design` para tener las herramientas del `ef` y crear migraiones, etc.
+    - Verificamos en `ApiEcommerce.csproj` pa saber si si se instalo (como el pom.xml de spring boot)
+
+```sh
+dotnet add package Microsoft.EntityFrameworkCore.Design
+```
+
+  - -- Crear la Migracion como tal
+    - Ahora que tenemos Design y el ef podemos crear y correr migraciones:
+```sh
+# crear migracion (no afecta a la db, solo crea el archivo por decir (makemigration drf))
+dotnet ef migrations add InitialMigration
+# afecta o corre la migracion (migrate drf)
+dotnet ef database update
+```
+    - CREAR migraciones:  `add`     <--   Migrations/ se crea con los archivos
+      - `20250921163032_InitialMigration.cs` tiene el 
+        - up:     crea la tabla en base al modelo
+        - down:   revierte la migracion si nos equivocamos
+    - CORRER migraciones: `db upd`  <--   Afecta a DB
+      - Done. <- todo fue bien :D
 
 
 
