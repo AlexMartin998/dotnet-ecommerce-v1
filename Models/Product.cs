@@ -1,9 +1,12 @@
+using Microsoft.EntityFrameworkCore;
+
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace ApiEcommerce.Models;
 
 
+[Index(nameof(SKU), IsUnique = true)] // Unique constraint on SKU
 public class Product
 {
 
