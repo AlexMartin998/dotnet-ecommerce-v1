@@ -1,4 +1,103 @@
-using ApiEcommerce.Models;
+using ApiEcommerce.Models.Dtos;
+using ApiEcommerce.Service;
+using Microsoft.AspNetCore.Mvc;
+
+namespace ApiEcommerce.Controllers;
+
+
+[ApiController]
+[Route("api/[controller]")]
+public class CategoryController : ControllerBase
+{
+    private readonly ICategoryService _service;
+
+    public CategoryController(ICategoryService service)
+    {
+        _service = service;
+    }
+
+    [HttpGet(Name = "GetCategories")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<ActionResult<IEnumerable<CategoryDto>>> GetCategories()
+    {
+        var result = await _service.GetAllAsync();
+        return Ok(result);
+    }
+
+    [HttpGet("{id:int}", Name = "GetCategory")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<CategoryDto>> GetCategory(int id)
+    {
+        var category = await _service.GetByIdAsync(id);
+        if (category is null)
+        {
+            return NotFound($"Category with id {id} not found");
+        }
+
+        return Ok(category);
+    }
+
+    [HttpPost(Name = "CreateCategory")]
+    [ProducesResponseType(StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> CreateCategory([FromBody] CreateCategoryDto dto)
+    {
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        try
+        {
+            var newId = await _service.CreateAsync(dto);
+            return CreatedAtRoute("GetCategory", new { id = newId }, null);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    [HttpPatch("{id:int}", Name = "UpdateCategory")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateCategory(int id, [FromBody] CreateCategoryDto dto)
+    {
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        try
+        {
+            await _service.UpdateAsync(id, dto);
+            return NoContent();
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+    }
+
+    [HttpDelete("{id:int}", Name = "DeleteCategory")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeleteCategory(int id)
+    {
+        try
+        {
+            await _service.DeleteAsync(id);
+            return NoContent();
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+    }
+}
+
+
+
+
+
+/* using ApiEcommerce.Models;
 using ApiEcommerce.Models.Dtos;
 using ApiEcommerce.Repository;
 using AutoMapper;
@@ -145,3 +244,4 @@ namespace ApiEcommerce.Controllers
 
     }
 }
+ */

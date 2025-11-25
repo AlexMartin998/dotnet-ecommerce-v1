@@ -1,5 +1,27 @@
 using ApiEcommerce.Data;
 using ApiEcommerce.Models;
+using Microsoft.EntityFrameworkCore;
+
+namespace ApiEcommerce.Repository;
+
+
+
+// primary constructor - DI
+public class CategoryRepository(AppDbContext db) : BaseRepository<Category>(db), ICategoryRepository
+{
+  public async Task<bool> NameExistsAsync(string name)
+  {
+    var normalized = name.ToLower().Trim();
+    return await _db.Categories
+        .AnyAsync(c => c.Name.ToLower().Trim() == normalized);
+  }
+}
+
+
+
+
+/* using ApiEcommerce.Data;
+using ApiEcommerce.Models;
 
 namespace ApiEcommerce.Repository;
 
@@ -55,3 +77,4 @@ public class CategoryRepository(AppDbContext db) : ICategoryRepository
   }
 
 }
+ */
