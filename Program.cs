@@ -17,7 +17,10 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 // AutoMapper ----
 // registra todos los Profile dentro del assembly donde está CategoryProfile
-builder.Services.AddAutoMapper(typeof(CategoryProfile).Assembly);
+builder.Services.AddAutoMapper(
+    cfg => { },
+    typeof(CategoryProfile).Assembly
+);
 
 
 // DI ----
