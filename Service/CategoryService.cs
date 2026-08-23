@@ -1,10 +1,57 @@
-using ApiEcommerce.Models;
 using ApiEcommerce.Models.Dtos;
-using ApiEcommerce.Repository;
-using AutoMapper;
+using ApiEcommerce.Service.Crud;
 
 namespace ApiEcommerce.Service;
 
+
+/// <summary>
+/// Servicio de categorías. <b>Compone</b> el CRUD genérico en lugar de heredarlo:
+/// las cinco operaciones se delegan tal cual y las reglas viven en
+/// <see cref="CategoryRules"/>.
+/// </summary>
+/// <remarks>
+/// Los cinco reenvíos son el precio explícito de la composición. A cambio, esta clase
+/// no tiene estado heredado que pueda romperse, y el día que Category necesite algo
+/// propio (p. ej. <c>GetWithProductCountAsync</c>) se agrega aquí sin tocar el CRUD.
+/// </remarks>
+public class CategoryService : ICategoryService
+{
+  private readonly ICrudService<CategoryDto, CreateCategoryDto, UpdateCategoryDto> _crud;
+
+  public CategoryService(ICrudService<CategoryDto, CreateCategoryDto, UpdateCategoryDto> crud)
+  {
+    _crud = crud;
+  }
+
+  // ---- CRUD delegado ------------------------------------------------------
+
+  public Task<IEnumerable<CategoryDto>> GetAllAsync(CancellationToken ct = default)
+      => _crud.GetAllAsync(ct);
+
+  public Task<CategoryDto> GetByIdAsync(int id, CancellationToken ct = default)
+      => _crud.GetByIdAsync(id, ct);
+
+  public Task<int> CreateAsync(CreateCategoryDto dto, CancellationToken ct = default)
+      => _crud.CreateAsync(dto, ct);
+
+  public Task UpdateAsync(int id, UpdateCategoryDto dto, CancellationToken ct = default)
+      => _crud.UpdateAsync(id, dto, ct);
+
+  public Task DeleteAsync(int id, CancellationToken ct = default)
+      => _crud.DeleteAsync(id, ct);
+
+  // ---- operaciones propias de Category ------------------------------------
+  // (por ahora ninguna)
+}
+
+
+
+
+/* VERSIÓN ANTERIOR — se conserva como registro de aprendizaje.
+   Escrita a mano, sin reutilizar nada: cada entidad nueva copiaba y pegaba estos
+   cinco métodos. Además lanzaba excepciones BCL (InvalidOperationException /
+   KeyNotFoundException) como señal de negocio, que el controller tenía que
+   traducir a HTTP con try/catch. Hoy: CrudService + CategoryRules + handler global.
 
 public class CategoryService : ICategoryService
 {
@@ -63,3 +110,4 @@ public class CategoryService : ICategoryService
     await _repository.DeleteAsync(id);
   }
 }
+*/

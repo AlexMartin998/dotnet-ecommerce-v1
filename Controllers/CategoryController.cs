@@ -6,7 +6,8 @@ namespace ApiEcommerce.Controllers;
 
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/[controller]")] // api/category
+[Produces("application/json")]
 public class CategoryController : ControllerBase
 {
     private readonly ICategoryService _service;
@@ -16,83 +17,67 @@ public class CategoryController : ControllerBase
         _service = service;
     }
 
+    // Sin try/catch: las excepciones de dominio que lance el servicio las traduce
+    // GlobalExceptionHandler a ProblemDetails (ver AGENTS/docs/04-error-handling.md).
+
     [HttpGet(Name = "GetCategories")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<ActionResult<IEnumerable<CategoryDto>>> GetCategories()
+    public async Task<ActionResult<IEnumerable<CategoryDto>>> GetCategories(CancellationToken ct)
     {
-        var result = await _service.GetAllAsync();
+        var result = await _service.GetAllAsync(ct);
         return Ok(result);
     }
 
     [HttpGet("{id:int}", Name = "GetCategory")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<CategoryDto>> GetCategory(int id)
+    public async Task<ActionResult<CategoryDto>> GetCategory(int id, CancellationToken ct)
     {
-        var category = await _service.GetByIdAsync(id);
-        if (category is null)
-        {
-            return NotFound($"Category with id {id} not found");
-        }
-
+        // GetByIdAsync lanza NotFoundAppException si no existe -> 404
+        var category = await _service.GetByIdAsync(id, ct);
         return Ok(category);
     }
 
     [HttpPost(Name = "CreateCategory")]
     [ProducesResponseType(StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> CreateCategory([FromBody] CreateCategoryDto dto)
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> CreateCategory([FromBody] CreateCategoryDto dto, CancellationToken ct)
     {
-        if (!ModelState.IsValid)
-            return ValidationProblem(ModelState);
+        // es obligatorio esto?  ASP.NET ya valida automaticamente esto
+        // if (!ModelState.IsValid)
+        //     return ValidationProblem(ModelState);
 
-        try
-        {
-            var newId = await _service.CreateAsync(dto);
-            return CreatedAtRoute("GetCategory", new { id = newId }, null);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return Conflict(new { message = ex.Message });
-        }
+        // nombre duplicado -> ConflictAppException -> 409
+        var newId = await _service.CreateAsync(dto, ct);
+        return CreatedAtRoute("GetCategory", new { id = newId }, null);
     }
 
     [HttpPatch("{id:int}", Name = "UpdateCategory")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> UpdateCategory(int id, [FromBody] CreateCategoryDto dto)
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> UpdateCategory(int id, [FromBody] UpdateCategoryDto dto, CancellationToken ct)
     {
-        if (!ModelState.IsValid)
-            return ValidationProblem(ModelState);
+        // if (!ModelState.IsValid)
+        //     return ValidationProblem(ModelState);
 
-        try
-        {
-            await _service.UpdateAsync(id, dto);
-            return NoContent();
-        }
-        catch (KeyNotFoundException ex)
-        {
-            return NotFound(new { message = ex.Message });
-        }
+        await _service.UpdateAsync(id, dto, ct);
+        return NoContent();
     }
 
     [HttpDelete("{id:int}", Name = "DeleteCategory")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> DeleteCategory(int id)
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> DeleteCategory(int id, CancellationToken ct)
     {
-        try
-        {
-            await _service.DeleteAsync(id);
-            return NoContent();
-        }
-        catch (KeyNotFoundException ex)
-        {
-            return NotFound(new { message = ex.Message });
-        }
+        // con productos asociados -> ConflictAppException -> 409
+        await _service.DeleteAsync(id, ct);
+        return NoContent();
     }
 }
-
 
 
 
