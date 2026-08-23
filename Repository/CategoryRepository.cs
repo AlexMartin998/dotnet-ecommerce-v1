@@ -9,12 +9,21 @@ namespace ApiEcommerce.Repository;
 // primary constructor - DI
 public class CategoryRepository(AppDbContext db) : BaseRepository<Category>(db), ICategoryRepository
 {
-  public async Task<bool> NameExistsAsync(string name)
+  public async Task<bool> NameExistsAsync(string name, int? excludeId = null, CancellationToken ct = default)
   {
-    var normalized = name.ToLower().Trim();
-    return await _db.Categories
-        .AnyAsync(c => c.Name.ToLower().Trim() == normalized);
+    var normalized = name.Trim().ToLower();
+
+    var query = _db.Categories
+        .Where(c => c.Name.ToLower().Trim() == normalized);
+
+    if (excludeId is int id)
+      query = query.Where(c => c.Id != id);
+
+    return await query.AnyAsync(ct);
   }
+
+  public async Task<bool> HasProductsAsync(int categoryId, CancellationToken ct = default)
+      => await _db.Products.AnyAsync(p => p.CategoryId == categoryId, ct);
 }
 
 

@@ -10,46 +10,90 @@ public class ProductRepository(AppDbContext db)
 {
 
 
-  public async Task<ICollection<Product>> GetProductsForCategory(int categoryId)
+  public async Task<IEnumerable<Product>> GetAllWithCategoryAsync(CancellationToken ct = default)
   {
-    return await _db.Products
-        .AsNoTracking()
-        .Where(p => p.CategoryId == categoryId)
+    return await Query()
+        .Include(p => p.Category)
         .OrderByDescending(p => p.CreatedAt)
-        .ToListAsync();
+        .ToListAsync(ct);
   }
 
-  public async Task<ICollection<Product>> SearchProduct(string name)
+  public async Task<Product?> GetByIdWithCategoryAsync(int id, CancellationToken ct = default)
   {
-    if (string.IsNullOrWhiteSpace(name)) return Array.Empty<Product>();
+    return await Query()
+        .Include(p => p.Category)
+        .FirstOrDefaultAsync(p => p.Id == id, ct);
+  }
+
+  public async Task<ICollection<Product>> GetProductsForCategoryAsync(int categoryId, CancellationToken ct = default)
+  {
+    return await Query()
+        .Include(p => p.Category)
+        .Where(p => p.CategoryId == categoryId)
+        .OrderByDescending(p => p.CreatedAt)
+        .ToListAsync(ct);
+  }
+
+  public async Task<ICollection<Product>> SearchProductAsync(string name, CancellationToken ct = default)
+  {
+    if (string.IsNullOrWhiteSpace(name)) return [];
 
     var pattern = $"%{name.Trim()}%";
 
-    return await _db.Products
-        .AsNoTracking()
+    return await Query()
+        .Include(p => p.Category)
         .Where(p => EF.Functions.Like(p.Name, pattern))
         .OrderByDescending(p => p.CreatedAt)
-        .ToListAsync();
+        .ToListAsync(ct);
   }
 
-  public async Task<bool> BuyProduct(string sku, int quantity)
+  // Rastreado a propósito: ProductService.BuyAsync descuenta stock sobre esta instancia.
+  public async Task<Product?> GetBySkuAsync(string sku, CancellationToken ct = default)
   {
-    if (string.IsNullOrWhiteSpace(sku) || quantity <= 0) return false;
+    if (string.IsNullOrWhiteSpace(sku)) return null;
 
-    var normalizedSku = sku.ToLower().Trim();
-    var product = await _db.Products.FirstOrDefaultAsync(
-        p => p.SKU.ToLower().Trim() == normalizedSku);
+    var normalized = sku.Trim().ToLower();
 
-    if (product is null || product.Stock < quantity) return false;
-
-    product.Stock -= quantity;
-    product.UpdatedAt = DateTime.Now;
-
-    _db.Products.Update(product);
-    await _db.SaveChangesAsync();
-
-    return true;
+    return await _db.Products
+        .Include(p => p.Category)
+        .FirstOrDefaultAsync(p => p.SKU.ToLower().Trim() == normalized, ct);
   }
+
+  public async Task<bool> SkuExistsAsync(string sku, int? excludeId = null, CancellationToken ct = default)
+  {
+    var normalized = sku.Trim().ToLower();
+
+    var query = _db.Products
+        .Where(p => p.SKU.ToLower().Trim() == normalized);
+
+    if (excludeId is int id)
+      query = query.Where(p => p.Id != id);
+
+    return await query.AnyAsync(ct);
+  }
+
+
+  // // Versión anterior. Aplicaba la regla de negocio (stock suficiente) dentro del
+  // // repositorio y devolvía un bool que no distinguía 404 de 409. Hoy esa decisión
+  // // vive en ProductService.BuyAsync y el UpdatedAt lo estampa AppDbContext.
+  // public async Task<bool> BuyProduct(string sku, int quantity)
+  // {
+  //   if (string.IsNullOrWhiteSpace(sku) || quantity <= 0) return false;
+  //
+  //   var normalizedSku = sku.ToLower().Trim();
+  //   var product = await _db.Products.FirstOrDefaultAsync(
+  //       p => p.SKU.ToLower().Trim() == normalizedSku);
+  //
+  //   if (product is null || product.Stock < quantity) return false;
+  //
+  //   product.Stock -= quantity;
+  //   product.UpdatedAt = DateTime.Now;
+  //
+  //   _db.Products.Update(product);
+  //   await _db.SaveChangesAsync();
+  //
+  //   return true;
+  // }
 }
 
 

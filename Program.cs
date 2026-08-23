@@ -1,36 +1,16 @@
-using Microsoft.EntityFrameworkCore;
-using ApiEcommerce.Data;
-using ApiEcommerce.Repository;
-using ApiEcommerce.Service;
-using ApiEcommerce.Mapping;
+using ApiEcommerce.Shared.DependencyInjection;
 
 
 var builder = WebApplication.CreateBuilder(args);
 
 
 // // // Add SERVICES to the container ---------------------------------
-// DB ----
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("ConexionSql"))
-);
-
-
-// AutoMapper ----
-// registra todos los Profile dentro del assembly donde está CategoryProfile
-builder.Services.AddAutoMapper(
-    cfg => { },
-    typeof(CategoryProfile).Assembly
-);
-
-
-// DI ----
-// repositorios (genérico + específicos)
-builder.Services.AddScoped(typeof(IBaseRepository<>), typeof(BaseRepository<>));
-builder.Services.AddScoped<ICategoryRepository, CategoryRepository>();
-
-// servicios (genérico + específicos)
-builder.Services.AddScoped(typeof(IGenericService<>), typeof(GenericService<>));
-builder.Services.AddScoped<ICategoryService, CategoryService>();
+// Cada bloque vive en Shared/DependencyInjection/ServiceCollectionExtensions.cs
+builder.Services.AddPersistence(builder.Configuration);   // EF Core + SQL Server
+builder.Services.AddObjectMapping();                      // AutoMapper (un Profile por entidad)
+builder.Services.AddRepositories();                       // IBaseRepository<> + repos por entidad
+builder.Services.AddApplicationServices();                // CrudService + reglas + servicios
+builder.Services.AddErrorHandling();                      // GlobalExceptionHandler + ProblemDetails
 
 // Controllers ----
 builder.Services.AddControllers();
@@ -45,6 +25,9 @@ builder.Services.AddOpenApi();
 var app = builder.Build();
 
 // // // Configure the HTTP request pipeline ------------------------------
+
+// Lo más arriba posible: solo captura lo que ocurre DESPUÉS de él.
+app.UseExceptionHandler();
 
 if (app.Environment.IsDevelopment())
 {

@@ -7,7 +7,7 @@ namespace ApiEcommerce.Models;
 
 
 [Index(nameof(SKU), IsUnique = true)] // Unique constraint on SKU
-public class Product
+public class Product : IAuditable
 {
 
   [Key]
@@ -30,6 +30,7 @@ public class Product
   [Range(0, int.MaxValue)] // Stock must be non-negative
   public int Stock { get; set; }
 
+  // Estampados por AppDbContext.SaveChangesAsync (ver IAuditable). No asignar a mano.
   public DateTime CreatedAt { get; set; } = DateTime.Now;
   public DateTime? UpdatedAt { get; set; } = null;
 
@@ -37,8 +38,12 @@ public class Product
   // Foreign Key --------
   public int CategoryId { get; set; }
 
-  [ForeignKey("CategoryId")]
-  public required Category Category { get; set; }
+  // La navegación es OPCIONAL en C# (`Category?`) a propósito: la relación sigue
+  // siendo obligatoria en la base porque `CategoryId` es `int` no-nullable, pero
+  // dejarla como `required Category` impedía que AutoMapper construyera un Product
+  // desde CreateProductDto (ver AGENTS/docs/05-convenciones.md → Mapping).
+  [ForeignKey(nameof(CategoryId))]
+  public Category? Category { get; set; }
   // https://learn.microsoft.com/es-mx/ef/core/modeling/relationships
 
 }

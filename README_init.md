@@ -218,3 +218,74 @@ dotnet run
 dotnet watch run
 ```
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!-- -------------------------------------- -->
+
+```sh
+DTO
+ │
+ ├── Required
+ ├── MinLength
+ ├── MaxLength
+ └── RegularExpression
+ │
+ ▼
+[ApiController]
+ │
+ ├── inválido → 400
+ │
+ ▼
+Service
+ │
+ ▼
+Rules
+ │
+ ├── regla incumplida → AppException
+ │                       ↓
+ │                  GlobalHandler
+ │                       ↓
+ │                  409 / 422 / etc.
+ │
+ ▼
+CrudService
+ │
+ ▼
+Repository
+ │
+ ▼
+EF Core
+```
+
+
+
+
+
