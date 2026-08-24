@@ -285,6 +285,20 @@ Repository
 EF Core
 ```
 
+```sh
+Controller
+    ↓
+CategoryService
+    ↓
+CrudService<Category, ...>
+    ↓
+Repository + Rules + Mapper
+    ↓
+AppDbContext
+    ↓
+SQL Server
+```
+
 
 
 
