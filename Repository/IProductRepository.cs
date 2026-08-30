@@ -33,6 +33,28 @@ public interface IProductRepository : IBaseRepository<Product>
   Task<bool> SkuExistsAsync(string sku, int? excludeId = null, CancellationToken ct = default);
 
 
+  /// <summary>
+  /// Descuenta stock de forma <b>atómica</b>: un único
+  /// <c>UPDATE ... SET Stock = Stock - @q WHERE Id = @id AND Stock >= @q</c>.
+  /// Devuelve <c>false</c> si no había stock suficiente.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Devuelve <c>bool</c> y no lanza: el repositorio informa de un hecho ("no se
+  /// pudo descontar"), y es el servicio quien decide que eso es un 409.
+  /// </para>
+  /// <para>
+  /// Es la herramienta correcta para un <b>contador</b>. La concurrencia optimista
+  /// (<c>Product.RowVersion</c>) sirve para <i>editar</i> una entidad —dos admins
+  /// tocando el mismo producto—, pero aplicada a un contador con mucha contención
+  /// hace que peticiones perfectamente válidas se rechacen al agotar los reintentos.
+  /// Aquí no hay nada que reintentar: la propia base evalúa la condición y decrementa
+  /// en la misma sentencia.
+  /// </para>
+  /// </remarks>
+  Task<bool> TryDecrementStockAsync(int productId, int quantity, CancellationToken ct = default);
+
+
   // // Sustituido por GetBySkuAsync + la regla de negocio en ProductService.BuyAsync:
   // // devolver un `bool` mezclaba "no existe" (404) con "stock insuficiente" (409)
   // // y obligaba al repositorio a aplicar una regla que no le corresponde.

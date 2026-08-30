@@ -16,14 +16,20 @@ public sealed class SeedOptions
 
   public bool Enabled { get; init; }
 
-  [Required]
   public string AdminUsername { get; init; } = "admin";
 
-  [Required, EmailAddress]
+  [EmailAddress]
   public string AdminEmail { get; init; } = "admin@apiecommerce.local";
 
   /// <summary>Contraseña del admin sembrado. Nunca hardcodeada: user-secrets o <c>Seed__AdminPassword</c>.</summary>
-  [Required, MinLength(8)]
+  /// <remarks>
+  /// <b>Sin <c>[Required]</c> a propósito.</b> Con DataAnnotations incondicionales, leer
+  /// <c>IOptions&lt;SeedOptions&gt;.Value</c> disparaba la validación <b>antes</b> de poder mirar
+  /// <see cref="Enabled"/>, así que un despliegue con el seeding APAGADO (que es lo normal
+  /// fuera de desarrollo, y no define ninguna contraseña) reventaba el arranque en bucle.
+  /// La regla real —"obligatoria solo si el seeding está encendido"— es condicional, y eso
+  /// se expresa con <c>.Validate(...)</c> en <c>PersistenceExtensions</c>, no con un atributo.
+  /// </remarks>
   public string AdminPassword { get; init; } = string.Empty;
 
   /// <summary>Si además de roles y admin se siembran categorías y productos de ejemplo.</summary>

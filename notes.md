@@ -1197,3 +1197,421 @@ services.AddScoped<ICategoryService>(sp => new CachedCategoryService(
     sp.GetRequiredService<CategoryService>(), sp.GetRequiredService<ICacheService>()));
 ```
   - -- si solo estuviera la interfaz, `inner` no tendria de donde salir sin recursion infinita
+
+
+
+
+
+
+
+
+
+
+## 15. Condiciones de carrera  <- lo que NO se ve probando de uno en uno
+- --- Todo lo de abajo pasaba los tests manuales. Solo aparece con peticiones SIMULTANEAS.
+
+- --- ⚠️ CARRERA 1: sobreventa de stock
+  - -- `BuyAsync` hacia **read-then-write**:
+```
+leer stock=1  →  comprobar 1>=1 ok  →  descontar  →  guardar
+        ↑ otra peticion hace LO MISMO aqui en medio  ↑
+```
+  - -- Resultado: dos compras se llevan la MISMA ultima unidad
+
+  - -- Intento 1 (⚠️ MAL para este caso): concurrencia optimista con `[Timestamp] RowVersion`
+    - EF mete RowVersion en el WHERE del UPDATE; si otro toco la fila → 0 filas → `DbUpdateConcurrencyException`
+    - Con reintentos: **medido, stock=10 y 10 compras simultaneas → 5x200 + 5x409, stock final 5**
+    - O sea: NO sobrevende (bien) pero RECHAZA compras validas (mal). 3 reintentos no bastan con contencion alta.
+
+  - -- ✅ Intento 2 (CORRECTO): **UPDATE condicional atomico**
+```csharp
+var affected = await _db.Products
+    .Where(p => p.Id == productId && p.Stock >= quantity)   // condicion DENTRO del UPDATE
+    .ExecuteUpdateAsync(s => s
+        .SetProperty(p => p.Stock, p => p.Stock - quantity)
+        .SetProperty(p => p.UpdatedAt, _ => DateTime.Now), ct);
+return affected == 1;   // 0 = no habia stock
+```
+    - **Medido: stock=10, 15 compras simultaneas → 10x200 + 5x409, stock final 0.** Perfecto.
+    - No hay nada que reintentar: la BASE evalua la condicion y descuenta en la misma sentencia
+
+  - -- ⭐ REGLA que me llevo:
+```
+RowVersion (concurrencia optimista)  ->  EDITAR una entidad (dos admins tocando el mismo producto)
+UPDATE condicional atomico           ->  CONTADORES (stock, saldo, cupos)
+```
+    - Se queda RowVersion en Product igual, pero para el PATCH, no para la compra
+
+  - -- ⚠️ Dos trampas de `ExecuteUpdateAsync`:
+    - NO pasa por `SaveChangesAsync` → la auditoria automatica de AppDbContext **no se dispara**
+      → hay que poner `UpdatedAt` a mano en el propio SetProperty
+    - NO toca el change tracker → la instancia que ya tenias sigue con el valor viejo
+      → hay que releer para devolver el estado real
+
+- --- ⚠️ CARRERA 2: categorias duplicadas
+  - -- `CategoryRules` comprobaba el nombre ANTES de insertar. Entre la comprobacion y el INSERT cabe otra peticion.
+  - -- **Medido: 8 POST simultaneos del mismo nombre → se creaban 8 categorias.**
+  - -- ✅ Arreglo: indice unico EN LA BASE. Es la unica garantia real.
+```csharp
+[Index(nameof(Name), IsUnique = true)]
+public class Category : IAuditable
+```
+  - -- **Medido despues: 8 POST simultaneos → 1x201 + 7x409, una sola fila.**
+  - -- La regla aplicativa se queda: da un 409 con mensaje util en el caso normal.
+       El indice es la RED que atrapa la carrera.
+
+  - -- ⚠️ Gotcha: `Name` era `nvarchar(max)` y **SQL Server NO puede indexar eso** (limite 900 bytes)
+    - Hay que poner `[MaxLength(50)]` en la ENTIDAD (no solo en el DTO)
+    - De paso: la BD ahora impone lo mismo que promete el contrato de la API
+
+- --- ⚠️ Y un tercero que aparece al arreglar los otros dos:
+  - -- Al poner el indice unico, la carrera pasa de "duplicado silencioso" a **500**
+  - -- Hay que traducir la excepcion de EF en `GlobalExceptionHandler`:
+```csharp
+DbUpdateConcurrencyException => (409, "concurrency_conflict", ...),
+DbUpdateException { InnerException: SqlException { Number: 2601 or 2627 } } => (409, "conflict", ...),
+```
+  - -- 2601 / 2627 = violacion de indice unico / restriccion unica en SQL Server
+  - -- Sin esto, **arreglar la carrera EMPEORA la respuesta**: el 409 correcto se vuelve 500
+
+
+
+
+
+
+
+
+
+
+## 16. Idempotencia con Redis  (`SET NX`)
+- --- Problema que NI RowVersion NI el indice unico cubren:
+  - -- el usuario pulsa "Comprar" dos veces
+  - -- el movil reintenta porque se cayo la red **despues** de que el server procesara
+  - -- para la BASE son dos compras legitimamente distintas. No hay conflicto que detectar.
+
+- --- Solucion: cabecera `Idempotency-Key` + `Shared/Idempotency/`
+```
+IIdempotencyStore      TryAcquire / Get / Save / Release
+RedisIdempotencyStore  <- SET NX sobre StackExchange.Redis
+NoIdempotencyStore     <- Null Object si no hay Redis
+IdempotentAttribute    <- IAsyncActionFilter, igual forma que [Transactional]
+```
+
+- --- ⭐ La primitiva clave: **`SET key value NX EX ttl`** = comprobar y reservar en UNA operacion
+```csharp
+await redis.GetDatabase().StringSetAsync(prefix + key, "__in_progress__", ttl, When.NotExists);
+```
+  - -- Un `GET` y luego un `SET` seria read-then-write OTRA VEZ y dos peticiones pasarian las dos
+  - -- ⚠️ Por eso aqui se usa `IConnectionMultiplexer` y NO `IDistributedCache`:
+       esa abstraccion solo tiene Get/Set/Remove, **no tiene "set si no existe"**
+
+- --- La clave se compone con **usuario + metodo + ruta + clave del cliente**
+  - -- Sin el usuario, dos clientes con el mismo GUID se pisan
+  - -- y peor: uno recibe la RESPUESTA del otro = fuga de datos entre cuentas
+
+- --- Flujo del filtro
+```
+1. sin cabecera        -> no hace nada (la idempotencia la pide el CLIENTE, que sabe si reintenta)
+2. respuesta guardada  -> la reproduce + header `Idempotency-Replayed: true`
+3. reserva fallida     -> 409 (hay otra igual EN CURSO ahora mismo)
+4. ejecuta
+5. exito (2xx)         -> guarda la respuesta 24h
+6. error               -> RELEASE, para que el cliente pueda reintentar de verdad
+```
+  - -- ⚠️ El paso 6 importa: memorizar un error convertiria un fallo transitorio en permanente 24h
+
+- --- Medido: 5 compras de 2 uds con la MISMA clave, stock 10 → **stock final 8** (1 ejecuta, 4 reproducen)
+  - -- control sin cabecera: 3 compras de 2 uds → stock 2. Descuenta las 3, correcto.
+
+```sh
+curl -X POST localhost:8021/api/v1/product/buy \
+  -H "Idempotency-Key: $(uuidgen)" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"sku":"X-1","quantity":2}'
+```
+
+
+
+
+
+
+
+
+
+
+## 17. Outbox transaccional  <- el patron clave de mensajeria
+- --- ⚠️ El problema: **no se puede escribir en la BD y en el broker atomicamente**
+```
+publicar y luego commit  -> si falla el commit, anunciaste una compra que NO existe
+commit y luego publicar  -> si falla la publicacion, la compra existe y NADIE se entera
+```
+
+- --- ⭐ Solucion: el evento es UNA FILA MAS, escrita en la MISMA transaccion
+```
+[Transactional] abre transaccion
+  ├─ ExecuteUpdateAsync   (descuenta stock)
+  ├─ OutboxMessages.Add   (el evento)
+  └─ SaveChangesAsync     -> commit: o pasan las dos cosas o no pasa ninguna
+                             luego, un BackgroundService lo publica
+```
+  - -- `IEventOutbox.EnqueueAsync` **NO hace SaveChanges** a proposito: manda la transaccion de negocio
+
+- --- ⭐ Consecuencia practica: **la API funciona con RabbitMQ CAIDO**
+  - -- Medido: broker apagado → 3 compras → **200, 200, 200**, stock 7→4, eventos en la tabla
+  - -- el publicador reintenta: `Failed to publish ... (attempt 1/5)`
+  - -- cuando el broker vuelve, se drenan solos
+
+- --- ⚠️ Orden de las operaciones en el publicador: **publicar → marcar procesado**
+  - -- al reves se PIERDEN mensajes si el proceso muere en medio
+  - -- asi, como mucho, se publica dos veces = **at-least-once**
+  - -- por eso el consumidor TIENE que deduplicar (cap. 18)
+
+- --- Indice filtrado: el publicador solo busca pendientes
+```csharp
+modelBuilder.Entity<OutboxMessage>()
+    .HasIndex(m => m.OccurredAt)
+    .HasFilter("[ProcessedAt] IS NULL");
+```
+  - -- la tabla crece sin parar; indexar TODAS las filas seria cada vez mas caro
+
+
+
+
+
+
+
+
+
+
+## 18. RabbitMQ: publicar y consumir bien
+```sh
+dotnet add package RabbitMQ.Client   # 7.2.2, API async
+```
+
+- --- Topologia (se declara sola al conectar, es idempotente)
+```
+exchange `apiecommerce.events` (topic, durable)
+   └── routing key `product.purchased`
+        └── queue `apiecommerce.product-purchased` (durable)
+             └── x-dead-letter-exchange -> `apiecommerce.events.dlx` -> `...dlq`
+```
+  - -- `topic` para que un consumidor se suscriba a `product.*` sin que el publicador sepa quien escucha
+  - -- **DLQ obligatoria**: sin ella un mensaje envenenado se reencola PARA SIEMPRE y bloquea la cola
+
+- --- ⚠️ Conexiones vs canales
+```
+1 conexion TCP por PROCESO   (el handshake AMQP es caro, el broker tiene limite)
+N canales, uno por componente (son baratos, pero NO son thread-safe)
+```
+  - -- Abrir una conexion por mensaje es EL error clasico con RabbitMQ
+
+- --- Publicador
+  - -- `publisherConfirmations: true` → `BasicPublishAsync` no vuelve hasta el ack del broker
+    - sin eso "publicado" solo significa "escrito en un socket", y el outbox marcaria como
+      enviado algo que el broker nunca recibio
+  - -- `DeliveryMode.Persistent` → el mensaje sobrevive a un reinicio del broker
+    - cola durable + mensaje transitorio = la cola sobrevive VACIA, lo peor de los dos
+  - -- `MessageId` = el Id del outbox → es lo que usa el consumidor para deduplicar
+
+- --- Consumidor: las 4 cosas que hay que hacer bien
+```
+1. autoAck: FALSE      -> confirmamos nosotros, DESPUES de procesar
+                          (con autoAck true, un fallo al procesar PIERDE el mensaje)
+2. idempotencia        -> tabla ProcessedMessages con el MessageId como PK
+3. reintentos acotados -> args.Redelivered distingue 1er intento de reintento; al 2o fallo -> DLQ
+4. BasicQos(prefetch)  -> sin esto RabbitMQ empuja la cola entera a la primera replica
+                          y las demas quedan ociosas
+```
+  - -- La PK de `ProcessedMessages` es lo que de verdad impide el duplicado:
+       si dos replicas procesan el mismo mensaje a la vez, una revienta al insertar
+       → `catch (DbUpdateException)` → ack. **Eso es la deduplicacion funcionando, no un error.**
+
+- --- ⚠️ Un `BackgroundService` que lanza SE MUERE y no vuelve hasta reiniciar el proceso
+  - -- el bucle va envuelto en try/catch y siempre reintenta
+
+- --- ⚠️ Logging de condiciones esperadas
+  - -- el broker caido loguea CADA 5s. Con la traza completa, el log se inunda
+       justo cuando hace falta leerlo
+  - -- → mensaje corto en los intentos intermedios, traza completa solo al agotar reintentos
+
+
+
+
+
+
+
+
+
+
+## 19. Docker
+- --- `Dockerfile` multi-stage
+```dockerfile
+FROM ...sdk:9.0 AS build      # compila
+COPY ApiEcommerce.csproj .    # <- SOLO el csproj primero
+RUN dotnet restore            #    asi Docker cachea el restore si no cambian las deps
+COPY . .
+RUN dotnet publish -c Release -o /app --no-restore
+
+FROM ...aspnet:9.0 AS runtime # ~110 MB en vez de ~800 MB del sdk
+RUN adduser --system --group --no-create-home appuser
+USER appuser                  # root dentro del contenedor = root del host si hay escape
+```
+
+- --- `.dockerignore` no es cosmetico: evita que `bin/`, `.git/` y
+      `appsettings.Development.json` (con secretos) entren en la imagen
+
+- --- ⚠️ Las imagenes subidas van en VOLUMEN
+  - -- sin eso, cada redespliegue del contenedor borra las fotos de los productos
+
+- --- Config por variables de entorno: **`__` es el separador de `:`**
+```yaml
+ConnectionStrings__ConexionSql: "Server=sqlserver_ecommerce,1433;..."
+Redis__Configuration: "redis_generic:6379"
+RabbitMq__ConnectionString: "amqp://guest:guest@rabbitmq_generic:5672"
+Cors__AllowedOrigins__0: "http://localhost:3000"    # arrays con indice
+Seed__Enabled: "false"                              # NUNCA sembrar admin fuera de dev
+```
+  - -- dentro de la red de compose los hosts son los NOMBRES de servicio, no 172.17.0.1
+
+- --- `docker-compose.fragment.yml` en la raiz: los bloques para pegar en el compose central
+  - -- lo unico que falta ahi es `rabbitmq_generic` (5672 + 15672 para la UI)
+
+
+
+
+
+
+
+
+
+
+## 20. Lo que encontro la revision multiagente  <- los bugs que YO no vi
+- --- 3 agentes con /dotnet-best-practices sobre concurrencia, mensajeria e infra.
+      Todo lo de abajo estaba escrito por mi y compilaba y pasaba el smoke test.
+
+- --- ⚠️⚠️ P0: la app **CRASHEABA AL ARRANCAR EN PRODUCTION**
+  - -- `DataSeeder` leia `IOptions<SeedOptions>.Value` ANTES de mirar `options.Enabled`
+  - -- `.Value` dispara `ValidateDataAnnotations()`, y `AdminPassword` era `[Required]`
+  - -- Con `Seed__Enabled=false` (lo normal en prod, sin password definida) -> `OptionsValidationException`
+       -> con `restart: unless-stopped` = **crash-loop infinito**
+  - -- ⭐ LECCION: **una regla condicional NO se expresa con un atributo**
+```csharp
+services.AddOptions<SeedOptions>()
+    .Bind(...)
+    .Validate(o => !o.Enabled || o.AdminPassword.Length >= 8,   // <- condicional
+              "Seed:AdminPassword is required when Seed:Enabled is true")
+    .ValidateOnStart();
+```
+
+- --- ⚠️ P0: **nadie aplicaba las migraciones**
+  - -- 8 migraciones en `Migrations/` y ni un `Migrate()` en el codigo
+  - -- La imagen runtime (`aspnet`) NO lleva SDK ni `dotnet-ef` -> no puede aplicarlas
+  - -- Y lo peor: `/health/ready` respondia **Healthy** igual, porque `AddDbContextCheck`
+       solo comprueba que se puede CONECTAR, no el esquema
+    - o sea: el orquestador mandaba trafico a un servicio que devolvia 500 en todo
+  - -- Arreglo: `await db.Database.MigrateAsync()` en el scope de arranque
+
+- --- ⚠️ P0: el `HEALTHCHECK` del Dockerfile **nunca podia funcionar**
+  - -- `curl` NO viene en `mcr.microsoft.com/dotnet/aspnet:9.0`
+    - su base `runtime-deps` solo instala ca-certificates, libc6, libgcc, libicu, libssl, tzdata
+  - -- `curl: not found` -> exit 127 -> contenedor **`unhealthy` PARA SIEMPRE**
+  - -- y eso bloquea cualquier `depends_on: condition: service_healthy` que apunte a el
+  - -- ⭐ LECCION: no asumas que un binario esta en una imagen slim. Verificalo.
+
+- --- ⚠️ P0: `RedisIdempotencyStore` fallaba **EN CERRADO** (sin un solo try/catch)
+  - -- Escenario: commit OK (stock descontado) -> Redis se cae -> `SaveAsync` lanza
+       -> 500 al cliente por una compra QUE SI SE HIZO
+  - -- Y al reintentar: la clave seguia reservada -> 409 durante 24h
+  - -- **El mecanismo que existe para evitar el doble cobro era el que lo provocaba**
+  - -- ⭐ LECCION: si un componente es una OPTIMIZACION, tiene que fallar en abierto.
+       Y la decision debe ser la MISMA en todas sus implementaciones
+       (`RedisCacheService` ya fallaba en abierto; este no. Incoherencia silenciosa.)
+
+- --- ⚠️ P0: un solo TTL para dos cosas distintas
+  - -- La RESERVA (`__in_progress__`) usaba el mismo TTL de 24h que la RESPUESTA
+  - -- Si el proceso muere entre reservar y guardar (deploy, OOM-kill):
+       clave bloqueada 24h por una operacion **que nunca se ejecuto**
+  - -- ⭐ Arreglo: dos TTL. Reserva = 60s (timeout de request). Respuesta = 24h.
+
+- --- ⚠️ P0: el handler no cubria el caso que introduce `ExecuteUpdateAsync`
+```
+SaveChangesAsync    -> DbUpdateException { SqlException }   <- el patron acertaba
+ExecuteUpdateAsync  -> SqlException DESNUDO                 <- caia en `_` -> 500
+```
+  - -- `ExecuteUpdate/Delete` NO pasan por `SaveChanges`, asi que no hay envoltorio
+  - -- ⭐ LECCION: **no hagas pattern matching sobre la FORMA del anidamiento.**
+       Recorre la cadena de `InnerException`:
+```csharp
+static SqlException? FindSqlException(Exception? e) {
+  for (; e is not null; e = e.InnerException) if (e is SqlException s) return s;
+  return null;
+}
+_ when FindSqlException(ex) is { Number: 2601 or 2627 } => 409 conflict,
+_ when FindSqlException(ex) is { Number: 1205 }         => 409 deadlock,
+_ when FindSqlException(ex) is { Number: 547 }          => 409 fk_violation,
+```
+
+- --- ⚠️⚠️ P0: `[Transactional]` + estrategia reintentante = **ejecuta la accion DOS VECES**
+  - -- Lo encontraron DOS agentes por separado. Es el mas profundo.
+  - -- `EnableRetryOnFailure` obliga a meter la transaccion en `strategy.ExecuteAsync(...)`
+  - -- ...y esa estrategia **REEJECUTA el delegado** ante un fallo transitorio
+  - -- pero `ActionExecutionDelegate` (el `next()` de un filtro) **NO es reentrante**
+  - -- Resultado: commit falla transitoriamente -> reintento -> `next()` otra vez
+       -> doble descuento de stock y dos eventos, o commit vacio con 200 al cliente
+  - -- ⭐ Arreglo: la transaccion baja al SERVICIO, con una unidad REPLAYABLE
+```csharp
+// Shared/Db/ITransactionRunner.cs  <- el servicio no ve AppDbContext
+return await _tx.ExecuteAsync(async token => {
+    var product = await _repository.GetBySkuAsync(dto.SKU, token);   // RELEE todo
+    ...
+}, ct);
+```
+```csharp
+// dentro del runner, en CADA intento:
+db.ChangeTracker.Clear();   // sin esto el reintento NO es equivalente:
+                            // las entidades del intento 1 quedaron `Unchanged`
+                            // -> el 2o intento hace commit de una transaccion VACIA
+```
+  - -- Y `[Transactional]` se queda con una **guarda de reentrada** que lanza si se
+       reintenta: convertir corrupcion silenciosa en error ruidoso
+  - -- ⭐ LECCION GRANDE: **la transaccion es politica de NEGOCIO, no de HTTP.**
+       Un atributo de controller no puede darte una unidad de trabajo reintentable.
+
+- --- ⚠️ La config de .NET **FUSIONA arrays, no los reemplaza**
+  - -- `Cors__AllowedOrigins__0=https://prod.com` NO borra los indices 1 y 2 de appsettings.json
+  - -- Resultado medido: en produccion seguian permitidos `localhost:4200` y `localhost:5173`
+  - -- ⭐ Arreglo: lista VACIA en `appsettings.json` + filtrar vacios al leer
+
+- --- ⚠️ Sin `UseForwardedHeaders`, detras de un proxy:
+  - -- el rate limiter particiona por la IP DEL PROXY = **un solo cubo de 100 req/min para todo internet**
+  - -- los logs registran esa misma IP para todo el mundo
+  - -- `UseHttpsRedirection` es un no-op (avisa `Failed to determine the https port`)
+
+- --- ⚠️ `UseStaticFiles` estaba antes de CORS y del rate limiter
+  - -- es TERMINAL para los archivos que sirve -> las imagenes no pasaban por el limitador
+       (descarga en bucle sin cuota) ni recibian cabeceras CORS
+
+- --- ⚠️ Paquetes: `Serilog.AspNetCore 10.0.0` y `StackExchange.Redis 3.x` metian
+      ~12 paquetes **10.x** en una app `net9.0`, sombreando el shared framework
+  - -- `AspNetCore.HealthChecks.Redis 9.0.0` esta compilado contra SE.Redis **2.7**
+       -> NuGet unificaba a 3.x -> `MissingMethodException` en RUNTIME, no al compilar
+  - -- ⭐ Arreglo: fijar `StackExchange.Redis 2.8.x` y `Serilog.AspNetCore 9.x`
+
+- --- ⚠️ `ExecuteUpdateAsync` con `DateTime.Now` dentro del arbol de expresion
+  - -- EF NO lo evalua en cliente: lo traduce a **`GETDATE()`** = reloj del SERVIDOR SQL
+  - -- El resto del proyecto estampa con el reloj del PROCESO
+  - -- ⭐ Arreglo: capturar `var now = DateTime.Now;` FUERA y usar la variable
+
+- --- Otros arreglados: dedup del consumidor marcaba DESPUES del efecto (podia aplicarlo 2 veces);
+      `catch (DbUpdateException)` a secas se tragaba deadlocks y hacia ack (perdia mensajes);
+      `RabbitMqConnection` publicaba el campo antes de declarar la topologia (3 bugs en 4 lineas);
+      `OperationCanceledException` excluida del catch mataba el `BackgroundService` **y el host**;
+      el replay de idempotencia perdia el header `Location`; `InvalidOperationException => 409`
+      filtraba mensajes internos de EF al cliente.
+
+- --- ⭐⭐ LA LECCION DE TODO ESTO
+```
+Compilar + pasar un smoke test manual NO es evidencia de correctitud.
+Casi todos estos bugs solo aparecen con: concurrencia, fallo de una dependencia,
+reinicio a mitad, o el entorno de PRODUCCION.
+Por eso el paso 7 del roadmap (tests) es el siguiente y no es opcional.
+```

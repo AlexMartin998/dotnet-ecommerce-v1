@@ -1,0 +1,102 @@
+# =============================================================================
+# FRAGMENTO para tu docker-compose central (~/Documents/code/000_infra).
+# NO es un compose completo: pega estos bloques en el tuyo, que ya tiene
+# `sqlserver_ecommerce` (1434) y `redis_generic` (6999) en la red `backend`.
+#
+# Lo único que falta para este repo es RabbitMQ. La API la puedes levantar
+# aparte con `dotnet run`, o añadir también el bloque `apiecommerce` de abajo.
+#
+# ⚠️ REQUISITO del bloque `apiecommerce`: usa `depends_on: condition: service_healthy`
+#    sobre `sqlserver_ecommerce` y `redis_generic`. Compose EXIGE que esos servicios
+#    tengan bloque `healthcheck:`; si alguno no lo tiene, falla con
+#    "service ... is required to be healthy ... but no healthcheck is defined".
+#    Tu `redis_generic` ya lo tiene. Si a `sqlserver_ecommerce` le falta, añádele:
+#
+#      healthcheck:
+#        test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U SA -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1"]
+#        interval: 10s
+#        timeout: 5s
+#        retries: 10
+#        start_period: 30s
+#
+#    Alternativa rápida: bajar esas dos entradas a `condition: service_started`.
+#
+# ⚠️ SECRETOS: los valores van por `.env` (gitignorado), no en el compose. La sintaxis
+#    `${VAR:?mensaje}` ABORTA el `up` si la variable no está definida, en vez de
+#    arrancar con un valor de ejemplo. Crea un `.env` junto al compose con:
+#
+#      JWT_SECRET=<32+ caracteres aleatorios>
+#      MSSQL_SA_PASSWORD=<la de tu SQL Server>
+# =============================================================================
+
+services:
+
+  # ---- 1) LO QUE TE FALTA: RabbitMQ -----------------------------------------
+  rabbitmq_generic:
+    image: rabbitmq:3.13-management
+    container_name: rabbitmq_generic
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"     # AMQP: el que usa la app
+      - "15672:15672"   # UI de gestión: http://localhost:15672 (guest/guest)
+    volumes:
+      - rabbitmq_generic_data:/var/lib/rabbitmq
+    healthcheck:
+      # `check_running` mira el nodo; `check_port_connectivity` que el puerto AMQP
+      # acepte conexiones. RabbitMQ tarda ~15s en arrancar, de ahí los retries.
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q check_running && rabbitmq-diagnostics -q check_port_connectivity"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    networks:
+      - backend
+
+
+  # ---- 2) OPCIONAL: la propia API en contenedor -----------------------------
+  # Si la levantas aquí, los hosts son los NOMBRES de servicio (red `backend`),
+  # no 172.17.0.1: dentro de la red de compose los contenedores se ven por nombre.
+  apiecommerce:
+    build:
+      context: /workspace/code/001_dotnet/001_dotnet_api_fh/01_init_c#/ApiEcommerce
+      dockerfile: Dockerfile
+    container_name: apiecommerce
+    restart: unless-stopped
+    ports:
+      - "8021:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      # El doble guion bajo `__` es el separador de `:` en variables de entorno.
+      ConnectionStrings__ConexionSql: "Server=sqlserver_ecommerce,1433;Database=ApiEcommerceNET8;User ID=SA;Password=${MSSQL_SA_PASSWORD:?define MSSQL_SA_PASSWORD en .env};TrustServerCertificate=true;MultipleActiveResultSets=true"
+      Redis__Configuration: "redis_generic:6379"
+      RabbitMq__ConnectionString: "amqp://guest:guest@rabbitmq_generic:5672"
+      # Secretos por entorno, NUNCA commiteados. `:?` aborta el up si falta la variable.
+      Jwt__SecretKey: "${JWT_SECRET:?define JWT_SECRET en .env (32+ caracteres)}"
+      Jwt__Issuer: "ApiEcommerce"
+      Jwt__Audience: "ApiEcommerce.Client"
+      # appsettings.json trae la lista VACÍA a propósito: la config de .NET fusiona
+      # arrays por índice, así que si allí hubiera valores seguirían permitidos aquí.
+      Cors__AllowedOrigins__0: "http://localhost:3000"
+      # Seeding APAGADO fuera de desarrollo: crearía un admin con password conocida.
+      Seed__Enabled: "false"
+    volumes:
+      # Sin esto, cada redespliegue borra las imágenes subidas.
+      - apiecommerce_images:/app/wwwroot/ProductsImages
+    depends_on:
+      sqlserver_ecommerce:
+        condition: service_healthy
+      redis_generic:
+        condition: service_healthy
+      rabbitmq_generic:
+        condition: service_healthy
+    networks:
+      - backend
+
+
+# ---- 3) Añade estos volúmenes a tu bloque `volumes:` ------------------------
+volumes:
+  rabbitmq_generic_data:
+  apiecommerce_images:

@@ -21,7 +21,13 @@ public static class CorsPolicies
   public static IServiceCollection AddCorsPolicy(
       this IServiceCollection services, IConfiguration configuration)
   {
-    var origins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+    // Se filtran los vacíos porque la configuración de .NET FUSIONA colecciones por
+    // clave, no las reemplaza: definir `Cors__AllowedOrigins__0` por entorno NO borra
+    // los índices 1, 2... de appsettings.json. Con la lista base vacía y este filtro,
+    // cada entorno declara sus orígenes y no hereda los de desarrollo sin querer.
+    var origins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()?
+        .Where(o => !string.IsNullOrWhiteSpace(o))
+        .ToArray() ?? [];
 
     services.AddCors(options =>
     {

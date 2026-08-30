@@ -1,3 +1,6 @@
+using ApiEcommerce.Shared.Idempotency;
+using StackExchange.Redis;
+
 namespace ApiEcommerce.Shared.Caching;
 
 
@@ -28,7 +31,8 @@ public static class CachingExtensions
   {
     services.AddOptions<CacheOptions>()
         .Bind(configuration.GetSection(CacheOptions.SectionName))
-        .ValidateDataAnnotations();
+        .ValidateDataAnnotations()
+        .ValidateOnStart();   // configuración inválida = no arranca, no falla en la primera petición
 
     var options = configuration.GetSection(CacheOptions.SectionName).Get<CacheOptions>()
                   ?? new CacheOptions();
@@ -42,11 +46,33 @@ public static class CachingExtensions
       });
 
       services.AddSingleton<ICacheService, RedisCacheService>();
+
+      // Conexión cruda a Redis, además de IDistributedCache: la idempotencia
+      // necesita `SET NX` (reservar si no existe) y esa primitiva no existe en
+      // IDistributedCache. El multiplexer es thread-safe y caro de crear: se
+      // comparte como singleton, que es como lo recomienda StackExchange.Redis.
+      services.AddSingleton<IConnectionMultiplexer>(_ =>
+      {
+        var config = ConfigurationOptions.Parse(options.Configuration);
+
+        // AbortOnConnectFail es `true` por defecto, y la fábrica es PEREZOSA: se
+        // ejecuta en la primera petición que necesite el store, no al arrancar. Con
+        // Redis caído en ese instante, la fábrica lanzaba, el contenedor NO cachea
+        // instancias fallidas, y cada petición siguiente reintentaba una conexión
+        // bloqueante de 5 s. Con `false`, conecta en segundo plano y se recupera solo.
+        config.AbortOnConnectFail = false;
+        config.ConnectRetry = 3;
+
+        return ConnectionMultiplexer.Connect(config);
+      });
+
+      services.AddSingleton<IIdempotencyStore, RedisIdempotencyStore>();
     }
     else
     {
       // Null Object: los decoradores siguen compilando y ejecutando sin un solo `if`.
       services.AddSingleton<ICacheService, NoCacheService>();
+      services.AddSingleton<IIdempotencyStore, NoIdempotencyStore>();
     }
 
     return services;
