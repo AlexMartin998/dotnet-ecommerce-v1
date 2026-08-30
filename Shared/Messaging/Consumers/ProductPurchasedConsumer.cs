@@ -1,7 +1,6 @@
 using System.Text;
 using System.Text.Json;
 using ApiEcommerce.Data;
-using ApiEcommerce.Models;
 using ApiEcommerce.Shared.Messaging.Events;
 using ApiEcommerce.Shared.Messaging.RabbitMq;
 using Microsoft.Data.SqlClient;
@@ -9,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
+using ApiEcommerce.Shared.Messaging;
 
 namespace ApiEcommerce.Shared.Messaging.Consumers;
 

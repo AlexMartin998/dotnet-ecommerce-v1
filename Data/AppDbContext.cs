@@ -1,7 +1,11 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
-using ApiEcommerce.Models;
+using ApiEcommerce.Shared.Messaging;
+using ApiEcommerce.Shared.Persistence;
+using ApiEcommerce.Features.Accounts.Models;
+using ApiEcommerce.Features.Catalog.Models;
+using ApiEcommerce.Features.Catalog.Repository;
 
 namespace ApiEcommerce.Data;
 

@@ -1,3 +1,4 @@
+using ApiEcommerce.Features.Catalog.Models;
 namespace ApiEcommerce.Shared.Caching;
 
 

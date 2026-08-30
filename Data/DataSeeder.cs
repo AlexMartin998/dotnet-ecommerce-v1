@@ -1,8 +1,9 @@
-using ApiEcommerce.Models;
 using ApiEcommerce.Shared.Auth;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using ApiEcommerce.Features.Accounts.Models;
+using ApiEcommerce.Features.Catalog.Models;
 
 namespace ApiEcommerce.Data;
 
