@@ -1,4 +1,5 @@
 using ApiEcommerce.Shared.Messaging.Events;
+using ApiEcommerce.Features.Catalog.Service;
 
 namespace ApiEcommerce.Shared.Messaging;
 

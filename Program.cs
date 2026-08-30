@@ -21,8 +21,8 @@ builder.Host.UseSerilog((context, configuration) => configuration
 
 
 // // // Add SERVICES to the container ---------------------------------
-// Tres bloques por capa. Cada uno solo COMPONE los registros que cada feature
-// declara en su propia carpeta (ver Shared/DependencyInjection/ServiceCollectionExtensions.cs).
+// Tres bloques. Cada uno solo COMPONE lo que cada slice y cada pieza transversal
+// registran en SU propia carpeta (ver Shared/DependencyInjection/ServiceCollectionExtensions.cs).
 // Detrás de un proxy, sin esto: el rate limiter particiona por la IP DEL PROXY (o
 // sea, un solo cubo de 100 req/min para todo internet), los logs registran esa misma
 // IP para todo el mundo, y UseHttpsRedirection no sabe si la petición original era
@@ -40,9 +40,9 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 });
 
 builder.Services
-    .AddApplication()                          // mapeo + reglas + CRUD compuesto + servicios
-    .AddInfrastructure(builder.Configuration)  // EF Core, Redis, disco, Identity + JWT
-    .AddWebApi(builder.Configuration);         // controllers, versionado, CORS, rate limit, errores, health
+    .AddSharedInfrastructure(builder.Configuration)  // Shared/  — EF Core, Redis, disco, mensajería
+    .AddFeatures(builder.Configuration)              // Features/ — un bloque por contexto acotado
+    .AddWebApi(builder.Configuration);               // superficie HTTP
 
 var app = builder.Build();
 

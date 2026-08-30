@@ -81,59 +81,64 @@ Reglas duras del flujo:
    `BaseRepository<T>` (mecanismo, sin decisiones) se hereda; el CRUD de servicio
    (que orquesta reglas) se compone. Ver `02-repository.md` y `03-service.md`.
 
-## Estructura de carpetas
+## Estructura de carpetas — vertical slicing por contexto acotado
+
+El código se organiza por **dominio**, no por capa técnica. Cada carpeta de `Features/` es
+un **contexto acotado** con todo lo suyo dentro, y dentro se mantienen las carpetas de capa
+de siempre:
 
 ```
 ApiEcommerce/
-├── Controllers/          # capa HTTP. Solo DTOs.
-├── Service/              # lógica de negocio. DTO in / DTO out.
-│   ├── Crud/                   # CRUD reutilizable POR COMPOSICIÓN
-│   │   ├── ICrudService.cs         contrato DTO-facing (sin TEntity)
-│   │   ├── CrudService.cs          implementación sealed
-│   │   ├── IEntityRules.cs         reglas por entidad
-│   │   └── NoEntityRules.cs        "sin reglas" (genérico abierto en DI)
-│   ├── Auth/                   # IAuthService/AuthService, IJwtTokenService/JwtTokenService
-│   ├── ICategoryService.cs / CategoryService.cs / CategoryRules.cs
-│   ├── CachedCategoryService.cs   # decorador de cache sobre ICategoryService
-│   └── IProductService.cs  / ProductService.cs  / ProductRules.cs
-├── Repository/           # acceso a datos. Entity in / Entity out. AQUÍ SÍ SE HEREDA.
-│   ├── IBaseRepository.cs
-│   ├── BaseRepository.cs
-│   ├── ICategoryRepository.cs / CategoryRepository.cs
-│   └── IProductRepository.cs  / ProductRepository.cs
-├── Models/               # entidades EF Core
-│   ├── IEntity.cs        # IEntity / IAuditable (marcadoras)
-│   └── Dtos/             # contratos de la API
-├── Mapping/              # un Profile de AutoMapper por entidad
-├── Exceptions/           # jerarquía AppException (dominio → HTTP)
-├── Shared/
-│   ├── Auth/             # Roles, JwtOptions, SeedOptions, extensiones de ClaimsPrincipal
-│   ├── Caching/          # ICacheService, RedisCacheService, NoCacheService, CacheKeys
-│   ├── Db/               # TransactionalAttribute, helpers de EF
-│   ├── Http/             # GlobalExceptionHandler, ConfigureSwaggerOptions, CORS, rate limit
-│   ├── Paging/           # PagedResult<T>
-│   ├── Storage/          # IFileStorage, LocalFileStorage, FileUpload
-│   └── DependencyInjection/  # composition root: AddApplication/AddInfrastructure/AddWebApi
-├── Data/                 # AppDbContext + DataSeeder
-├── wwwroot/              # archivos estáticos (imágenes de producto)
-├── Migrations/           # EF Core
-└── AGENTS/docs/          # estos lineamientos
+├── Features/                 # los contextos acotados
+│   ├── Catalog/                    categorías y productos
+│   │   ├── Models/                 Category.cs, Product.cs
+│   │   ├── Dtos/                   contratos de la API de este contexto
+│   │   ├── Repository/             IXRepository + impl (heredan de BaseRepository<T>)
+│   │   ├── Service/                IXService + impl + XRules
+│   │   ├── Mapping/                un Profile de AutoMapper por entidad
+│   │   ├── Controllers/            capa HTTP. Solo DTOs.
+│   │   └── CatalogExtensions.cs    AddCatalogFeature(): el DI del slice
+│   └── Accounts/                   identidad, JWT, autorización
+│       ├── Models/ Dtos/ Service/ Controllers/
+│       ├── JwtOptions.cs  ConfigureJwtBearerOptions.cs
+│       └── AccountsExtensions.cs
+├── Shared/                   # transversal: de ningún dominio
+│   ├── Persistence/          IEntity, IBaseRepository, BaseRepository, ITransactionRunner
+│   ├── Crud/                 ICrudService, CrudService, IEntityRules, NoEntityRules
+│   ├── Caching/              ICacheService, RedisCacheService, NoCacheService, CacheKeys
+│   ├── Idempotency/          IIdempotencyStore, IdempotentAttribute
+│   ├── Messaging/            outbox, RabbitMq/, Consumers/, Events/
+│   ├── Storage/              IFileStorage, LocalFileStorage
+│   ├── Paging/               PagedResult<T>, PageQuery
+│   ├── Db/                   TransactionalAttribute
+│   ├── Mapping/              AddObjectMapping (escanea los Profile de los slices)
+│   ├── Auth/                 Roles, SeedOptions, extensiones de ClaimsPrincipal
+│   ├── Http/                 GlobalExceptionHandler, Swagger, CORS, rate limit, Health/
+│   └── DependencyInjection/  composition root (NO registra nada)
+├── Data/                     AppDbContext + DataSeeder
+├── Exceptions/               jerarquía AppException (dominio → HTTP)
+├── Migrations/               EF Core
+├── wwwroot/                  archivos estáticos (imágenes de producto)
+└── AGENTS/                   docs/ features/ planning/ context/ + memory/progress/rules
 ```
 
-**El registro de DI de cada feature vive en la carpeta del feature**, en un
-`XExtensions.cs` (`Data/PersistenceExtensions.cs`,
-`Shared/Caching/CachingExtensions.cs`, `Service/Auth/AuthExtensions.cs`…).
-`Shared/DependencyInjection/` solo los compone. Ver `05-convenciones.md`.
+**Namespace = ruta de carpeta**, con `ApiEcommerce` como raíz y namespaces file-scoped:
+`Features/Catalog/Repository/CategoryRepository.cs` →
+`namespace ApiEcommerce.Features.Catalog.Repository;`.
 
-**Namespace = ruta de carpeta**, con `ApiEcommerce` como raíz y namespaces
-file-scoped: `Repository/CategoryRepository.cs` → `namespace ApiEcommerce.Repository;`.
-Nótese que las carpetas de capa van en **singular** (`Service`, `Repository`),
-que es la convención ya establecida en el repo — no renombrar a plural.
+### Un slice es un contexto acotado, no una entidad
+
+`UnitOfMeasurement`, `ProductTag` o `Brand` **no crean un slice**: son parte del vocabulario
+del catálogo y viven dentro de `Catalog/`. La pregunta es de DDD: *¿esto tiene su propio
+lenguaje ubicuo y sus propias invariantes, o es parte del vocabulario de otro contexto?*
+Un slice por entidad reproduce la dispersión que el slicing venía a quitar, con más carpetas.
+
+Contextos previstos según crezca: `Catalog`, `Accounts`, `Ordering`, `Payments`, `Shipping`.
 
 ## Slice vertical
 
-La unidad de trabajo es el **slice vertical por entidad**. Agregar una entidad
-significa crear, en este orden:
+La unidad de trabajo es el **contexto acotado**. Agregar una entidad a uno que ya existe
+significa crear, dentro de su carpeta y en este orden:
 
 1. `Models/X.cs` — entidad + DataAnnotations + índices, implementando `IAuditable`.
 2. `dotnet ef migrations add ...` — migración.
@@ -144,12 +149,11 @@ significa crear, en este orden:
 7. `Service/IXService.cs` + `XService.cs` (**componen** `ICrudService<...>`).
 8. `Controllers/XController.cs`.
 9. **Registrar repositorio, reglas, `CrudService` cerrado y servicio** en el
-   `Add…` de la carpeta correspondiente (`Repository/RepositoryExtensions.cs` y
-   `Service/ApplicationServiceExtensions.cs`). Este es el paso que más se olvida.
-   El composition root no se toca: ya llama a esos dos.
+   `AddXxxFeature()` de su slice. Este es el paso que más se olvida. Si la entidad entra
+   en un contexto que ya existe, el composition root **no se toca**.
 
-`Category` es el slice de referencia: cuando dudes de una convención, mira cómo
-está hecha ahí y replícala.
+`Catalog` es el slice de referencia y `Category` la entidad de referencia dentro de él:
+cuando dudes de una convención, mira cómo está hecha ahí y replícala.
 
 ## Documentos de esta carpeta
 

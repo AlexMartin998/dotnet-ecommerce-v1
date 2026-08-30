@@ -1,6 +1,5 @@
 using System.Text.Json;
 using ApiEcommerce.Data;
-using ApiEcommerce.Models;
 using ApiEcommerce.Shared.Messaging.Events;
 
 namespace ApiEcommerce.Shared.Messaging;

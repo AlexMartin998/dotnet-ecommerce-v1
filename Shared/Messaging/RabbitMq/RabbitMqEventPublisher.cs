@@ -1,6 +1,7 @@
 using System.Text;
 using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
+using ApiEcommerce.Shared.Messaging;
 
 namespace ApiEcommerce.Shared.Messaging.RabbitMq;
 

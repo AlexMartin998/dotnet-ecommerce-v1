@@ -1615,3 +1615,93 @@ Casi todos estos bugs solo aparecen con: concurrencia, fallo de una dependencia,
 reinicio a mitad, o el entorno de PRODUCCION.
 Por eso el paso 7 del roadmap (tests) es el siguiente y no es opcional.
 ```
+
+
+
+
+
+
+
+
+
+
+## 21. Vertical slicing por contexto acotado
+- --- Punto de partida: organizacion por CAPA TECNICA
+```
+Controllers/   los 4 controllers de todo el proyecto
+Service/       ICategoryService, CategoryService, IProductService, ProductService,
+               CategoryRules, ProductRules, IAuthService, AuthService... TODO junto
+Repository/    todos los repositorios
+Models/        todas las entidades + Dtos/ con TODOS los DTOs
+```
+  - -- Tocar UNA feature = abrir 5 carpetas distintas
+  - -- Y cada carpeta crece con cada entidad nueva, sin techo
+
+- --- ⭐ Ahora: por DOMINIO, con las carpetas de capa DENTRO de cada slice
+```
+Features/
+  Catalog/                      <- contexto acotado
+    Models/       Category.cs  Product.cs
+    Dtos/         CategoryDto, CreateProductDto, BuyProductDto...
+    Repository/   ICategoryRepository + impl, IProductRepository + impl
+    Service/      ICategoryService + impl, CategoryRules, ProductService...
+    Mapping/      CategoryProfile, ProductProfile
+    Controllers/  CategoryController, ProductController
+    CatalogExtensions.cs        <- AddCatalogFeature(): el DI del slice
+  Accounts/                     <- identidad, JWT, autorizacion
+    Models/ Dtos/ Service/ Controllers/ + AccountsExtensions.cs
+Shared/                         <- transversal, de NINGUN dominio
+  Persistence/ Crud/ Caching/ Db/ Http/ Idempotency/ Messaging/ Paging/ Storage/ Mapping/
+  DependencyInjection/          <- composition root, NO registra nada
+```
+
+- --- ⚠️⚠️ LA REGLA QUE MAS IMPORTA: **un slice es un CONTEXTO ACOTADO, no una entidad**
+  - -- `UnitOfMeasurement` NO es una feature. `ProductTag` NO es una feature. `Brand` tampoco.
+  - -- Todas son parte del vocabulario del CATALOGO -> viven dentro de `Catalog/`
+  - -- La pregunta es de DDD:
+```
+¿esto tiene su propio lenguaje ubicuo y sus propias invariantes,
+ o es parte del vocabulario de otro contexto?
+```
+  - -- Un slice POR ENTIDAD reproduce exactamente la dispersion que el slicing venia a
+       quitar, solo que con mas carpetas. Es el error clasico al descubrir vertical slicing.
+  - -- Contextos previstos segun crezca: `Catalog`, `Accounts`, `Ordering`, `Payments`, `Shipping`
+
+- --- Que se queda en `Shared/` y que baja al slice
+```
+Shared/   lo que NO pertenece a ningun dominio y usan todos:
+          BaseRepository<T>, ICrudService, cache, storage, mensajeria, paginacion
+Slice/    lo que habla el lenguaje de ESE dominio:
+          sus entidades, DTOs, repos concretos, reglas, servicios, controllers
+```
+  - -- Los **genericos abiertos** (`IBaseRepository<>`, `NoEntityRules<,,>`) son mecanismo
+       transversal -> `Shared/`, registrados UNA vez
+  - -- Los **registros cerrados** por entidad -> en el `AddXxxFeature()` de su slice
+
+- --- Composition root: 3 bloques que declaran la DIRECCION de dependencias
+```csharp
+builder.Services
+    .AddSharedInfrastructure(builder.Configuration)  // Web -> Features -> Shared
+    .AddFeatures(builder.Configuration)
+    .AddWebApi(builder.Configuration);
+```
+  - -- **Añadir un slice = crear su carpeta + UNA linea en `AddFeatures()`**
+  - -- En proyecto unico esa direccion es CONVENCION, no frontera del compilador.
+       Pero son las costuras por donde se parte en proyectos sin reescribir nada.
+
+- --- ⚠️ Trampas del refactor (me pasaron las dos)
+  - -- Un script que inserta `using` buscando "la ultima linea que empieza por using"
+       los mete DENTRO del bloque comentado de aprendizaje del final del archivo
+    - hay que acotar la insercion a la cabecera, ANTES del `namespace`
+  - -- `pkill -f 'ApiEcommerce'` **se mata a si mismo**: el cwd contiene esa cadena y por
+       tanto tambien la linea de comando del propio shell
+
+- --- ⚠️ Al borrar `RepositoryExtensions.cs` y `ApplicationServiceExtensions.cs` se fueron
+      con ellos los registros de los **genericos abiertos** -> la app compilaba pero
+      reventaba al ARRANCAR
+  - -- Lo cazo la validacion del contenedor en Development (`ValidateOnBuild`), no el compilador
+  - -- Buena señal de que esa validacion vale: el error dice exactamente que no se podia
+       resolver `IBaseRepository<Category>` al activar `CrudService<...>`
+
+- --- Verificado tras el refactor: smoke test completo + las 3 pruebas de concurrencia con
+      resultados IDENTICOS (10x200/5x409 stock 0 · 1x201/7x409 una fila · idempotencia 1 compra)

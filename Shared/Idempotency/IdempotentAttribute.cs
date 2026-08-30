@@ -2,6 +2,7 @@ using System.Text.Json;
 using ApiEcommerce.Shared.Auth;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
+using ApiEcommerce.Features.Catalog.Models;
 
 namespace ApiEcommerce.Shared.Idempotency;
 
