@@ -1,5 +1,6 @@
 using ApiEcommerce.Data;
 using ApiEcommerce.Models;
+using ApiEcommerce.Shared.Paging;
 using Microsoft.EntityFrameworkCore;
 
 namespace ApiEcommerce.Repository;
@@ -59,6 +60,23 @@ public class BaseRepository<T> : IBaseRepository<T> where T : class, IEntity
 
   public async Task<IEnumerable<T>> GetAllAsync(CancellationToken ct = default)
       => await ApplyDefaultOrder(Query()).ToListAsync(ct);
+
+  public async Task<PagedResult<T>> GetPagedAsync(int page, int pageSize, CancellationToken ct = default)
+  {
+    var ordered = ApplyDefaultOrder(Query());
+
+    // El COUNT va primero y sobre la misma consulta base: así el total corresponde
+    // al mismo filtro que la página (aquí no hay filtro, pero la forma se mantiene
+    // para cuando lo haya).
+    var total = await ordered.CountAsync(ct);
+
+    var items = await ordered
+        .Skip((page - 1) * pageSize)
+        .Take(pageSize)
+        .ToListAsync(ct);
+
+    return new PagedResult<T>(items, page, pageSize, total);
+  }
 
   public async Task<T> AddAsync(T entity, CancellationToken ct = default)
   {

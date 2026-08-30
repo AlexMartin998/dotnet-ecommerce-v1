@@ -31,7 +31,15 @@ en vez de inventar un middleware a mano).
 | `ModelMapper` / MapStruct | AutoMapper `Profile` por entidad | ✅ |
 | `@ControllerAdvice` + `@ExceptionHandler` | `IExceptionHandler` global | ✅ |
 | `ResponseStatusException` | `AppException` con `Code` + `HttpStatusCode` | ✅ |
-| `@Transactional` | `Shared/Db/TransactionalAttribute` | ✅ (en `POST /api/product/buy`) |
+| `@Transactional` | `Shared/Db/TransactionalAttribute` | ✅ (en `POST /api/v1/product/buy`) |
+| Spring Security (`SecurityFilterChain`) | `AddAuthenticationAndAuthorization` + JWT bearer | ✅ |
+| `UserDetailsService` + `PasswordEncoder` | `UserManager<ApplicationUser>` | ✅ |
+| `AuthenticationManager` | `SignInManager<ApplicationUser>` | ✅ |
+| `@PreAuthorize("hasRole('ADMIN')")` | `[Authorize(Roles = Roles.Admin)]` | ✅ |
+| `@ConfigurationProperties` + `@Validated` | `AddOptions<T>().ValidateDataAnnotations().ValidateOnStart()` | ✅ |
+| `@Cacheable` / `@CacheEvict` | decorador `CachedCategoryService` sobre `ICacheService` | ✅ |
+| Spring Data `Pageable` / `Page<T>` | `PageQuery` / `PagedResult<T>` | ✅ |
+| `@Profile("dev")` + `data.sql` | `Data/DataSeeder` + `Seed:Enabled` | ✅ |
 | `@Valid` + Bean Validation | DataAnnotations en los Create/Update DTO | ✅ |
 | `application.yml` | `appsettings.json` | ✅ |
 | Hibernate / JPA | EF Core + `AppDbContext` | ✅ |
@@ -83,7 +91,9 @@ ApiEcommerce/
 │   │   ├── CrudService.cs          implementación sealed
 │   │   ├── IEntityRules.cs         reglas por entidad
 │   │   └── NoEntityRules.cs        "sin reglas" (genérico abierto en DI)
+│   ├── Auth/                   # IAuthService/AuthService, IJwtTokenService/JwtTokenService
 │   ├── ICategoryService.cs / CategoryService.cs / CategoryRules.cs
+│   ├── CachedCategoryService.cs   # decorador de cache sobre ICategoryService
 │   └── IProductService.cs  / ProductService.cs  / ProductRules.cs
 ├── Repository/           # acceso a datos. Entity in / Entity out. AQUÍ SÍ SE HEREDA.
 │   ├── IBaseRepository.cs
@@ -96,10 +106,15 @@ ApiEcommerce/
 ├── Mapping/              # un Profile de AutoMapper por entidad
 ├── Exceptions/           # jerarquía AppException (dominio → HTTP)
 ├── Shared/
+│   ├── Auth/             # Roles, JwtOptions, SeedOptions, extensiones de ClaimsPrincipal
+│   ├── Caching/          # ICacheService, RedisCacheService, NoCacheService, CacheKeys
 │   ├── Db/               # TransactionalAttribute, helpers de EF
-│   ├── Http/             # GlobalExceptionHandler
+│   ├── Http/             # GlobalExceptionHandler, ConfigureSwaggerOptions, CORS, rate limit
+│   ├── Paging/           # PagedResult<T>
+│   ├── Storage/          # IFileStorage, LocalFileStorage, FileUpload
 │   └── DependencyInjection/  # ServiceCollectionExtensions (el bloque DI)
-├── Data/                 # AppDbContext
+├── Data/                 # AppDbContext + DataSeeder
+├── wwwroot/              # archivos estáticos (imágenes de producto)
 ├── Migrations/           # EF Core
 └── AGENTS/docs/          # estos lineamientos
 ```

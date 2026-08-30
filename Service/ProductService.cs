@@ -2,6 +2,8 @@ using ApiEcommerce.Exceptions;
 using ApiEcommerce.Models.Dtos;
 using ApiEcommerce.Repository;
 using ApiEcommerce.Service.Crud;
+using ApiEcommerce.Shared.Paging;
+using ApiEcommerce.Shared.Storage;
 using AutoMapper;
 
 namespace ApiEcommerce.Service;
@@ -21,17 +23,20 @@ public class ProductService : IProductService
   private readonly ICrudService<ProductDto, CreateProductDto, UpdateProductDto> _crud;
   private readonly IProductRepository _repository;
   private readonly ICategoryRepository _categoryRepository;
+  private readonly IFileStorage _storage;
   private readonly IMapper _mapper;
 
   public ProductService(
       ICrudService<ProductDto, CreateProductDto, UpdateProductDto> crud,
       IProductRepository repository,
       ICategoryRepository categoryRepository,
+      IFileStorage storage,
       IMapper mapper)
   {
     _crud = crud;
     _repository = repository;
     _categoryRepository = categoryRepository;
+    _storage = storage;
     _mapper = mapper;
   }
 
@@ -44,6 +49,19 @@ public class ProductService : IProductService
 
   public async Task<IEnumerable<ProductDto>> GetAllAsync(CancellationToken ct = default)
       => _mapper.Map<IEnumerable<ProductDto>>(await _repository.GetAllWithCategoryAsync(ct));
+
+  public async Task<PagedResult<ProductDto>> GetPagedAsync(PageQuery query, CancellationToken ct = default)
+  {
+    ArgumentNullException.ThrowIfNull(query);
+
+    // Igual que GetAll: se usa el método del repositorio que hace Include(Category),
+    // no el genérico, o CategoryName saldría vacío.
+    var page = await _repository.GetPagedWithCategoryAsync(query.Page, query.PageSize, ct);
+
+    return new PagedResult<ProductDto>(
+        [.. _mapper.Map<IEnumerable<ProductDto>>(page.Items)],
+        page.Page, page.PageSize, page.TotalItems);
+  }
 
   public async Task<ProductDto> GetByIdAsync(int id, CancellationToken ct = default)
   {
@@ -59,8 +77,21 @@ public class ProductService : IProductService
   public Task UpdateAsync(int id, UpdateProductDto dto, CancellationToken ct = default)
       => _crud.UpdateAsync(id, dto, ct);
 
-  public Task DeleteAsync(int id, CancellationToken ct = default)
-      => _crud.DeleteAsync(id, ct);
+  // Delete NO se delega tal cual: además de borrar la fila hay que borrar el archivo,
+  // o cada producto eliminado deja su imagen huérfana en disco para siempre.
+  public async Task DeleteAsync(int id, CancellationToken ct = default)
+  {
+    var product = await _repository.GetByIdAsync(id, ct)
+        ?? throw new NotFoundAppException("Product", id);
+
+    var imagePath = product.ImageUrl;
+
+    await _crud.DeleteAsync(id, ct);
+
+    // Después del borrado en base: si la fila no se pudo borrar (409 por FK, por
+    // ejemplo), el archivo debe seguir existiendo.
+    await _storage.DeleteAsync(imagePath, ct);
+  }
 
   // ---- operaciones propias de Product --------------------------------------
 
@@ -78,6 +109,27 @@ public class ProductService : IProductService
   {
     var products = await _repository.SearchProductAsync(name, ct);
     return _mapper.Map<IEnumerable<ProductDto>>(products);
+  }
+
+  public async Task<ProductDto> SetImageAsync(int id, FileUpload upload, CancellationToken ct = default)
+  {
+    ArgumentNullException.ThrowIfNull(upload);
+
+    var product = await _repository.GetByIdAsync(id, ct)
+        ?? throw new NotFoundAppException("Product", id);
+
+    var previous = product.ImageUrl;
+
+    // Se guarda la nueva ANTES de borrar la vieja: si la validación falla, el
+    // producto conserva la imagen que ya tenía.
+    var stored = await _storage.SaveProductImageAsync(upload, ct);
+
+    product.ImageUrl = stored;
+    await _repository.UpdateAsync(product, ct);
+
+    await _storage.DeleteAsync(previous, ct);
+
+    return _mapper.Map<ProductDto>(await _repository.GetByIdWithCategoryAsync(id, ct) ?? product);
   }
 
   public async Task<ProductDto> BuyAsync(BuyProductDto dto, CancellationToken ct = default)

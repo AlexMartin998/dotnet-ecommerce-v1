@@ -1,4 +1,5 @@
 using ApiEcommerce.Models;
+using ApiEcommerce.Shared.Paging;
 
 namespace ApiEcommerce.Repository;
 
@@ -10,6 +11,14 @@ public interface IProductRepository : IBaseRepository<Product>
 
 
   Task<Product?> GetByIdWithCategoryAsync(int id, CancellationToken ct = default);
+
+
+  /// <summary>
+  /// Página de productos <b>con la categoría cargada</b>. Existe aparte del
+  /// <c>GetPagedAsync</c> genérico por la misma razón que <c>GetAllWithCategoryAsync</c>:
+  /// sin el <c>Include</c>, <c>ProductDto.CategoryName</c> sale vacío en silencio.
+  /// </summary>
+  Task<PagedResult<Product>> GetPagedWithCategoryAsync(int page, int pageSize, CancellationToken ct = default);
 
 
   Task<ICollection<Product>> GetProductsForCategoryAsync(int categoryId, CancellationToken ct = default);

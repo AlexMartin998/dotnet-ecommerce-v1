@@ -1,3 +1,6 @@
+using ApiEcommerce.Models.Dtos;
+using ApiEcommerce.Shared.Paging;
+
 namespace ApiEcommerce.Service.Crud;
 
 
@@ -12,6 +15,12 @@ public interface ICrudService<TDto, TCreateDto, TUpdateDto>
 
   /// <summary>Listado completo. Sin resultados devuelve colección vacía, nunca 404.</summary>
   Task<IEnumerable<TDto>> GetAllAsync(CancellationToken ct = default);
+
+  /// <summary>
+  /// Una página del listado. Un <paramref name="query"/> fuera de rango devuelve una
+  /// página vacía con el total real, nunca un 404.
+  /// </summary>
+  Task<PagedResult<TDto>> GetPagedAsync(PageQuery query, CancellationToken ct = default);
 
   /// <summary>
   /// Obtiene por id. <b>Lanza <c>NotFoundAppException</c> si no existe</b>, no devuelve
