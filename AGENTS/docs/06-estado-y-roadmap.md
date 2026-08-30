@@ -25,10 +25,10 @@ paginación y seeding.
 | `HealthController` | ✅ | `GET /health` (liveness), `[ApiVersionNeutral]` |
 | Jerarquía `AppException` | ✅ | + `Unauthorized` (401), `Forbidden` (403), `Validation` (422) |
 | Handler global de errores | ✅ | `GlobalExceptionHandler` + `ProblemDetails` (RFC 7807) |
-| `TransactionalAttribute` | ✅ | aplicado a `POST /api/v1/product/buy` |
+| `TransactionalAttribute` | ✅ | aplicado a `POST /api/v1/product/buy`; efectivo desde que `AddPersistence` activa `EnableRetryOnFailure` |
 | AutoMapper | ✅ | `CategoryProfile`, `ProductProfile`; `MappingProfile` retirado (comentado) |
 | Validación de DTOs | ✅ | DataAnnotations completas en los 5 DTOs de entrada |
-| Registro de DI | ✅ | extraído a `Shared/DependencyInjection/ServiceCollectionExtensions.cs` |
+| Registro de DI | ✅ | un `XExtensions.cs` por feature, en su carpeta; `Shared/DependencyInjection/` es solo composition root (`AddApplication`/`AddInfrastructure`/`AddWebApi`) |
 | `CancellationToken` extremo a extremo | ✅ | controller → servicio → repositorio → EF |
 | Identity + JWT | ✅ | `ApplicationUser`, `AddIdentityCore`, `JwtOptions` validado con `ValidateOnStart` |
 | `AuthController` | ✅ | `register` / `login` / `me`, rol fijo `user` en el registro |
@@ -88,18 +88,26 @@ Sigue siendo el siguiente paso, y ahora hay más superficie que merece cobertura
    ocurra **después** de la escritura y **no** ocurra si el servicio interno lanza.
 7. Perfiles de AutoMapper: `AssertConfigurationIsValid()` + test del PATCH parcial.
 
-### Paso 8 — Refresh tokens y revocación
+### Paso 8 — Partir en proyectos (cuando duela, no antes)
+
+Los tres bloques del composition root (`AddApplication` / `AddInfrastructure` /
+`AddWebApi`) son ya las costuras: `ApiEcommerce.Api` / `.Infrastructure` /
+`.Application` (+ `.Domain`). Hoy la dirección de dependencias es una convención;
+partir en proyectos la convierte en algo que impone el compilador. **No es
+urgente**: hacerlo antes de que el proyecto lo pida solo añade fricción.
+
+### Paso 9 — Refresh tokens y revocación
 
 El access token dura 60 min y no se puede revocar. El claim `jti` ya se emite: con
 él, una denylist en Redis (la misma instancia que ya está conectada) permite
 invalidar un token concreto. Un refresh token rotatorio en base cierra el ciclo.
 
-### Paso 9 — Endpoint de administración de usuarios
+### Paso 10 — Endpoint de administración de usuarios
 
 `GET /api/v1/user` (listado, admin), `POST /api/v1/user/{id}/roles` (promover a
 admin). Hoy el único camino para tener un admin es el seeder.
 
-### Paso 10 — Deudas conocidas y anotadas
+### Paso 11 — Deudas conocidas y anotadas
 
 - **`DbUpdateException` → `ConflictAppException`** para violaciones de índice
   único, como red de seguridad ante carreras (hoy la unicidad se comprueba antes
@@ -121,6 +129,9 @@ admin). Hoy el único camino para tener un admin es el seeder.
   cambio a blob storage sea de una clase.
 - **`UseForwardedHeaders`.** El rate limiting particiona por IP remota; detrás de
   un proxy hará falta activarlo o todos los clientes compartirán partición.
+- **Rotación de `Jwt:SecretKey` en caliente.** `JwtTokenService` es singleton y
+  materializa las `SigningCredentials` en el constructor, así que rotar la clave
+  exige reiniciar. Se resuelve cambiando `IOptions` por `IOptionsMonitor`.
 
 ## Cómo mantener este documento
 

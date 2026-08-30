@@ -135,19 +135,46 @@ Un `/// <summary>Gets the id.</summary>` sobre `GetId` es ruido: no se agrega.
 
 ## Inyección de dependencias
 
-Todo se registra en `Shared/DependencyInjection/ServiceCollectionExtensions.cs`,
-agrupado por capa y con lifetime **Scoped**. `Program.cs` solo encadena los
-bloques, así se lee como un índice:
+La regla es **cada feature registra lo suyo, en su propia carpeta**. El archivo
+del registro vive junto al código que registra, y se llama `XExtensions.cs`:
+
+| Archivo | Método |
+| --- | --- |
+| `Data/PersistenceExtensions.cs` | `AddPersistence(configuration)` |
+| `Repository/RepositoryExtensions.cs` | `AddRepositories()` |
+| `Mapping/MappingExtensions.cs` | `AddObjectMapping()` |
+| `Service/ApplicationServiceExtensions.cs` | `AddDomainServices()` |
+| `Service/Auth/AuthExtensions.cs` | `AddIdentityAndJwt(configuration)` |
+| `Shared/Caching/CachingExtensions.cs` | `AddDistributedCaching(configuration)` |
+| `Shared/Storage/StorageExtensions.cs` | `AddFileStorage(configuration)` |
+| `Shared/Http/ApiDocumentationExtensions.cs` | `AddApiVersioningAndDocs()` |
+| `Shared/Http/CorsPolicies.cs` | `AddCorsPolicy(configuration)` |
+| `Shared/Http/RateLimitPolicies.cs` | `AddRateLimiting()` |
+| `Shared/Http/ErrorHandlingExtensions.cs` | `AddErrorHandling()` |
+| `Shared/Http/HealthCheckExtensions.cs` | `AddHealthProbes(configuration)` |
+
+Cuando el archivo ya existe para otra cosa y el nombre de la política vive ahí
+(`CorsPolicies`, `RateLimitPolicies`), el `Add…` va en **ese mismo archivo**: la
+constante y su registro no deben poder separarse.
+
+`Shared/DependencyInjection/ServiceCollectionExtensions.cs` es el **composition
+root** y no registra nada: solo compone los anteriores en tres bloques por capa,
+que además declaran la dirección de las dependencias — **Web → Infrastructure →
+Application**:
 
 ```csharp
-builder.Services.AddPersistence(builder.Configuration);   // EF Core + SQL Server
-builder.Services.AddObjectMapping();                      // AutoMapper
-builder.Services.AddRepositories();                       // IBaseRepository<> + repos
-builder.Services.AddApplicationServices();                // CrudService + reglas + servicios
-builder.Services.AddErrorHandling();                      // GlobalExceptionHandler + ProblemDetails
+builder.Services
+    .AddApplication()                          // mapeo + reglas + CRUD compuesto + servicios
+    .AddInfrastructure(builder.Configuration)  // EF Core, Redis, disco, Identity + JWT
+    .AddWebApi(builder.Configuration);         // controllers, versionado, CORS, rate limit, errores, health
 ```
 
-Dentro de `AddApplicationServices()`, por cada entidad:
+En un proyecto único esos tres bloques son una **convención, no una frontera que
+imponga el compilador**. Pero son exactamente las costuras por donde se parte la
+solución en `ApiEcommerce.Api` / `.Infrastructure` / `.Application` el día que
+haga falta, sin reescribir el registro.
+
+Dentro de `AddDomainServices()`, por cada entidad:
 
 ```csharp
 // reglas: genérico abierto = "sin reglas"; el registro cerrado gana
@@ -162,15 +189,54 @@ services.AddScoped<ICrudService<CategoryDto, CreateCategoryDto, UpdateCategoryDt
 services.AddScoped<ICategoryService, CategoryService>();
 ```
 
-- **Scoped** por defecto (misma vida que `AppDbContext` y que el request).
-- **Singleton** solo para cosas sin estado y sin `DbContext` (configuración,
-  clientes HTTP tipados).
-- El registro open-generic `IBaseRepository<>` permite inyectar
-  `IBaseRepository<Product>` sin escribir un repositorio específico —
-  útil para entidades sin consultas propias.
-- Con genéricos, **el contenedor prefiere siempre el registro cerrado sobre el
-  abierto**, sin depender del orden en que se registren. Es lo que hace que
-  `CategoryRules` gane a `NoEntityRules<,,>`.
+### Lifetimes
+
+- **Scoped** para todo lo que dependa de `AppDbContext` (repositorios, servicios
+  de entidad, reglas): el contexto vive lo que dura el request y capturarlo en un
+  singleton corrompería el change tracker.
+- **Singleton** para lo que no guarda estado por request y solo depende de otros
+  singletons: `IJwtTokenService`, `ICacheService`, `IFileStorage`.
+- **El mismo servicio se registra con el mismo lifetime en todas sus ramas.** Si
+  un registro condicional da `Scoped` en una rama y `Singleton` en otra, se crea
+  una mina: un consumidor singleton funcionará en el entorno de una rama y
+  reventará por captured dependency en el de la otra — que es justo el entorno
+  que sí tiene la infraestructura. Pasó con `ICacheService` y está corregido.
+
+### Decoradores
+
+Un aspecto transversal (cache, auditoría, reintentos) se añade **decorando**, no
+tocando el servicio de negocio. Hay que registrar el tipo **concreto** además de
+la interfaz, o el decorador no tendría de dónde sacar el servicio interno:
+
+```csharp
+services.AddScoped<CategoryService>();                      // el concreto
+services.AddScoped<ICategoryService>(sp => new CachedCategoryService(
+    sp.GetRequiredService<CategoryService>(),
+    sp.GetRequiredService<ICacheService>()));
+```
+
+### Configuración
+
+Toda sección se enlaza a una clase tipada con DataAnnotations y se valida:
+
+```csharp
+services.AddOptions<JwtOptions>()
+    .Bind(configuration.GetSection(JwtOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();   // solo donde el fallo deba impedir el arranque
+```
+
+- Los servicios reciben **`IOptions<T>`**, nunca `IConfiguration`. Volver a leer
+  y bindear la misma sección en dos sitios es tener dos fuentes de verdad, una
+  validada y otra no.
+- Para configurar opciones **del framework** a partir de las nuestras, se usa
+  `IConfigureOptions<T>` / `IConfigureNamedOptions<T>` y se registra con
+  `services.ConfigureOptions<…>()`. Es lo que hacen
+  `ConfigureJwtBearerOptions` (validación del token desde `JwtOptions`) y
+  `ConfigureSwaggerOptions` (un documento por versión de API).
+- Leer configuración **eager** en el registro sí es correcto cuando lo que se
+  decide es *qué implementación registrar* (`AddDistributedCaching`,
+  `AddHealthProbes`): el grafo de DI se construye una sola vez.
 
 ## Base de datos y migraciones
 

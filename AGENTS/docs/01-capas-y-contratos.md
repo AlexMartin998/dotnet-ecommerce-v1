@@ -155,6 +155,7 @@ registrarlo a mano.
 - `Shared/Http/` — infraestructura HTTP transversal (`GlobalExceptionHandler`,
   formato de error). **Es la única carpeta, junto a `Controllers/`, que puede
   conocer códigos HTTP.**
-- `Shared/DependencyInjection/` — `ServiceCollectionExtensions`, el registro de
-  DI agrupado por capa (`AddPersistence`, `AddObjectMapping`, `AddRepositories`,
-  `AddApplicationServices`, `AddErrorHandling`).
+- `Shared/DependencyInjection/` — `ServiceCollectionExtensions`, el **composition
+  root**: no registra nada, compone en tres bloques (`AddApplication`,
+  `AddInfrastructure`, `AddWebApi`) los `Add…` que cada feature declara en su
+  propia carpeta. Ver `05-convenciones.md` → Inyección de dependencias.
