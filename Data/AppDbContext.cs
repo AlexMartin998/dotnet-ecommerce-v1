@@ -1,9 +1,24 @@
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using ApiEcommerce.Models;
 
 namespace ApiEcommerce.Data;
 
-public class AppDbContext : DbContext
+
+/// <summary>
+/// Contexto de EF Core. Hereda de <see cref="IdentityDbContext{TUser}"/> y no de
+/// <c>DbContext</c>: eso añade las 7 tablas <c>AspNet*</c> (usuarios, roles, claims,
+/// logins, tokens) al mismo contexto y a la misma transacción que el dominio.
+/// </summary>
+/// <remarks>
+/// El contexto de referencia del curso mantenía <b>dos</b> tablas de usuarios (una
+/// legacy <c>Users</c> y las de Identity) y declaraba un <c>DbSet&lt;User&gt; Users</c>
+/// que <b>ocultaba</b> el <c>Users</c> de <see cref="IdentityDbContext{TUser}"/>.
+/// Resultado: las comprobaciones de unicidad consultaban una tabla vacía y siempre
+/// devolvían "libre". Aquí solo existe <see cref="ApplicationUser"/>.
+/// </remarks>
+public class AppDbContext : IdentityDbContext<ApplicationUser>
 {
 
   public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
@@ -14,6 +29,16 @@ public class AppDbContext : DbContext
   public DbSet<Category> Categories { get; set; }
 
   public DbSet<Product> Products { get; set; }
+
+
+  /// <summary>
+  /// <c>base.OnModelCreating</c> es <b>obligatorio</b>: es quien mapea las tablas de
+  /// Identity y sus índices únicos. Omitirlo compila y luego falla en la migración.
+  /// </summary>
+  protected override void OnModelCreating(ModelBuilder modelBuilder)
+  {
+    base.OnModelCreating(modelBuilder);
+  }
 
 
   // // // Auditoría automática -------------------------------------------------

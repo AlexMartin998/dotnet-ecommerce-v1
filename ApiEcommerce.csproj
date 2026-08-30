@@ -4,11 +4,21 @@
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Los comentarios /// se vuelcan a XML para que Swagger los muestre. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- 1591 = "falta comentario XML en miembro público": aquí se documenta lo no
+         obvio, no todo (ver AGENTS/docs/05-convenciones.md). -->
+    <NoWarn>$(NoWarn);1591</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <!-- como model mapper de spring boot -->
+    <PackageReference Include="Asp.Versioning.Mvc" Version="8.1.0" />
+    <PackageReference Include="Asp.Versioning.Mvc.ApiExplorer" Version="8.1.0" />
+    <PackageReference Include="AspNetCore.HealthChecks.Redis" Version="9.0.0" />
     <PackageReference Include="AutoMapper" Version="15.1.1" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="9.0.9" />
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="9.0.9" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.4" />
 
     <!-- Sql Server -->
@@ -22,7 +32,20 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="9.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" Version="9.0.9" />
+    <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="9.0.4" />
+  </ItemGroup>
+
+  <!-- El código de referencia del curso vive dentro del repo (AGENTS/__ref__/) pero
+       NO forma parte del proyecto: sin esto MSBuild lo compila y el build revienta
+       con tipos duplicados. -->
+  <ItemGroup>
+    <Compile Remove="AGENTS/**" />
+    <Content Remove="AGENTS/**" />
+    <EmbeddedResource Remove="AGENTS/**" />
+    <None Remove="AGENTS/**" />
   </ItemGroup>
 
 </Project>

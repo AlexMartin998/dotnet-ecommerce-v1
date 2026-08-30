@@ -40,8 +40,13 @@ Un `/// <summary>Gets the id.</summary>` sobre `GetId` es ruido: no se agrega.
 
 ## Controllers
 
-- `[ApiController]` + `[Route("api/[controller]")]`. El segmento sale del prefijo
-  de la clase: `CategoryController` → `/api/category`.
+- `[ApiController]` + `[ApiVersion("1.0")]` + `[Route("api/v{version:apiVersion}/[controller]")]`.
+  El segmento final sale del prefijo de la clase: `CategoryController` → `/api/v1/category`.
+  Un controller de infraestructura que no forma parte del contrato versionado
+  (`HealthController`) lleva `[ApiVersionNeutral]`; **sin él da 404**, porque el
+  versionador exige una versión que su ruta no tiene.
+- `CreatedAtRoute` sobre una ruta versionada **debe pasar el parámetro `version`**:
+  `CreatedAtRoute("GetCategory", new { version = HttpContext.ApiVersionValue(), id = newId }, null)`.
 - **Rutas con nombre** en todas las acciones (`[HttpGet("{id:int}", Name = "GetCategory")]`)
   para que `CreatedAtRoute` pueda referenciarlas.
 - **Constraints de ruta** siempre que apliquen: `{id:int}`. Evita entrar al
@@ -59,6 +64,38 @@ Un `/// <summary>Gets the id.</summary>` sobre `GetId` es ruido: no se agrega.
 | crear | `POST /api/x` | 201 | `CreatedAtRoute`, header `Location` |
 | actualizar | `PATCH /api/x/{id:int}` | 204 | vacío |
 | borrar | `DELETE /api/x/{id:int}` | 204 | vacío |
+
+## Autorización
+
+- El controller lleva **`[Authorize]` a nivel de clase** (el requisito más débil:
+  estar autenticado); las lecturas públicas se abren con `[AllowAnonymous]` y las
+  escrituras se restringen con `[Authorize(Roles = Roles.Admin)]` acción a acción.
+- **Varios `[Authorize]` se combinan (AND), no se sobreescriben.** Poner
+  `[Authorize(Roles = "admin")]` en la clase y `[Authorize]` en una acción **no
+  relaja nada**: la acción sigue exigiendo `admin`. El único atributo que gana
+  sobre la clase es `[AllowAnonymous]`. Por eso el requisito fuerte va en la
+  acción y no en la clase.
+- Cerrar por defecto y abrir a mano: si se añade un endpoint y se olvida el
+  atributo, queda protegido, no público.
+- Los nombres de rol son `const string` en `Shared/Auth/Roles.cs`; `[Authorize]`
+  es un atributo y solo admite constantes de compilación.
+
+## Configuración
+
+- Toda sección de configuración se enlaza a una **clase tipada con
+  DataAnnotations** (`JwtOptions`, `CacheOptions`, `SeedOptions`,
+  `FileStorageOptions`) mediante
+  `AddOptions<T>().Bind(...).ValidateDataAnnotations()`. Es el
+  `@ConfigurationProperties` + `@Validated` de Spring.
+- Lo que sin ello rompería en producción lleva además **`.ValidateOnStart()`**
+  (hoy, `JwtOptions`): un secreto ausente tumba el arranque, no el primer login.
+- **Los secretos no se commitean.** `appsettings.json` lleva los valores vacíos;
+  `appsettings.Development.json` lleva los de desarrollo; el resto va en
+  user-secrets (`dotnet user-secrets set "Jwt:SecretKey" "…"`) o en variables de
+  entorno (`Jwt__SecretKey`, doble guion bajo por cada `:`).
+- **Serilog lee la sección `Serilog`, no la sección `Logging`** del scaffold. Se
+  eliminó `Logging` de `appsettings.json` para no tener dos fuentes de verdad de
+  las que solo una funciona.
 
 ## DTOs y validación
 

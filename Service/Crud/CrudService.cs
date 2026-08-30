@@ -1,6 +1,8 @@
 using ApiEcommerce.Exceptions;
 using ApiEcommerce.Models;
+using ApiEcommerce.Models.Dtos;
 using ApiEcommerce.Repository;
+using ApiEcommerce.Shared.Paging;
 using AutoMapper;
 
 namespace ApiEcommerce.Service.Crud;
@@ -37,6 +39,17 @@ public sealed class CrudService<TEntity, TDto, TCreateDto, TUpdateDto>(
 
   public async Task<IEnumerable<TDto>> GetAllAsync(CancellationToken ct = default)
       => mapper.Map<IEnumerable<TDto>>(await repository.GetAllAsync(ct));
+
+  public async Task<PagedResult<TDto>> GetPagedAsync(PageQuery query, CancellationToken ct = default)
+  {
+    ArgumentNullException.ThrowIfNull(query);
+
+    var page = await repository.GetPagedAsync(query.Page, query.PageSize, ct);
+
+    return new PagedResult<TDto>(
+        [.. mapper.Map<IEnumerable<TDto>>(page.Items)],
+        page.Page, page.PageSize, page.TotalItems);
+  }
 
   public async Task<TDto> GetByIdAsync(int id, CancellationToken ct = default)
       => mapper.Map<TDto>(await GetOrThrowAsync(id, ct));

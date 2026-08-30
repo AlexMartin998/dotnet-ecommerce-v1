@@ -1,5 +1,6 @@
 using ApiEcommerce.Models.Dtos;
 using ApiEcommerce.Service.Crud;
+using ApiEcommerce.Shared.Paging;
 
 namespace ApiEcommerce.Service;
 
@@ -27,6 +28,9 @@ public class CategoryService : ICategoryService
 
   public Task<IEnumerable<CategoryDto>> GetAllAsync(CancellationToken ct = default)
       => _crud.GetAllAsync(ct);
+
+  public Task<PagedResult<CategoryDto>> GetPagedAsync(PageQuery query, CancellationToken ct = default)
+      => _crud.GetPagedAsync(query, ct);
 
   public Task<CategoryDto> GetByIdAsync(int id, CancellationToken ct = default)
       => _crud.GetByIdAsync(id, ct);

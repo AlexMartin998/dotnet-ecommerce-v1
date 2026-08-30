@@ -1,5 +1,6 @@
 using ApiEcommerce.Data;
 using ApiEcommerce.Models;
+using ApiEcommerce.Shared.Paging;
 using Microsoft.EntityFrameworkCore;
 
 namespace ApiEcommerce.Repository;
@@ -23,6 +24,26 @@ public class ProductRepository(AppDbContext db)
     return await Query()
         .Include(p => p.Category)
         .FirstOrDefaultAsync(p => p.Id == id, ct);
+  }
+
+  public async Task<PagedResult<Product>> GetPagedWithCategoryAsync(
+      int page, int pageSize, CancellationToken ct = default)
+  {
+    var ordered = Query()
+        .Include(p => p.Category)
+        .OrderByDescending(p => p.CreatedAt)
+        .ThenByDescending(p => p.Id);   // desempate: dos productos creados en el mismo
+                                        // tick harían el orden no determinista y una
+                                        // fila podría repetirse entre páginas.
+
+    var total = await _db.Products.CountAsync(ct);
+
+    var items = await ordered
+        .Skip((page - 1) * pageSize)
+        .Take(pageSize)
+        .ToListAsync(ct);
+
+    return new PagedResult<Product>(items, page, pageSize, total);
   }
 
   public async Task<ICollection<Product>> GetProductsForCategoryAsync(int categoryId, CancellationToken ct = default)

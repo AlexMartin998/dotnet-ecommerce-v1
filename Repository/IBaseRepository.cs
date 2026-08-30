@@ -1,4 +1,5 @@
 using ApiEcommerce.Models;
+using ApiEcommerce.Shared.Paging;
 
 namespace ApiEcommerce.Repository;
 
@@ -26,6 +27,16 @@ public interface IBaseRepository<T> where T : class, IEntity
   /// <summary>Listado completo sin rastrear, ordenado por <c>CreatedAt</c> descendente (o por <c>Id</c> si la entidad no es <see cref="IAuditable"/>).</summary>
   Task<IEnumerable<T>> GetAllAsync(CancellationToken ct = default);
 
+  /// <summary>
+  /// Una página del listado, con el total de filas. Mismo orden que
+  /// <see cref="GetAllAsync"/>: un <c>Skip</c>/<c>Take</c> sobre una consulta sin
+  /// orden estable puede devolver la misma fila en dos páginas y saltarse otra.
+  /// </summary>
+  /// <param name="page">Página, base 1.</param>
+  /// <param name="pageSize">Tamaño de página, ya validado por el DTO.</param>
+  /// <param name="ct">Token de cancelación.</param>
+  Task<PagedResult<T>> GetPagedAsync(int page, int pageSize, CancellationToken ct = default);
+
   Task<T> AddAsync(T entity, CancellationToken ct = default);
 
   Task<T> UpdateAsync(T entity, CancellationToken ct = default);
@@ -44,6 +55,7 @@ public interface IBaseRepository<T> where T : class, IEntity
   /// <param name="fieldName">Nombre de la propiedad. Si no existe o no es <c>string</c>, devuelve <c>false</c>.</param>
   /// <param name="value">Valor a buscar; la comparación es case-insensitive y traducible a SQL.</param>
   /// <param name="excludeId">Id a excluir de la búsqueda (para validar unicidad en un update).</param>
+  /// <param name="ct">Token de cancelación propagado hasta EF Core.</param>
   Task<bool> ExistsByFieldAsync(string fieldName, string value, int? excludeId = null, CancellationToken ct = default);
 
 }

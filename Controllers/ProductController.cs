@@ -1,14 +1,35 @@
 using ApiEcommerce.Models.Dtos;
 using ApiEcommerce.Service;
+using ApiEcommerce.Shared.Auth;
 using ApiEcommerce.Shared.Db;
+using ApiEcommerce.Shared.Http;
+using ApiEcommerce.Shared.Paging;
+using ApiEcommerce.Shared.Storage;
+using Asp.Versioning;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace ApiEcommerce.Controllers;
 
 
 [ApiController]
-[Route("api/[controller]")] // api/product
+[ApiVersion("1.0")]
+[Route("api/v{version:apiVersion}/[controller]")] // api/v1/product
 [Produces("application/json")]
+// Cerrado por defecto: sin ningún atributo, una acción de este controller exige
+// estar autenticado. Los GET públicos se abren con [AllowAnonymous] y las
+// escrituras se restringen con [Authorize(Roles = ...)] una a una.
+//
+// OJO con la semántica de ASP.NET Core: varios [Authorize] se COMBINAN (AND), no se
+// sobreescriben. Poner [Authorize(Roles = "admin")] en la clase y [Authorize] en una
+// acción NO relaja nada: la acción seguiría exigiendo el rol admin. El único atributo
+// que gana sobre la clase es [AllowAnonymous]. Por eso la clase lleva el requisito
+// más DÉBIL (estar autenticado) y cada acción añade el suyo.
+//
+// La compra es justo el caso que obliga a este diseño: solo pide estar autenticado,
+// con cualquier rol. Exigir admin para comprar —como hacía el código de referencia—
+// no tiene sentido en una tienda.
+[Authorize]
 public class ProductController : ControllerBase
 {
     private readonly IProductService _service;
@@ -20,6 +41,7 @@ public class ProductController : ControllerBase
 
     // ---- CRUD ------------------------------------------------------------
 
+    [AllowAnonymous]
     [HttpGet(Name = "GetProducts")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<ActionResult<IEnumerable<ProductDto>>> GetProducts(CancellationToken ct)
@@ -28,6 +50,22 @@ public class ProductController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>Listado paginado. Preferir este a <c>GET /api/v1/product</c>, que trae la tabla entera.</summary>
+    [AllowAnonymous]
+    [HttpGet("paged", Name = "GetProductsPaged")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<PagedResult<ProductDto>>> GetProductsPaged(
+        [FromQuery] PageQuery query, CancellationToken ct)
+    {
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        var result = await _service.GetPagedAsync(query, ct);
+        return Ok(result);
+    }
+
+    [AllowAnonymous]
     [HttpGet("{id:int}", Name = "GetProduct")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -37,6 +75,7 @@ public class ProductController : ControllerBase
         return Ok(product);
     }
 
+    [Authorize(Roles = Roles.Admin)]
     [HttpPost(Name = "CreateProduct")]
     [ProducesResponseType(StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -48,13 +87,16 @@ public class ProductController : ControllerBase
 
         // CategoryId inexistente -> 400 ; SKU duplicado -> 409
         var newId = await _service.CreateAsync(dto, ct);
-        return CreatedAtRoute("GetProduct", new { id = newId }, null);
+        return CreatedAtRoute("GetProduct", new { version = HttpContext.ApiVersionValue(), id = newId }, null);
     }
 
+    [Authorize(Roles = Roles.Admin)]
     [HttpPatch("{id:int}", Name = "UpdateProduct")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> UpdateProduct(int id, [FromBody] UpdateProductDto dto, CancellationToken ct)
     {
@@ -65,6 +107,7 @@ public class ProductController : ControllerBase
         return NoContent();
     }
 
+    [Authorize(Roles = Roles.Admin)]
     [HttpDelete("{id:int}", Name = "DeleteProduct")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -76,6 +119,7 @@ public class ProductController : ControllerBase
 
     // ---- endpoints propios del dominio -----------------------------------
 
+    [AllowAnonymous]
     [HttpGet("category/{categoryId:int}", Name = "GetProductsForCategory")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -87,6 +131,7 @@ public class ProductController : ControllerBase
     }
 
     // Sin resultados devuelve 200 con [], no 404 (regla 7 de 04-error-handling.md)
+    [AllowAnonymous]
     [HttpGet("search", Name = "SearchProducts")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<ActionResult<IEnumerable<ProductDto>>> SearchProducts(
@@ -96,7 +141,40 @@ public class ProductController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>Sube o reemplaza la imagen del producto.</summary>
+    /// <remarks>
+    /// <c>[Consumes]</c> es explícito para que Swagger pinte el selector de archivo y
+    /// para que un cliente que mande JSON reciba un 415 claro en vez de un 400 raro.
+    /// El <c>[RequestSizeLimit]</c> corta la petición <b>antes</b> de leerla entera:
+    /// validar el tamaño solo después de haber recibido 500 MB no protege de nada.
+    /// </remarks>
+    [Authorize(Roles = Roles.Admin)]
+    [HttpPost("{id:int}/image", Name = "SetProductImage")]
+    [Consumes("multipart/form-data")]
+    [RequestSizeLimit(2 * 1024 * 1024)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ProductDto>> SetProductImage(
+        int id, IFormFile file, CancellationToken ct)
+    {
+        if (file is null || file.Length == 0)
+            return ValidationProblem("A file is required.");
+
+        // El controller adapta el tipo del framework (IFormFile) al del dominio
+        // (FileUpload): el servicio no debe conocer ASP.NET Core.
+        await using var content = file.OpenReadStream();
+
+        var result = await _service.SetImageAsync(
+            id, new FileUpload(content, file.FileName, file.ContentType, file.Length), ct);
+
+        return Ok(result);
+    }
+
     /// <summary>Descuenta stock por SKU.</summary>
+    // Sin atributo: hereda el [Authorize] de la clase = cualquier usuario autenticado.
     [HttpPost("buy", Name = "BuyProduct")]
     [Transactional] // la compra escribirá en más de un repositorio en cuanto haya Order
     [ProducesResponseType(StatusCodes.Status200OK)]

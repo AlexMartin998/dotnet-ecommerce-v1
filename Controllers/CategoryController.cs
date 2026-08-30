@@ -1,13 +1,29 @@
 using ApiEcommerce.Models.Dtos;
 using ApiEcommerce.Service;
+using ApiEcommerce.Shared.Auth;
+using ApiEcommerce.Shared.Http;
+using ApiEcommerce.Shared.Paging;
+using Asp.Versioning;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace ApiEcommerce.Controllers;
 
 
 [ApiController]
-[Route("api/[controller]")] // api/category
+[ApiVersion("1.0")]
+[Route("api/v{version:apiVersion}/[controller]")] // api/v1/category
 [Produces("application/json")]
+// Cerrado por defecto: sin ningún atributo, una acción de este controller exige
+// estar autenticado. Los GET públicos se abren con [AllowAnonymous] y las
+// escrituras se restringen con [Authorize(Roles = ...)] una a una.
+//
+// OJO con la semántica de ASP.NET Core: varios [Authorize] se COMBINAN (AND), no se
+// sobreescriben. Poner [Authorize(Roles = "admin")] en la clase y [Authorize] en una
+// acción NO relaja nada: la acción seguiría exigiendo el rol admin. El único atributo
+// que gana sobre la clase es [AllowAnonymous]. Por eso la clase lleva el requisito
+// más DÉBIL (estar autenticado) y cada acción añade el suyo.
+[Authorize]
 public class CategoryController : ControllerBase
 {
     private readonly ICategoryService _service;
@@ -20,6 +36,7 @@ public class CategoryController : ControllerBase
     // Sin try/catch: las excepciones de dominio que lance el servicio las traduce
     // GlobalExceptionHandler a ProblemDetails (ver AGENTS/docs/04-error-handling.md).
 
+    [AllowAnonymous]
     [HttpGet(Name = "GetCategories")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<ActionResult<IEnumerable<CategoryDto>>> GetCategories(CancellationToken ct)
@@ -28,6 +45,23 @@ public class CategoryController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>Listado paginado. Preferir este a <c>GET /api/v1/category</c>, que trae la tabla entera.</summary>
+    [AllowAnonymous]
+    [HttpGet("paged", Name = "GetCategoriesPaged")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<PagedResult<CategoryDto>>> GetCategoriesPaged(
+        [FromQuery] PageQuery query, CancellationToken ct)
+    {
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        // Una página fuera de rango devuelve 200 con [] y el total real, no 404.
+        var result = await _service.GetPagedAsync(query, ct);
+        return Ok(result);
+    }
+
+    [AllowAnonymous]
     [HttpGet("{id:int}", Name = "GetCategory")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -38,9 +72,12 @@ public class CategoryController : ControllerBase
         return Ok(category);
     }
 
+    [Authorize(Roles = Roles.Admin)]
     [HttpPost(Name = "CreateCategory")]
     [ProducesResponseType(StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> CreateCategory([FromBody] CreateCategoryDto dto, CancellationToken ct)
     {
@@ -50,9 +87,10 @@ public class CategoryController : ControllerBase
 
         // nombre duplicado -> ConflictAppException -> 409
         var newId = await _service.CreateAsync(dto, ct);
-        return CreatedAtRoute("GetCategory", new { id = newId }, null);
+        return CreatedAtRoute("GetCategory", new { version = HttpContext.ApiVersionValue(), id = newId }, null);
     }
 
+    [Authorize(Roles = Roles.Admin)]
     [HttpPatch("{id:int}", Name = "UpdateCategory")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -67,6 +105,7 @@ public class CategoryController : ControllerBase
         return NoContent();
     }
 
+    [Authorize(Roles = Roles.Admin)]
     [HttpDelete("{id:int}", Name = "DeleteCategory")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -109,7 +148,7 @@ namespace ApiEcommerce.Controllers
 
 
         // endpoints -----
-        [HttpGet(Name = "GetCategories")] // api/category
+    [HttpGet(Name = "GetCategories")] // api/category
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -124,7 +163,7 @@ namespace ApiEcommerce.Controllers
             return Ok(categoriesDto);
         }
 
-        [HttpGet("{id:int}", Name = "GetCategory")] // api/category/1
+    [HttpGet("{id:int}", Name = "GetCategory")] // api/category/1
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
