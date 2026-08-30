@@ -5,6 +5,7 @@ using ApiEcommerce.Service;
 using ApiEcommerce.Service.Auth;
 using ApiEcommerce.Shared.Caching;
 using ApiEcommerce.Shared.Http;
+using ApiEcommerce.Shared.Messaging;
 using ApiEcommerce.Shared.Storage;
 
 namespace ApiEcommerce.Shared.DependencyInjection;
@@ -63,7 +64,8 @@ public static class ServiceCollectionExtensions
           .AddRepositories()                    // Repository/RepositoryExtensions.cs
           .AddDistributedCaching(configuration) // Shared/Caching/CachingExtensions.cs
           .AddFileStorage(configuration)        // Shared/Storage/StorageExtensions.cs
-          .AddIdentityAndJwt(configuration);    // Service/Auth/AuthExtensions.cs
+          .AddIdentityAndJwt(configuration)     // Service/Auth/AuthExtensions.cs
+          .AddMessaging(configuration);         // Shared/Messaging/MessagingExtensions.cs
 
 
   /// <summary>

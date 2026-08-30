@@ -35,6 +35,6 @@ public interface IProductService
   /// Descuenta stock por SKU y devuelve el producto ya actualizado.
   /// 404 si el SKU no existe; 409 si el stock es insuficiente.
   /// </summary>
-  Task<ProductDto> BuyAsync(BuyProductDto dto, CancellationToken ct = default);
+  Task<ProductDto> BuyAsync(BuyProductDto dto, string? buyerUserId = null, CancellationToken ct = default);
 
 }

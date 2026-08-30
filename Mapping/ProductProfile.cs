@@ -18,6 +18,7 @@ public class ProductProfile : Profile
     // escritura: la navegación Category se ignora, se trabaja solo con CategoryId
     CreateMap<CreateProductDto, Product>()
         .ForMember(d => d.Id, o => o.Ignore())
+        .ForMember(d => d.RowVersion, o => o.Ignore())   // lo gestiona SQL Server
         .ForMember(d => d.Category, o => o.Ignore())
         .ForMember(d => d.CreatedAt, o => o.Ignore())
         .ForMember(d => d.UpdatedAt, o => o.Ignore());
@@ -34,6 +35,7 @@ public class ProductProfile : Profile
     // Para vaciar Description/ImageUrl hay que enviar "", no null.
     CreateMap<UpdateProductDto, Product>()
         .ForMember(d => d.Id, o => o.Ignore())
+        .ForMember(d => d.RowVersion, o => o.Ignore())   // lo gestiona SQL Server
         .ForMember(d => d.Category, o => o.Ignore())
         .ForMember(d => d.CreatedAt, o => o.Ignore())
         .ForMember(d => d.UpdatedAt, o => o.Ignore())

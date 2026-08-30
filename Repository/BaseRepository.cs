@@ -111,6 +111,9 @@ public class BaseRepository<T> : IBaseRepository<T> where T : class, IEntity
   public async Task<bool> ExistsAsync(int id, CancellationToken ct = default)
       => await _dbSet.AnyAsync(e => EF.Property<int>(e, nameof(IEntity.Id)) == id, ct);
 
+  public async Task SaveChangesAsync(CancellationToken ct = default)
+      => await _db.SaveChangesAsync(ct);
+
   public async Task<bool> ExistsByFieldAsync(
       string fieldName, string value, int? excludeId = null, CancellationToken ct = default)
   {

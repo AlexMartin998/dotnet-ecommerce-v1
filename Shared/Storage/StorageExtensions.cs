@@ -12,7 +12,8 @@ public static class StorageExtensions
   {
     services.AddOptions<FileStorageOptions>()
         .Bind(configuration.GetSection(FileStorageOptions.SectionName))
-        .ValidateDataAnnotations();
+        .ValidateDataAnnotations()
+        .ValidateOnStart();   // configuración inválida = no arranca, no falla en la primera petición
 
     services.AddSingleton<IFileStorage, LocalFileStorage>();
 

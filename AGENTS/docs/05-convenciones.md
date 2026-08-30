@@ -217,6 +217,17 @@ services.AddScoped<ICategoryService>(sp => new CachedCategoryService(
 
 ### Configuración
 
+**Una regla condicional no se expresa con un atributo.** `[Required]` se evalúa
+siempre que alguien lea `.Value`, así que una opción obligatoria *solo si otra
+bandera está activa* va en `.Validate(...)`, no en la propiedad. Con
+`SeedOptions.AdminPassword` como `[Required]`, un despliegue con el seeding
+apagado moría en bucle al arrancar.
+
+**Los arrays de configuración se fusionan por índice, no se reemplazan.** Definir
+`Cors__AllowedOrigins__0` por entorno **no** borra los índices que haya en
+`appsettings.json`. Las listas que dependan del entorno van **vacías** en
+`appsettings.json`.
+
 Toda sección se enlaza a una clase tipada con DataAnnotations y se valida:
 
 ```csharp

@@ -47,6 +47,16 @@ public interface IBaseRepository<T> where T : class, IEntity
   Task<bool> ExistsAsync(int id, CancellationToken ct = default);
 
   /// <summary>
+  /// Confirma los cambios pendientes del contexto.
+  /// </summary>
+  /// <remarks>
+  /// Normalmente no hace falta: cada escritura del repositorio ya guarda. Existe para
+  /// el caso en que el servicio añade algo al contexto que <b>debe</b> confirmarse en
+  /// la misma transacción (hoy, la fila del outbox junto al descuento de stock).
+  /// </remarks>
+  Task SaveChangesAsync(CancellationToken ct = default);
+
+  /// <summary>
   /// Comprobación de unicidad genérica sobre un campo <c>string</c>, resuelta por
   /// reflexión sobre el modelo de EF. Útil cuando la entidad no tiene un método
   /// dedicado; <b>si lo tiene (p. ej. <c>NameExistsAsync</c>), se usa el dedicado</b>:

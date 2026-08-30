@@ -2,6 +2,8 @@ using System.Net;
 using ApiEcommerce.Exceptions;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
 
 namespace ApiEcommerce.Shared.Http;
 
@@ -63,14 +65,62 @@ public sealed class GlobalExceptionHandler(
     // dominio: la propia excepción trae su código y su HTTP
     AppException app => (app.Status, app.Code, app.Code.Replace('_', ' ')),
 
+    // ---- carreras que la comprobación previa no puede evitar -----------------
+    // Estas NO son "código viejo sin migrar": son el caso en el que dos peticiones
+    // simultáneas pasan las dos la validación y es la BASE la que arbitra. Sin
+    // traducirlas, arreglar la carrera (índice único, RowVersion) empeora la
+    // respuesta: el 409 correcto se convierte en un 500.
+
+    // Otro request modificó la fila entre el SELECT y el UPDATE (Product.RowVersion).
+    DbUpdateConcurrencyException => (HttpStatusCode.Conflict, "concurrency_conflict",
+        "The resource was modified by another request. Retry the operation."),
+
+    // Se busca el SqlException RECORRIENDO la cadena de InnerException en vez de
+    // hacer pattern matching sobre una forma concreta de anidamiento. El anidamiento
+    // NO es estable:
+    //   · SaveChangesAsync   -> DbUpdateException { SqlException }
+    //   · ExecuteUpdateAsync -> SqlException DESNUDO (no pasa por SaveChanges)
+    //   · con EnableRetryOnFailure agotado -> RetryLimitExceededException { ... }
+    // La versión anterior solo acertaba el primer caso, así que un choque en
+    // TryDecrementStockAsync —la sentencia con más contención del sistema— salía 500.
+    _ when FindSqlException(ex) is { Number: 2601 or 2627 }
+        => (HttpStatusCode.Conflict, "conflict", "The value already exists."),
+
+    // 1205: deadlock. Es reintentable, y el cliente debe saberlo.
+    _ when FindSqlException(ex) is { Number: 1205 }
+        => (HttpStatusCode.Conflict, "deadlock", "Deadlock detected. Retry the operation."),
+
+    // 547: violación de clave foránea (la fila relacionada se borró entre la
+    // validación y la escritura).
+    _ when FindSqlException(ex) is { Number: 547 }
+        => (HttpStatusCode.Conflict, "fk_violation", "A related resource constraint was violated."),
+
     // BCL: red de seguridad mientras quede código viejo sin migrar.
     // NO es una alternativa válida en código nuevo: los servicios lanzan AppException.
     KeyNotFoundException => (HttpStatusCode.NotFound, "not_found", "Not found"),
-    InvalidOperationException => (HttpStatusCode.Conflict, "conflict", "Conflict"),
     ArgumentException => (HttpStatusCode.BadRequest, "bad_request", "Bad request"),
+
+    // InvalidOperationException NO está aquí a propósito. EF Core la usa para errores
+    // de PROGRAMACIÓN ("the instance of entity type X cannot be tracked because...",
+    // "the configured execution strategy does not support user-initiated
+    // transactions"), no de negocio. Mapearla a 409 daba el código equivocado Y
+    // filtraba mensajes internos del ORM al cliente, porque Detail solo se censura a
+    // partir de 500. Que caiga a 500, que es lo que realmente es.
+
     UnauthorizedAccessException => (HttpStatusCode.Unauthorized, "unauthorized", "Unauthorized"),
     OperationCanceledException => ((HttpStatusCode)499, "client_closed_request", "Client closed request"),
 
     _ => (HttpStatusCode.InternalServerError, "internal_error", "Internal server error")
   };
+
+  /// <summary>
+  /// Recorre la cadena de <c>InnerException</c> buscando un <see cref="SqlException"/>.
+  /// </summary>
+  private static SqlException? FindSqlException(Exception? exception)
+  {
+    for (var current = exception; current is not null; current = current.InnerException)
+      if (current is SqlException sql) return sql;
+
+    return null;
+  }
 }

@@ -1,8 +1,8 @@
 using ApiEcommerce.Models.Dtos;
 using ApiEcommerce.Service;
 using ApiEcommerce.Shared.Auth;
-using ApiEcommerce.Shared.Db;
 using ApiEcommerce.Shared.Http;
+using ApiEcommerce.Shared.Idempotency;
 using ApiEcommerce.Shared.Paging;
 using ApiEcommerce.Shared.Storage;
 using Asp.Versioning;
@@ -176,7 +176,9 @@ public class ProductController : ControllerBase
     /// <summary>Descuenta stock por SKU.</summary>
     // Sin atributo: hereda el [Authorize] de la clase = cualquier usuario autenticado.
     [HttpPost("buy", Name = "BuyProduct")]
-    [Transactional] // la compra escribirá en más de un repositorio en cuanto haya Order
+    [Idempotent]   // reintentar con la misma Idempotency-Key no vuelve a descontar stock
+    // Sin [Transactional]: la transacción la abre ProductService con ITransactionRunner,
+    // que sí es compatible con la estrategia de reintentos de EF.
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -187,7 +189,7 @@ public class ProductController : ControllerBase
             return ValidationProblem(ModelState);
 
         // SKU inexistente -> 404 ; stock insuficiente -> 409
-        var product = await _service.BuyAsync(dto, ct);
+        var product = await _service.BuyAsync(dto, User.GetUserId(), ct);
         return Ok(product);
     }
 }

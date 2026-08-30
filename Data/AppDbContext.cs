@@ -30,6 +30,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
   public DbSet<Product> Products { get; set; }
 
+  /// <summary>Eventos de dominio pendientes de publicar (ver <see cref="OutboxMessage"/>).</summary>
+  public DbSet<OutboxMessage> OutboxMessages { get; set; }
+
+  /// <summary>Mensajes ya consumidos, para que el consumidor sea idempotente.</summary>
+  public DbSet<ProcessedMessage> ProcessedMessages { get; set; }
+
 
   /// <summary>
   /// <c>base.OnModelCreating</c> es <b>obligatorio</b>: es quien mapea las tablas de
@@ -38,6 +44,14 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
   protected override void OnModelCreating(ModelBuilder modelBuilder)
   {
     base.OnModelCreating(modelBuilder);
+
+    // Índice filtrado: el publicador solo consulta los pendientes, y en una tabla
+    // que crece sin parar un índice sobre TODAS las filas sería cada vez más caro.
+    // Aquí solo se indexa lo que de verdad se busca.
+    modelBuilder.Entity<OutboxMessage>()
+        .HasIndex(m => m.OccurredAt)
+        .HasFilter("[ProcessedAt] IS NULL")
+        .HasDatabaseName("IX_OutboxMessages_Pending");
   }
 
 

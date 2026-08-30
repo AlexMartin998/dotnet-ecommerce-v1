@@ -3,7 +3,11 @@ using ApiEcommerce.Models.Dtos;
 using ApiEcommerce.Repository;
 using ApiEcommerce.Service.Crud;
 using ApiEcommerce.Shared.Paging;
+using ApiEcommerce.Shared.Db;
+using ApiEcommerce.Shared.Messaging;
+using ApiEcommerce.Shared.Messaging.Events;
 using ApiEcommerce.Shared.Storage;
+using Microsoft.EntityFrameworkCore;
 using AutoMapper;
 
 namespace ApiEcommerce.Service;
@@ -24,6 +28,8 @@ public class ProductService : IProductService
   private readonly IProductRepository _repository;
   private readonly ICategoryRepository _categoryRepository;
   private readonly IFileStorage _storage;
+  private readonly IEventOutbox _outbox;
+  private readonly ITransactionRunner _tx;
   private readonly IMapper _mapper;
 
   public ProductService(
@@ -31,12 +37,16 @@ public class ProductService : IProductService
       IProductRepository repository,
       ICategoryRepository categoryRepository,
       IFileStorage storage,
+      IEventOutbox outbox,
+      ITransactionRunner tx,
       IMapper mapper)
   {
+    _tx = tx;
     _crud = crud;
     _repository = repository;
     _categoryRepository = categoryRepository;
     _storage = storage;
+    _outbox = outbox;
     _mapper = mapper;
   }
 
@@ -132,22 +142,47 @@ public class ProductService : IProductService
     return _mapper.Map<ProductDto>(await _repository.GetByIdWithCategoryAsync(id, ct) ?? product);
   }
 
-  public async Task<ProductDto> BuyAsync(BuyProductDto dto, CancellationToken ct = default)
+  public async Task<ProductDto> BuyAsync(
+      BuyProductDto dto, string? buyerUserId = null, CancellationToken ct = default)
   {
     ArgumentNullException.ThrowIfNull(dto);
 
-    var product = await _repository.GetBySkuAsync(dto.SKU, ct)
-        ?? throw new NotFoundAppException("Product", dto.SKU);
+    // La atomicidad "descontar stock + emitir el evento" es una regla de NEGOCIO, así
+    // que la transacción vive aquí y no en un atributo del controller. Antes dependía
+    // de que alguien no olvidara poner [Transactional] en la acción: llamar a BuyAsync
+    // desde un job o desde otro endpoint descontaba stock sin emitir el evento, en
+    // silencio y sin error.
+    //
+    // La lambda es REPLAYABLE (relee todo lo que necesita), que es lo que exige
+    // ITransactionRunner para poder reintentar ante un fallo transitorio.
+    return await _tx.ExecuteAsync(async token =>
+    {
+      var product = await _repository.GetBySkuAsync(dto.SKU, token)
+          ?? throw new NotFoundAppException("Product", dto.SKU);
 
-    // 409 y no 400: el request es válido en sí mismo, choca con el estado de la base.
-    if (product.Stock < dto.Quantity)
-      throw new ConflictAppException(
-          $"Insufficient stock for SKU '{product.SKU}': available {product.Stock}, requested {dto.Quantity}.");
+      // El descuento y la comprobación de stock ocurren en la MISMA sentencia SQL.
+      // Comprobar aquí `product.Stock < dto.Quantity` y descontar después sería
+      // read-then-write: entre las dos cosas cabe otra compra y se vende dos veces
+      // la última unidad.
+      if (!await _repository.TryDecrementStockAsync(product.Id, dto.Quantity, token))
+        throw new ConflictAppException(
+            $"Insufficient stock for SKU '{product.SKU}': requested {dto.Quantity}.");
 
-    product.Stock -= dto.Quantity;
-    // UpdatedAt lo estampa AppDbContext (ver IAuditable)
-    await _repository.UpdateAsync(product, ct);
+      // Relectura para devolver el estado real: ExecuteUpdate no toca el change
+      // tracker, así que la instancia que ya teníamos sigue con el stock anterior.
+      var updated = await _repository.GetByIdWithCategoryAsync(product.Id, token) ?? product;
 
-    return _mapper.Map<ProductDto>(product);
+      // El evento se ESCRIBE aquí y se PUBLICA después (OutboxPublisher). Publicar
+      // directo a RabbitMQ en esta línea ataría la compra a que el broker esté vivo,
+      // y dejaría anunciada una compra que todavía podría no confirmarse.
+      await _outbox.EnqueueAsync(new ProductPurchased(
+          updated.Id, updated.SKU, updated.Name, dto.Quantity, updated.Stock,
+          updated.Price, buyerUserId, DateTime.Now), token);
+
+      // Confirma la fila del outbox dentro de la transacción que abrió el runner.
+      await _repository.SaveChangesAsync(token);
+
+      return _mapper.Map<ProductDto>(updated);
+    }, ct);
   }
 }

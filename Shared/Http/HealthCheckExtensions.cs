@@ -1,5 +1,7 @@
 using ApiEcommerce.Data;
 using ApiEcommerce.Shared.Caching;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace ApiEcommerce.Shared.Http;
 
@@ -26,6 +28,37 @@ public static class HealthCheckExtensions
     if (redis is not null && redis.IsEnabled)
       checks.AddRedis(redis.Configuration, name: "redis", tags: ["ready"]);
 
+    // Eventos que agotaron sus reintentos y quedaron sin publicar. Sin esta sonda, un
+    // broker caído el tiempo suficiente entierra eventos en silencio y el servicio
+    // sigue reportándose sano mientras los datos divergen.
+    //
+    // Degraded y no Unhealthy: la API atiende peticiones perfectamente, lo que hay es
+    // trabajo pendiente que alguien tiene que mirar. Marcarlo Unhealthy sacaría de
+    // rotación un proceso sano.
+    checks.AddCheck<OutboxBacklogHealthCheck>(
+        "outbox-backlog", failureStatus: HealthStatus.Degraded, tags: ["ready"]);
+
     return services;
+  }
+}
+
+
+/// <summary>Cuenta los eventos del outbox que se dieron por perdidos.</summary>
+public sealed class OutboxBacklogHealthCheck(AppDbContext db) : IHealthCheck
+{
+  /// <summary>Debe coincidir con <c>OutboxPublisher.MaxAttempts</c>.</summary>
+  private const int MaxAttempts = 5;
+
+  public async Task<HealthCheckResult> CheckHealthAsync(
+      HealthCheckContext context, CancellationToken cancellationToken = default)
+  {
+    var abandoned = await db.OutboxMessages
+        .CountAsync(m => m.ProcessedAt == null && m.Attempts >= MaxAttempts, cancellationToken);
+
+    return abandoned == 0
+        ? HealthCheckResult.Healthy("No abandoned outbox messages")
+        : new HealthCheckResult(
+            context.Registration.FailureStatus,
+            $"{abandoned} outbox message(s) exhausted their retries and need manual review");
   }
 }

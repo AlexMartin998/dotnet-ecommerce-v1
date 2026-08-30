@@ -16,8 +16,10 @@ namespace ApiEcommerce.Shared.Caching;
 /// derriba la API cuando se cae convierte una optimización en un punto único de fallo.
 /// </para>
 /// <para>
-/// Se registra como <b>Scoped</b> aunque no tenga estado, para poder inyectarlo junto
-/// a servicios scoped sin riesgo de captured dependency.
+/// Se registra como <b>Singleton</b>: no guarda estado por request y sus tres
+/// dependencias (<c>IDistributedCache</c>, <c>IOptions</c>, <c>ILogger</c>) ya lo son.
+/// Un scoped puede depender de un singleton sin problema, así que el decorador
+/// <c>CachedCategoryService</c> lo inyecta sin riesgo.
 /// </para>
 /// </remarks>
 public sealed class RedisCacheService(

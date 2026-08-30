@@ -1,6 +1,9 @@
 using ApiEcommerce.Shared.DependencyInjection;
 using ApiEcommerce.Shared.Http;
 using Asp.Versioning.ApiExplorer;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.EntityFrameworkCore;
 using Serilog;
 
 
@@ -20,6 +23,22 @@ builder.Host.UseSerilog((context, configuration) => configuration
 // // // Add SERVICES to the container ---------------------------------
 // Tres bloques por capa. Cada uno solo COMPONE los registros que cada feature
 // declara en su propia carpeta (ver Shared/DependencyInjection/ServiceCollectionExtensions.cs).
+// Detrás de un proxy, sin esto: el rate limiter particiona por la IP DEL PROXY (o
+// sea, un solo cubo de 100 req/min para todo internet), los logs registran esa misma
+// IP para todo el mundo, y UseHttpsRedirection no sabe si la petición original era
+// HTTPS (hoy avisa con "Failed to determine the https port" y es un no-op).
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+
+    // Vaciarlas acepta las cabeceras de CUALQUIER origen. Solo es admisible si la API
+    // no es alcanzable directamente desde fuera del proxy; si lo fuera, cualquiera
+    // podría falsear su IP y saltarse el rate limit. Declara aquí la red del proxy en
+    // cuanto la conozcas.
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
+});
+
 builder.Services
     .AddApplication()                          // mapeo + reglas + CRUD compuesto + servicios
     .AddInfrastructure(builder.Configuration)  // EF Core, Redis, disco, Identity + JWT
@@ -28,11 +47,20 @@ builder.Services
 var app = builder.Build();
 
 
-// // // Datos de arranque -----------------------------------------------
+// // // Migraciones y datos de arranque ----------------------------------
 // Scope propio: el contenedor RAÍZ no puede resolver servicios Scoped
 // (AppDbContext, UserManager) y lanzaría en el arranque.
 using (var scope = app.Services.CreateScope())
 {
+    // Sin esto, la imagen de runtime (que no lleva SDK ni dotnet-ef) arranca contra
+    // una base vacía: /health responde 200, /health/ready responde Healthy —porque
+    // AddDbContextCheck solo comprueba que se puede CONECTAR, no el esquema— y todos
+    // los endpoints devuelven 500 "Invalid object name 'Categories'".
+    // MigrateAsync además reintenta gracias a EnableRetryOnFailure, que es justo lo
+    // que hace falta cuando SQL Server todavía está arrancando.
+    var db = scope.ServiceProvider.GetRequiredService<ApiEcommerce.Data.AppDbContext>();
+    await db.Database.MigrateAsync();
+
     await ApiEcommerce.Data.DataSeeder.SeedAsync(scope.ServiceProvider);
 }
 
@@ -40,6 +68,11 @@ using (var scope = app.Services.CreateScope())
 // // // Configure the HTTP request pipeline ------------------------------
 // El orden del pipeline NO es decorativo: cada middleware solo ve lo que ocurre
 // después de él. De arriba abajo: errores → swagger → https → cors → auth → endpoints.
+
+// Lo PRIMERO del pipeline: reescribe la IP y el esquema a partir de las cabeceras del
+// proxy, para que todo lo que viene después (logs, rate limit, redirección) vea los
+// datos reales del cliente y no los del proxy.
+app.UseForwardedHeaders();
 
 // Una línea por request con método, ruta, código y duración, en vez de las tres
 // del logger por defecto.
@@ -71,15 +104,19 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-// Sirve wwwroot/ (las imágenes de producto). Va antes de auth: son públicas.
-app.UseStaticFiles();
-
 // UseCors va ANTES de la autenticación: un preflight OPTIONS no lleva token y
 // tiene que poder responderse sin pasar por el filtro de autorización.
 app.UseCors(CorsPolicies.Default);
 
 // Antes de auth: rechazar una avalancha es más barato que validar su token.
 app.UseRateLimiter();
+
+// Sirve wwwroot/ (las imágenes de producto). Va DESPUÉS de CORS y del rate limiter,
+// y antes de auth porque son públicas. El orden importa: UseStaticFiles es TERMINAL
+// para los archivos que sirve, así que puesto más arriba las imágenes no pasaban por
+// el limitador (descarga en bucle sin cuota) ni recibían cabeceras CORS (un <img>
+// no las necesita, pero un fetch() del front sí).
+app.UseStaticFiles();
 
 // El orden importa: primero se averigua QUIÉN eres, después QUÉ puedes hacer.
 app.UseAuthentication();
@@ -92,6 +129,11 @@ app.MapControllers();
 // HealthController y no toca ninguna dependencia externa a propósito — si la sonda de
 // vida depende de la base, una caída de la base provoca que el orquestador reinicie
 // procesos que están perfectamente sanos.
-app.MapHealthChecks("/health/ready");
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    // Filtra por tag: hoy todos los checks lo llevan, pero sin el predicado los tags
+    // eran decorativos y un check futuro sin tag entraría en readiness sin querer.
+    Predicate = check => check.Tags.Contains("ready")
+});
 
 app.Run();

@@ -1,4 +1,5 @@
 using ApiEcommerce.Shared.Auth;
+using ApiEcommerce.Shared.Db;
 using Microsoft.EntityFrameworkCore;
 
 namespace ApiEcommerce.Data;
@@ -38,9 +39,23 @@ public static class PersistenceExtensions
                 errorNumbersToAdd: null)));
 
     // Los datos de arranque son de esta capa: DataSeeder vive aquí al lado.
+    //
+    // La validación es CONDICIONAL: solo se exige contraseña de admin si el seeding
+    // está encendido. Con `[Required]` en la propiedad, un despliegue con
+    // `Seed__Enabled=false` (lo normal en producción, sin contraseña definida) moría
+    // al arrancar en bucle, porque leer .Value valida antes de que nadie pueda mirar
+    // el flag.
     services.AddOptions<SeedOptions>()
         .Bind(configuration.GetSection(SeedOptions.SectionName))
-        .ValidateDataAnnotations();
+        .ValidateDataAnnotations()
+        .Validate(o => !o.Enabled
+                       || (!string.IsNullOrWhiteSpace(o.AdminPassword) && o.AdminPassword.Length >= 8),
+                  "Seed:AdminPassword is required (min 8 chars) when Seed:Enabled is true")
+        .ValidateOnStart();
+
+    // Scoped: comparte el AppDbContext del request, que es lo que hace que la
+    // transacción cubra al repositorio y al outbox a la vez.
+    services.AddScoped<ITransactionRunner, TransactionRunner>();
 
     return services;
   }

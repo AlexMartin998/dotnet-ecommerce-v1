@@ -1,0 +1,28 @@
+# Todo lo que no debe entrar en el contexto de build: acelera el build y evita
+# que se cuelen secretos o artefactos locales en la imagen.
+**/bin/
+**/obj/
+.git/
+.vs/
+.vscode/
+AGENTS/
+wwwroot/ProductsImages/*
+!wwwroot/ProductsImages/.gitkeep
+*.user
+
+# Secretos y config local: NUNCA en la imagen.
+appsettings.Development.json
+.env
+*.pfx
+*.pem
+**/secrets.json
+
+# Ruido que solo alarga el contexto de build (y el .sln confunde a `dotnet publish`).
+*.sln
+Properties/launchSettings.json
+Dockerfile
+docker-compose*.yml
+*.md
+.claude/
+.agents/
+skills-lock.json

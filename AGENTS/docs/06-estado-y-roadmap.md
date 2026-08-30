@@ -9,7 +9,7 @@ paginación y seeding.
 
 | Componente | Estado | Nota |
 | --- | --- | --- |
-| `AppDbContext` + migraciones | ✅ | 6 migraciones aplicadas (la última, `AddIdentitySupport`); auditoría automática en `SaveChangesAsync` |
+| `AppDbContext` + migraciones | ✅ | 8 migraciones aplicadas (la última, `OutboxAndProcessedMessages`); auditoría automática en `SaveChangesAsync` |
 | `IEntity` / `IAuditable` | ✅ | implementadas por `Category` y `Product`; sin reflexión en los genéricos |
 | `IBaseRepository<T>` / `BaseRepository<T>` | ✅ | `where T : class, IEntity`, `CancellationToken`, orden genérico por `CreatedAt` |
 | `CategoryRepository` | ✅ | `NameExistsAsync(excludeId)`, `HasProductsAsync` |
@@ -42,6 +42,18 @@ paginación y seeding.
 | Rate limiting | ✅ | límite global por IP + política `auth` |
 | Logging estructurado | ✅ | Serilog + `UseSerilogRequestLogging` (sección `Serilog`, no `Logging`) |
 | Health checks | ✅ | `/health` liveness (controller) y `/health/ready` (SQL Server + Redis) |
+| Concurrencia: stock | ✅ | `TryDecrementStockAsync` con `ExecuteUpdateAsync` (UPDATE condicional atómico) |
+| Concurrencia: unicidad | ✅ | índice único en `Category.Name` + `Product.SKU`; `DbUpdateException` → 409 |
+| Concurrencia optimista | ✅ | `Product.RowVersion` para el PATCH; `DbUpdateConcurrencyException` → 409 |
+| Idempotencia de peticiones | ✅ | `[Idempotent]` + `Idempotency-Key` sobre Redis (`SET NX`) |
+| Outbox transaccional | ✅ | `OutboxMessage` en la misma transacción que el negocio; la API funciona con el broker caído |
+| Publicación a RabbitMQ | ✅ | `OutboxPublisher` (BackgroundService) con publisher confirms y mensajes persistentes |
+| Consumidor | ✅ | `ProductPurchasedConsumer`: ack manual, prefetch, DLQ, dedupe por `ProcessedMessage` |
+| Dockerfile + compose | ✅ | multi-stage, usuario `$APP_UID` de la imagen base, `curl` instalado para el healthcheck |
+| Migraciones al arrancar | ✅ | `MigrateAsync()` en el scope de arranque (la imagen runtime no lleva `dotnet-ef`) |
+| Idempotencia de la config | ✅ | validación condicional de `SeedOptions`; `ValidateOnStart` en todas las secciones |
+| `UseForwardedHeaders` | ✅ | el rate limiter particiona por la IP real, no por la del proxy |
+| Sonda de backlog del outbox | ✅ | `outbox-backlog` → `Degraded` si hay eventos que agotaron reintentos |
 | Tests | ❌ | sin proyecto de pruebas |
 
 ## Lo que se verificó (2026-08-30)
@@ -88,7 +100,37 @@ Sigue siendo el siguiente paso, y ahora hay más superficie que merece cobertura
    ocurra **después** de la escritura y **no** ocurra si el servicio interno lanza.
 7. Perfiles de AutoMapper: `AssertConfigurationIsValid()` + test del PATCH parcial.
 
-### Paso 8 — Partir en proyectos (cuando duela, no antes)
+### Paso 8 — Deuda conocida de la revisión de 2026-08-30 (no cerrada)
+
+Tres revisiones con `dotnet-best-practices` sobre concurrencia, mensajería e
+infraestructura. Los P0 y los P1 baratos están corregidos; **esto es lo que se
+dejó abierto a propósito**, para que nadie lo descubra creyendo que es nuevo:
+
+- **Reintentos del consumidor sin contador real.** `args.Redelivered` es una
+  bandera del broker, no un contador: son 2 intentos como máximo y sin backoff.
+  Lo correcto es una *retry queue* con `x-message-ttl` que dead-letterea de vuelta
+  a la principal, leyendo `x-death[0].count`. Se quitó `MaxDeliveryAttempts` de la
+  configuración por no dejar una opción muerta que documenta algo que no ocurre.
+- **`OutboxPublisher` sin claim: con más de una réplica publica duplicados.** El
+  `SELECT` no tiene `UPDLOCK`/`READPAST` ni columna de reserva, así que dos
+  instancias leen el mismo lote. No corrompe (el consumidor deduplica) pero dobla
+  el tráfico. Antes de correr con varias réplicas: `sp_getapplock` o un
+  `UPDATE ... OUTPUT` que reserve el lote.
+- **Sin limpieza de `OutboxMessages` ni de `ProcessedMessages`.** Crecen sin
+  límite; hace falta un job de purga de lo ya procesado.
+- **`RowVersion` no cierra el *lost update* entre dos administradores.** El token
+  no se expone en `ProductDto` ni se acepta en `UpdateProductDto`, así que el
+  PATCH usa el que acaba de leer. Cerrarlo es publicarlo como `ETag` y exigir
+  `If-Match`. El XML doc de `Product.RowVersion` ya dice exactamente qué garantiza
+  y qué no.
+- **La clave de idempotencia no incluye un hash del cuerpo.** La misma clave con
+  otro payload reproduce la respuesta del primero en silencio; lo estándar
+  (Stripe) es guardar el hash y devolver 422 si no coincide.
+- **`AutoMapper 15.1.1` exige licencia comercial en producción** (avisa por log al
+  arrancar). Es una decisión de producto pendiente: comprar licencia, fijar
+  AutoMapper ≤ 13.x (última MIT), o migrar a Mapperly. Ver `05-convenciones.md`.
+
+### Paso 9 — Partir en proyectos (cuando duela, no antes)
 
 Los tres bloques del composition root (`AddApplication` / `AddInfrastructure` /
 `AddWebApi`) son ya las costuras: `ApiEcommerce.Api` / `.Infrastructure` /
@@ -96,24 +138,19 @@ Los tres bloques del composition root (`AddApplication` / `AddInfrastructure` /
 partir en proyectos la convierte en algo que impone el compilador. **No es
 urgente**: hacerlo antes de que el proyecto lo pida solo añade fricción.
 
-### Paso 9 — Refresh tokens y revocación
+### Paso 10 — Refresh tokens y revocación
 
 El access token dura 60 min y no se puede revocar. El claim `jti` ya se emite: con
 él, una denylist en Redis (la misma instancia que ya está conectada) permite
 invalidar un token concreto. Un refresh token rotatorio en base cierra el ciclo.
 
-### Paso 10 — Endpoint de administración de usuarios
+### Paso 11 — Endpoint de administración de usuarios
 
 `GET /api/v1/user` (listado, admin), `POST /api/v1/user/{id}/roles` (promover a
 admin). Hoy el único camino para tener un admin es el seeder.
 
-### Paso 11 — Deudas conocidas y anotadas
+### Paso 12 — Deudas conocidas y anotadas
 
-- **`DbUpdateException` → `ConflictAppException`** para violaciones de índice
-  único, como red de seguridad ante carreras (hoy la unicidad se comprueba antes
-  de escribir, pero dos requests simultáneos pueden colarse).
-- **Concurrencia optimista** (`[Timestamp] byte[] RowVersion`) en `Product`: la
-  compra hace read-then-write y hoy nada impide vender el mismo stock dos veces.
 - **`DateTime.Now` → `DateTimeOffset`/UTC.** Ya se nota la inconsistencia: los
   `exp`/`nbf` del JWT van en UTC (lo exige la RFC 7519) mientras el resto del
   modelo usa hora local, y `UpdatedAt` recién estampado se serializa con offset
