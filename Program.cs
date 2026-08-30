@@ -18,21 +18,12 @@ builder.Host.UseSerilog((context, configuration) => configuration
 
 
 // // // Add SERVICES to the container ---------------------------------
-// Cada bloque vive en Shared/DependencyInjection/ServiceCollectionExtensions.cs
-builder.Services.AddPersistence(builder.Configuration);   // EF Core + SQL Server
-builder.Services.AddObjectMapping();                      // AutoMapper (un Profile por entidad)
-builder.Services.AddRepositories();                       // IBaseRepository<> + repos por entidad
-builder.Services.AddApplicationServices(builder.Configuration);  // CrudService + reglas + servicios
-builder.Services.AddAuthenticationAndAuthorization(builder.Configuration);  // Identity + JWT
-builder.Services.AddCaching(builder.Configuration);       // Redis + decorador cache-aside
-builder.Services.AddCorsPolicy(builder.Configuration);    // orígenes permitidos (desde config)
-builder.Services.AddApiVersioningAndDocs();               // /api/v1/... + un Swagger por versión
-builder.Services.AddRateLimiting();                       // límite global + política 'auth'
-builder.Services.AddHealthProbes(builder.Configuration);  // /health/ready (SQL Server + Redis)
-builder.Services.AddErrorHandling();                      // GlobalExceptionHandler + ProblemDetails
-
-// Controllers ----
-builder.Services.AddControllers();
+// Tres bloques por capa. Cada uno solo COMPONE los registros que cada feature
+// declara en su propia carpeta (ver Shared/DependencyInjection/ServiceCollectionExtensions.cs).
+builder.Services
+    .AddApplication()                          // mapeo + reglas + CRUD compuesto + servicios
+    .AddInfrastructure(builder.Configuration)  // EF Core, Redis, disco, Identity + JWT
+    .AddWebApi(builder.Configuration);         // controllers, versionado, CORS, rate limit, errores, health
 
 var app = builder.Build();
 

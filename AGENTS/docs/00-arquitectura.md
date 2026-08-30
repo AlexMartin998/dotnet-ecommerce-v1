@@ -28,11 +28,12 @@ en vez de inventar un middleware a mano).
 | Servicio base reutilizable | `ICrudService<...>` / `CrudService<...>` **por composición** | ✅ |
 | Reglas de negocio por entidad | `IEntityRules<...>` (`CategoryRules`, `ProductRules`) | ✅ |
 | `@Autowired` / constructor injection | DI de `Program.cs` + constructor primario | ✅ |
+| `@Configuration` / `@Bean` | un `XExtensions.cs` por feature + composition root | ✅ |
 | `ModelMapper` / MapStruct | AutoMapper `Profile` por entidad | ✅ |
 | `@ControllerAdvice` + `@ExceptionHandler` | `IExceptionHandler` global | ✅ |
 | `ResponseStatusException` | `AppException` con `Code` + `HttpStatusCode` | ✅ |
 | `@Transactional` | `Shared/Db/TransactionalAttribute` | ✅ (en `POST /api/v1/product/buy`) |
-| Spring Security (`SecurityFilterChain`) | `AddAuthenticationAndAuthorization` + JWT bearer | ✅ |
+| Spring Security (`SecurityFilterChain`) | `AddIdentityAndJwt` + JWT bearer | ✅ |
 | `UserDetailsService` + `PasswordEncoder` | `UserManager<ApplicationUser>` | ✅ |
 | `AuthenticationManager` | `SignInManager<ApplicationUser>` | ✅ |
 | `@PreAuthorize("hasRole('ADMIN')")` | `[Authorize(Roles = Roles.Admin)]` | ✅ |
@@ -112,12 +113,17 @@ ApiEcommerce/
 │   ├── Http/             # GlobalExceptionHandler, ConfigureSwaggerOptions, CORS, rate limit
 │   ├── Paging/           # PagedResult<T>
 │   ├── Storage/          # IFileStorage, LocalFileStorage, FileUpload
-│   └── DependencyInjection/  # ServiceCollectionExtensions (el bloque DI)
+│   └── DependencyInjection/  # composition root: AddApplication/AddInfrastructure/AddWebApi
 ├── Data/                 # AppDbContext + DataSeeder
 ├── wwwroot/              # archivos estáticos (imágenes de producto)
 ├── Migrations/           # EF Core
 └── AGENTS/docs/          # estos lineamientos
 ```
+
+**El registro de DI de cada feature vive en la carpeta del feature**, en un
+`XExtensions.cs` (`Data/PersistenceExtensions.cs`,
+`Shared/Caching/CachingExtensions.cs`, `Service/Auth/AuthExtensions.cs`…).
+`Shared/DependencyInjection/` solo los compone. Ver `05-convenciones.md`.
 
 **Namespace = ruta de carpeta**, con `ApiEcommerce` como raíz y namespaces
 file-scoped: `Repository/CategoryRepository.cs` → `namespace ApiEcommerce.Repository;`.
@@ -137,9 +143,10 @@ significa crear, en este orden:
 6. `Service/XRules.cs` — las reglas de negocio de la entidad (o ninguna).
 7. `Service/IXService.cs` + `XService.cs` (**componen** `ICrudService<...>`).
 8. `Controllers/XController.cs`.
-9. **Registrar repositorio, reglas, `CrudService` cerrado y servicio** en
-   `Shared/DependencyInjection/ServiceCollectionExtensions.cs`. Este es el paso
-   que más se olvida.
+9. **Registrar repositorio, reglas, `CrudService` cerrado y servicio** en el
+   `Add…` de la carpeta correspondiente (`Repository/RepositoryExtensions.cs` y
+   `Service/ApplicationServiceExtensions.cs`). Este es el paso que más se olvida.
+   El composition root no se toca: ya llama a esos dos.
 
 `Category` es el slice de referencia: cuando dudes de una convención, mira cómo
 está hecha ahí y replícala.

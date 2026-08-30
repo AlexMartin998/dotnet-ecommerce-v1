@@ -553,7 +553,7 @@ dotnet ef migrations add AddIdentitySupport
 dotnet ef database update
 ```
 
-- --- Equivalencias mentales desde Spring Security
+- --- Equivalencias mentales desde Spring Security (`ServiceCollectionExtensions.cs`)
   - -- `UserManager`   ~ `UserDetailsService` + `PasswordEncoder`
   - -- `SignInManager` ~ `AuthenticationManager`
   - -- `RoleManager`   ~ gestion de `GrantedAuthority`
@@ -1040,3 +1040,160 @@ UseSerilogRequestLogging -> UseExceptionHandler -> UseStatusCodePages -> Swagger
        que un update pise `CreatedAt` y campos que el cliente no deberia poder escribir.
   - -- **`ResponseCaching`** (sec 11): sustituido por Redis (ver cap. 5)
   - -- **Entidad `User` legacy** (sec 8): borrada de raiz, solo `ApplicationUser`
+
+
+
+
+
+
+
+
+
+
+## 12. Refactor del DI: composition root + registro por feature
+- --- Punto de partida: UN archivo `ServiceCollectionExtensions.cs` de 342 lineas
+  - -- importaba 20 namespaces y conocia las 7 capas a la vez
+  - -- el patron (metodos de extension sobre `IServiceCollection`) esta BIEN y es el
+       idioma canonico de ASP.NET Core -> es lo que hacen `AddControllers()`, `AddDbContext()`...
+  - -- lo que estaba mal era la GRANULARIDAD, no el patron
+
+- --- ⭐ Regla nueva: **cada feature registra lo suyo, en SU carpeta**
+```
+Data/PersistenceExtensions.cs            AddPersistence(config)
+Repository/RepositoryExtensions.cs       AddRepositories()
+Mapping/MappingExtensions.cs             AddObjectMapping()
+Service/ApplicationServiceExtensions.cs  AddDomainServices()
+Service/Auth/AuthExtensions.cs           AddIdentityAndJwt(config)
+Shared/Caching/CachingExtensions.cs      AddDistributedCaching(config)
+Shared/Storage/StorageExtensions.cs      AddFileStorage(config)
+Shared/Http/ApiDocumentationExtensions.cs  AddApiVersioningAndDocs()
+Shared/Http/CorsPolicies.cs              AddCorsPolicy(config)     <- const + registro JUNTOS
+Shared/Http/RateLimitPolicies.cs         AddRateLimiting()         <- idem
+Shared/Http/ErrorHandlingExtensions.cs   AddErrorHandling()
+Shared/Http/HealthCheckExtensions.cs     AddHealthProbes(config)
+```
+  - -- añadir un feature = tocar UNA carpeta, no un archivo compartido que crece sin fin
+  - -- cuando el nombre de la politica ya vive en un archivo (`CorsPolicies`), el `Add...`
+       va EN ESE archivo: la constante y su registro no deben poder separarse
+
+- --- `Shared/DependencyInjection/ServiceCollectionExtensions.cs` = **composition root**
+  - -- NO registra nada. Solo compone, en 3 bloques por capa:
+```csharp
+builder.Services
+    .AddApplication()                          // mapeo + reglas + CRUD + servicios
+    .AddInfrastructure(builder.Configuration)  // EF Core, Redis, disco, Identity + JWT
+    .AddWebApi(builder.Configuration);         // controllers, versionado, CORS, rate limit, errores, health
+```
+  - -- los 3 bloques declaran la DIRECCION de dependencias: **Web -> Infrastructure -> Application**
+  - -- en proyecto unico eso es CONVENCION, no frontera del compilador (todo se ve con todo)
+    - pero son las costuras exactas por donde se parte en `.Api` / `.Infrastructure` / `.Application`
+      el dia que haga falta, SIN reescribir el registro
+
+- --- Es el simil de las clases `@Configuration` de Spring Boot: una por concern,
+      y una clase raiz que las importa.
+
+
+
+
+
+
+
+
+
+
+## 13. Dos bugs reales que salieron del review del DI
+- --- ⚠️ BUG 1: `UseSqlServer` sin `EnableRetryOnFailure`
+```csharp
+// antes
+options.UseSqlServer(configuration.GetConnectionString("ConexionSql"));
+// ahora
+options.UseSqlServer(cs, sql => sql.EnableRetryOnFailure(
+    maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorNumbersToAdd: null));
+```
+  - -- Sin eso, `db.Database.CreateExecutionStrategy()` devuelve una estrategia NO reintentante
+  - -- Y `Shared/Db/TransactionalAttribute` la usa -> el `[Transactional]` de `/product/buy`
+       estaba escrito para sobrevivir a un corte transitorio y NO sobrevivia a ninguno
+  - -- Contra SQL Server en contenedor / gestionado: cada micro-corte de red = 500
+
+  - -- ⚠️ Contrapartida: con estrategia reintentante EF PROHIBE `BeginTransactionAsync`
+       fuera de `strategy.ExecuteAsync(...)`
+    - lanza `InvalidOperationException: ... does not support user-initiated transactions`
+    - el `[Transactional]` ya lo envuelve bien -> `/buy` sigue dando 200 (asi se comprobo)
+    - cualquier transaccion NUEVA tiene que hacerlo igual
+
+- --- ⚠️ BUG 2: mismo servicio, dos lifetimes segun la rama
+```csharp
+// antes
+if (redisConfigurado) services.AddScoped<ICacheService, RedisCacheService>();
+else                  services.AddSingleton<ICacheService, NoCacheService>();
+```
+  - -- Hoy no rompia: el unico consumidor (`CachedCategoryService`) es Scoped
+  - -- Pero es una MINA: el dia que algo Singleton pida `ICacheService`
+    - funciona en la maquina SIN Redis
+    - revienta por **captured dependency** en la que SI tiene Redis
+    - o sea, falla solo en el entorno que tiene la infra de verdad
+  - -- Arreglo: las dos ramas `Singleton` (ninguna guarda estado por request, y las
+       dependencias de `RedisCacheService` ya son singletons)
+  - -- REGLA: **un servicio se registra con el mismo lifetime en TODAS sus ramas**
+
+- --- Lifetimes del proyecto, resumido
+```
+Scoped     todo lo que dependa de AppDbContext (repos, servicios, reglas)
+Singleton  sin estado por request y solo depende de singletons:
+           IJwtTokenService, ICacheService, IFileStorage
+```
+
+
+
+
+
+
+
+
+
+
+## 14. `IConfigureOptions<T>`: configurar el framework desde TU config
+- --- Antes, dentro de `AddJwtBearer(...)`:
+```csharp
+var jwt = configuration.GetSection("Jwt").Get<JwtOptions>()!;   // <- bindeo #2
+```
+  - -- Funcionaba, pero **por coincidencia**: el `!` solo era seguro porque
+       `ValidateOnStart` aborta el arranque antes de que ese lambda llegue a correr
+  - -- Y era bindear DOS VECES la misma seccion: una validada y otra no = dos fuentes de verdad
+
+- --- Ahora: `Service/Auth/ConfigureJwtBearerOptions.cs`
+```csharp
+public sealed class ConfigureJwtBearerOptions(IOptions<JwtOptions> jwtOptions)
+  : IConfigureNamedOptions<JwtBearerOptions>
+{
+  public void Configure(string? name, JwtBearerOptions options)
+  {
+    if (name != JwtBearerDefaults.AuthenticationScheme) return;   // no tocar otros esquemas
+    Configure(options);
+  }
+  public void Configure(JwtBearerOptions options) { /* TokenValidationParameters */ }
+}
+```
+```csharp
+services.ConfigureOptions<ConfigureJwtBearerOptions>();
+services.AddAuthentication(...).AddJwtBearer();   // <- ya sin lambda
+```
+  - -- La config entra por el CONSTRUCTOR, tipada y validada, como en cualquier servicio
+  - -- `IConfigureNamedOptions` (y no `IConfigureOptions`) porque los esquemas de
+       autenticacion son opciones CON NOMBRE: hay que filtrar por el esquema propio
+
+- --- Es el mismo patron que ya usaba `Shared/Http/ConfigureSwaggerOptions.cs`
+      (un documento por version). Ahora los dos siguen la misma forma -> uniformidad.
+
+- --- REGLA: los servicios reciben **`IOptions<T>`**, NUNCA `IConfiguration`
+  - -- excepcion legitima: leer config *eager* EN EL REGISTRO cuando lo que se decide es
+       QUE implementacion registrar (`AddDistributedCaching`, `AddHealthProbes`)
+    - el grafo de DI se construye UNA vez, ahi no hay nada que recargar
+
+- --- Decorador: hay que registrar tambien el tipo CONCRETO
+```csharp
+services.AddScoped<CategoryService>();                 // el concreto
+services.AddScoped<ICategoryService>(sp => new CachedCategoryService(
+    sp.GetRequiredService<CategoryService>(), sp.GetRequiredService<ICacheService>()));
+```
+  - -- si solo estuviera la interfaz, `inner` no tendria de donde salir sin recursion infinita
