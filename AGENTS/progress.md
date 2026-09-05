@@ -4,7 +4,7 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-08-30**.
+Última actualización: **2026-09-05**.
 
 ---
 
@@ -34,6 +34,26 @@ broker nunca se ha ejercitado** porque en el entorno de trabajo no hay RabbitMQ 
 ---
 
 ## 2. Bitácora
+
+### 2026-09-05 — Compose de despliegue y bloque del broker (`docker-compose.prod.yml`)
+
+Se separó lo que despliega **esta app** de lo que es **infraestructura compartida**:
+
+- `docker-compose.fragment.yml` queda reducido a lo único que falta en el compose central
+  del owner: el bloque `rabbitmq_generic`. Se comprobó contra el fichero real que
+  `sqlserver_ecommerce` y `redis_generic` ya existen y ya tienen `healthcheck`, así que la
+  advertencia que llevaba sobre eso sobraba.
+- **`docker-compose.prod.yml`** (nuevo): declara *solo* la API y se engancha a la red del
+  compose central como **externa**. ⚠️ Compose prefija la red con el nombre del proyecto:
+  `backend` declarada en `000_infra/` se llama `000_infra_backend` — va parametrizada por
+  `INFRA_NETWORK`. Y ⚠️ `depends_on` **no cruza ficheros compose**: el arranque ordenado lo
+  da `MigrateAsync` + `EnableRetryOnFailure` + `restart: unless-stopped`, no el compose.
+- **`.env.example`** (nuevo, commiteado) con `.env` gitignorado. Las variables obligatorias
+  usan `${VAR:?…}`, que aborta el `up` en vez de arrancar con un secreto de ejemplo.
+
+Confirmado que **dentro del dev container no hay Docker**: nada de esto se puede construir
+ni levantar desde aquí, lo ejecuta el owner en el host. Es la razón de que el slice 09 siga
+en ⚠️. Verificado: `dotnet build` limpio (0 warnings). `notes.md` capítulo 22.
 
 ### 2026-08-30 — Revisión multiagente y endurecimiento (`63269ac`)
 
@@ -126,4 +146,4 @@ construido (no hay Docker en el entorno de trabajo).
 | **Licencia de AutoMapper** | La 15.1.1 exige licencia comercial en producción (avisa por log). ¿Comprar, fijar ≤13.x (última MIT), o migrar a Mapperly? |
 | **Política de commits** | `rules.md` §12 dice que el agente commitea (práctica de este repo). En el repo de frontend del owner la regla es la contraria. ¿Se confirma? |
 | **Secretos de desarrollo** | `appsettings.Development.json` está commiteado con la clave JWT y la password de SQL. Aceptable en local; hay que moverlo a user-secrets antes de que el repo salga de la máquina. |
-| **RabbitMQ** | Falta levantarlo con `docker-compose.fragment.yml` para poder cerrar el ⚠️ del slice 09. |
+| **RabbitMQ** | El bloque está listo en `docker-compose.fragment.yml`; falta **pegarlo en `~/Documents/code/000_infra` y hacer `docker compose up -d rabbitmq_generic`** (solo el owner puede: no hay Docker en el dev container). Es lo que cierra el ⚠️ del slice 09. |

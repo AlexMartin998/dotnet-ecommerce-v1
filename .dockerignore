@@ -13,6 +13,7 @@ wwwroot/ProductsImages/*
 # Secretos y config local: NUNCA en la imagen.
 appsettings.Development.json
 .env
+.env.example
 *.pfx
 *.pem
 **/secrets.json

@@ -1,0 +1,83 @@
+# =============================================================================
+# docker-compose.prod.yml — SOLO esta aplicación.
+#
+# Levanta la API en contenedor contra la infraestructura que YA existe en el
+# compose central (~/Documents/code/000_infra): SQL Server, Redis y RabbitMQ.
+# Esas tres NO se declaran aquí a propósito (`AGENTS/rules.md` §13): son
+# compartidas con otros proyectos, y un segundo compose que las redefiniera
+# competiría por los puertos 1434/6999/5672 con el que ya las tiene.
+#
+#   Uso:
+#     cp .env.example .env      # y rellenar los secretos
+#     docker compose -f docker-compose.prod.yml up -d --build
+#     curl http://localhost:8021/health          # liveness
+#     curl http://localhost:8021/health/ready    # SQL + Redis + backlog del outbox
+#
+# ⚠️ Requisito previo: la red externa. Este servicio se engancha a la red del
+#    compose central, y Docker Compose PREFIJA el nombre del proyecto: la red
+#    declarada como `backend` en ~/Documents/code/000_infra se llama en realidad
+#    `000_infra_backend`. Comprobarlo con:
+#
+#      docker network ls | grep backend
+#
+#    Si el nombre real es otro, no hay que editar este fichero: se define
+#    INFRA_NETWORK en el `.env`.
+#
+# ⚠️ NO hay `depends_on` sobre SQL/Redis/RabbitMQ, y no es un olvido: `depends_on`
+#    solo funciona entre servicios del MISMO compose. Aquí el arranque ordenado lo
+#    da la propia app: MigrateAsync reintenta gracias a EnableRetryOnFailure, y si
+#    aun así muere, `restart: unless-stopped` la vuelve a levantar.
+# =============================================================================
+
+services:
+
+  apiecommerce:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: apiecommerce:latest
+    container_name: apiecommerce
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8021}:8080"   # la imagen escucha en 8080 (ASPNETCORE_HTTP_PORTS de la base)
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+
+      # Dentro de la red `backend` los contenedores se ven por NOMBRE DE SERVICIO y
+      # por su puerto INTERNO: 1433/6379/5672, no los publicados 1434/6999/5672.
+      # (172.17.0.1 es lo correcto desde el dev container, que está fuera de esa red;
+      # desde dentro sería dar un rodeo por el host.)
+      ConnectionStrings__ConexionSql: "Server=sqlserver_ecommerce,1433;Database=${SQL_DATABASE:-ApiEcommerceNET8};User ID=sa;Password=${MSSQL_SA_PASSWORD:?define MSSQL_SA_PASSWORD en .env};TrustServerCertificate=true;MultipleActiveResultSets=true"
+      Redis__Configuration: "redis_generic:6379"
+      RabbitMq__ConnectionString: "amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq_generic:5672"
+
+      # El doble guion bajo `__` es el separador de `:` en variables de entorno.
+      # `:?` ABORTA el `up` si la variable no está definida, en vez de arrancar con
+      # un valor de ejemplo: JwtOptions usa ValidateOnStart, así que una clave corta
+      # o vacía tumba el proceso — mejor fallar en el `up` y con un mensaje claro.
+      Jwt__SecretKey: "${JWT_SECRET:?define JWT_SECRET en .env (32+ caracteres)}"
+      Jwt__Issuer: "${JWT_ISSUER:-ApiEcommerce}"
+      Jwt__Audience: "${JWT_AUDIENCE:-ApiEcommerce.Client}"
+
+      # appsettings.json trae la lista VACÍA a propósito: la configuración de .NET
+      # FUSIONA arrays por índice en vez de reemplazarlos, así que cualquier origen
+      # que estuviera en el fichero base seguiría permitido aquí.
+      Cors__AllowedOrigins__0: "${CORS_ORIGIN_0:-http://localhost:3000}"
+
+      # Apagado fuera de desarrollo: crearía un admin con una contraseña conocida.
+      # Y con el seeding apagado NO hace falta Seed__AdminPassword — esa validación
+      # es condicional (`.Validate(...)`), no un [Required] que reventaba el arranque.
+      Seed__Enabled: "false"
+    volumes:
+      # Sin esto, cada redespliegue borra las imágenes de producto ya subidas.
+      - apiecommerce_images:/app/wwwroot/ProductsImages
+    networks:
+      - backend
+
+networks:
+  backend:
+    external: true
+    name: ${INFRA_NETWORK:-000_infra_backend}
+
+volumes:
+  apiecommerce_images:
