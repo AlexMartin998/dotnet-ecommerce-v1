@@ -55,6 +55,17 @@ Para RabbitMQ hay un bloque listo para pegar en ese compose:
 **`docker-compose.fragment.yml`** (raíz del repo). Sin él, la app arranca igual y los
 eventos se acumulan en la tabla `OutboxMessages` — es el diseño, no un fallo.
 
+**La API en contenedor** tiene su propio **`docker-compose.prod.yml`** (raíz del repo):
+declara *solo* la app y se engancha a la red `backend` de aquel compose como **externa**
+(`name: ${INFRA_NETWORK:-000_infra_backend}` — compose prefija con el nombre del proyecto).
+Secretos por `.env` (plantilla en `.env.example`).
+
+⚠️ **Dentro del dev container NO hay Docker.** Ni el `Dockerfile` ni los composes se pueden
+construir o levantar desde aquí: los ejecuta el owner en el host. Y ojo con las dos formas
+de direccionar lo mismo: desde el dev container es `172.17.0.1` + puerto **publicado**
+(1434 / 6999 / 5672); desde dentro de la red `backend` es nombre de servicio + puerto
+**interno** (`sqlserver_ecommerce,1433`, `redis_generic:6379`, `rabbitmq_generic:5672`).
+
 **Credenciales de desarrollo**: `admin` / `Admin123!` (rol `admin`, sembrado por
 `DataSeeder` cuando `Seed:Enabled` es `true`).
 

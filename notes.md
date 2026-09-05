@@ -1705,3 +1705,50 @@ builder.Services
 
 - --- Verificado tras el refactor: smoke test completo + las 3 pruebas de concurrencia con
       resultados IDENTICOS (10x200/5x409 stock 0 · 1x201/7x409 una fila · idempotencia 1 compra)
+
+
+
+
+
+
+## 22. Compose de la app vs compose de la infraestructura
+- --- Dos ficheros, y la division tiene un porque: la infra (SQL Server, Redis, RabbitMQ)
+      la comparto con OTROS proyectos y vive en `~/Documents/code/000_infra`. Un segundo
+      compose que la redeclarara pelearia por los puertos 1434/6999/5672 con el que ya la tiene.
+  - -- `docker-compose.fragment.yml` -> bloques para PEGAR alla. Hoy solo falta `rabbitmq_generic`.
+  - -- `docker-compose.prod.yml` -> SOLO la API, enganchada a la red de alla como **externa**.
+
+- --- ⚠️ La red externa lleva el PREFIJO del proyecto compose
+```yaml
+networks:
+  backend:
+    external: true
+    name: ${INFRA_NETWORK:-000_infra_backend}   # NO "backend" a secas
+```
+  - -- compose prefija con el nombre del proyecto, que por defecto es el nombre de la
+       CARPETA: `backend` declarada en `000_infra/` se llama en realidad `000_infra_backend`
+  - -- comprobarlo siempre con `docker network ls | grep backend`; por eso va parametrizado
+
+- --- ⚠️ `depends_on` **no cruza ficheros compose**
+  - -- solo ordena servicios del MISMO fichero. Con la infra fuera, ese arranque ordenado
+       no existe y hay que darlo desde la app
+  - -- aqui ya lo esta: `MigrateAsync` reintenta por `EnableRetryOnFailure`, y si aun asi
+       muere, `restart: unless-stopped` la vuelve a levantar
+
+- --- ⚠️ Dos formas de direccionar la MISMA base, segun quien pregunte
+  - -- desde el **dev container** (fuera de la red `backend`): `172.17.0.1` + puerto
+       **publicado** -> `172.17.0.1,1434`, `172.17.0.1:6999`, `172.17.0.1:5672`
+  - -- desde **dentro** de la red: nombre de servicio + puerto **interno** ->
+       `sqlserver_ecommerce,1433`, `redis_generic:6379`, `rabbitmq_generic:5672`
+  - -- confundirlos da un timeout de conexion que parece de red y es de puerto
+
+- --- `${VAR:?mensaje}` en el compose **aborta el `up`** si la variable no esta definida
+  - -- lo contrario (`${VAR:-default}`) arrancaria con un secreto de ejemplo
+  - -- importa aqui porque `JwtOptions` usa `ValidateOnStart`: una clave vacia tumba el
+       proceso igual, pero con un stack trace en vez de una linea que dice que falta
+  - -- `.env.example` commiteado (plantilla), `.env` gitignorado (valores)
+
+- --- ⚠️ **No hay docker dentro del dev container**
+  - -- `docker ps` no existe ahi; ni el `Dockerfile` ni estos composes se pueden construir
+       ni levantar desde dentro. Se ejecutan en el HOST
+  - -- por eso el camino real del broker sigue sin ejercitarse: es el unico ⚠️ del slice 09
