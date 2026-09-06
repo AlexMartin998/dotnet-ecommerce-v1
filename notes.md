@@ -2974,3 +2974,67 @@ login responde 200 -> la cookie NO se guarda -> el refresh falla SIEMPRE
        comparaba sensible a mayusculas
   - -- segundo caso en dos dias (el otro, `grep "[ERR]"`). El patron: **cuando algo sale
        "mal" en una comprobacion propia, sospechar primero de la comprobacion**
+
+
+---
+---
+
+
+## 34. Administrar usuarios  <- y bloquear no bloqueaba nada
+
+- --- ⭐ **Lo importante no fue el CRUD de usuarios, fue lo que aparecio al escribirlo**
+```
+Identity comprueba el bloqueo EN EL LOGIN.
+Pero renovar la sesion NO vuelve a pedir credenciales.
+   -> una cuenta "bloqueada" con la sesion abierta se quedaba dentro PARA SIEMPRE
+```
+  - -- el access token sobrevivia (hasta 15 min, aceptable) pero es que ademas **podia
+       seguir renovandose indefinidamente**
+  - -- se cierra por los DOS lados, para que no dependa de acordarse:
+       1) `LockAsync` revoca todas las sesiones del usuario
+       2) `RotateAsync` comprueba `IsLockedOutAsync` antes de renovar
+  - -- el 2) no es redundante: cubre al usuario que se bloquea **solo**, por fallar el
+       login, donde nadie llama a `LockAsync`
+  - -- leccion general: al añadir una feature, preguntarse **que otra cosa creia el sistema
+       que era verdad**. "Bloqueado" existia desde el principio; solo que no significaba nada
+
+- --- **`UserManager`, NO el CRUD generico**
+  - -- `ApplicationUser` no implementa `IEntity` (clave `string`) y su ciclo de vida es de
+       Identity, que es quien sabe de hashes, sellos de seguridad y bloqueos
+  - -- forzarlo dentro de `BaseRepository<T>` seria meter una entidad en una abstraccion que
+       no le sirve, y heredar cinco metodos que nadie debe llamar
+
+- --- **Las reglas duras: las que un descuido rompe sin que nada mas falle**
+  - -- un admin **no puede quitarse a si mismo** el rol admin: es el clic con el que se deja
+       fuera de su propio panel
+  - -- un admin **no puede bloquearse a si mismo** — no estaba en el plan y es la mas facil
+       de olvidar
+  - -- un rol **inexistente** se rechaza: Identity lo crearia al vuelo y acabariamos con
+       roles fantasma que no protegen nada porque ningun `[Authorize]` los nombra
+  - -- asignar un rol que ya se tiene es **204, no 409**: no es un error, es que ya esta como
+       se queria. Un 409 obligaria al cliente a consultar antes de cada asignacion
+  - -- toda promocion se **audita** (quien, a quien, cuando): sin rastro no hay forma de
+       responder "¿quien le dio admin a este?" tres meses despues
+
+- --- ✏️ **Una regla del plan que resulta INALCANZABLE, y decirlo**
+```
+"no se puede quitar el rol al ultimo administrador"
+   para que el objetivo sea el ultimo admin: o soy yo (manda la regla anterior)
+                                             o hay al menos dos (yo y el)
+   -> no hay tercera opcion
+```
+  - -- se deja el codigo como defensa para un futuro endpoint de borrado, pero **no se da
+       por probada**
+  - -- vale la pena mirar cada regla y preguntarse si se puede LLEGAR a ella. Una regla que
+       no se puede disparar es un test que pasa sin probar nada
+
+- --- **Detalles que no son obvios**
+  - -- `SetLockoutEndDateAsync(user, DateTimeOffset.MaxValue)`: Identity no tiene "bloqueado
+       para siempre", tiene una fecha de fin, y el infinito se expresa asi
+  - -- al desbloquear hay que hacer **`ResetAccessFailedCountAsync`** tambien: si no, la
+       cuenta recien desbloqueada se vuelve a bloquear al primer error de contraseña
+  - -- el listado hace **N+1** (una consulta de roles por usuario). Se acepta: la pagina esta
+       acotada a 100 y es un panel de administracion. La salida, si molesta, es un JOIN
+       contra `UserRoles` — **no** subir el pageSize
+  - -- el test de "sin credenciales" se afirma sobre el **JSON crudo**, no sobre el tipo: lo
+       que hay que impedir es el campo añadido "por comodidad" a un DTO

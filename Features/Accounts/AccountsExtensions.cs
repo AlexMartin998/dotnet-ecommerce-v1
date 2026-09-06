@@ -91,6 +91,7 @@ public static class AccountsExtensions
 
     services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
     services.AddScoped<IRefreshTokenService, RefreshTokenService>();
+    services.AddScoped<IUserAdminService, UserAdminService>();
     services.AddScoped<RefreshTokenCookie>();
 
     // Siempre, como el resto de purgas: la tabla crece haya o no actividad.

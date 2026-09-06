@@ -80,6 +80,17 @@ public sealed class RefreshTokenService(
         // su credencial ya no vale, y decir "ese usuario no existe" es un oráculo.
         ?? throw new UnauthorizedAppException("Invalid refresh token.");
 
+    // ⚠️ Renovar NO vuelve a pedir credenciales, así que no pasa por el bloqueo de
+    // Identity: sin esta comprobación, una cuenta bloqueada podría seguir renovando su
+    // sesión **indefinidamente** y el bloqueo no serviría de nada. Es el mismo motivo por
+    // el que bloquear revoca además las sesiones abiertas — esto es el cinturón, aquello
+    // los tirantes: cubre también a un usuario que se bloquee solo por fallar el login.
+    if (await userManager.IsLockedOutAsync(user))
+    {
+      logger.LogWarning("Refresh refused for locked-out user {UserId}", stored.UserId);
+      throw new UnauthorizedAppException("Invalid refresh token.");
+    }
+
     var roles = await userManager.GetRolesAsync(user);
 
     // Gastar el viejo y emitir el nuevo, ATÓMICO. Si solo se confirmara lo primero, el
@@ -134,6 +145,13 @@ public sealed class RefreshTokenService(
     // en vez de al expirar. Si esto falla, la sesión sigue cortada igual.
     if (!string.IsNullOrEmpty(accessTokenId) && accessTokenExpiresAt is { } expiresAt)
       await denylist.RevokeAsync(accessTokenId, expiresAt, ct);
+  }
+
+  public async Task RevokeAllSessionsAsync(string userId, CancellationToken ct = default)
+  {
+    var revoked = await repository.RevokeAllForUserAsync(userId, ct);
+
+    logger.LogInformation("Revoked {Count} session(s) for user {UserId}", revoked, userId);
   }
 
   /// <summary>Genera un token nuevo y lo deja pendiente de confirmar.</summary>

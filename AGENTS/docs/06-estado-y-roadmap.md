@@ -249,10 +249,16 @@ extender») es la familia revocada en la base, en una transacción; la **optimiz
 es la denylist de `jti` en Redis, que solo adelanta la muerte del access token que el
 cliente ya tiene. Verificado con Redis muerto: el logout sigue cortando la sesión.
 
-### Paso 11 — Endpoint de administración de usuarios
+### Paso 11 — Administración de usuarios — ✅ **hecho** (2026-09-06)
 
-`GET /api/v1/user` (listado, admin), `POST /api/v1/user/{id}/roles` (promover a
-admin). Hoy el único camino para tener un admin es el seeder.
+Detalle en [`planning/14`](../planning/14_admin-usuarios.md). Listado paginado,
+roles y bloqueo, con `UserManager` y no con el CRUD genérico.
+
+🔴 Lo que destapó: **bloquear una cuenta no servía de nada**. Identity comprueba el
+bloqueo en el login, pero el usuario seguía dentro con su access token y podía
+**seguir renovándolo indefinidamente**, porque renovar no vuelve a pedir
+credenciales. Cerrado por los dos lados: bloquear revoca las sesiones, y renovar
+comprueba el bloqueo.
 
 ### Paso 12 — Deudas conocidas y anotadas
 

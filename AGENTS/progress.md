@@ -4,7 +4,7 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-06** (sesiones revocables: refresh tokens).
+Última actualización: **2026-09-06** (administración de usuarios; el roadmap queda sin pendientes salvo el 15).
 
 ---
 
@@ -22,10 +22,10 @@
 | 08 | Idempotencia de peticiones | ✅ | [`features/08`](features/08_idempotencia.feature) · [`planning/08`](planning/08_idempotencia.md) | `63269ac` |
 | 09 | Eventos de dominio (outbox + RabbitMQ) | ✅ | [`features/09`](features/09_eventos-de-dominio.feature) · [`planning/09`](planning/09_eventos-de-dominio.md) | `63269ac` + fix |
 | 10 | Límites, salud y despliegue | ✅ | [`features/10`](features/10_limites-y-salud.feature) · [`planning/10`](planning/10_limites-y-salud.md) | `63269ac` |
-| 11 | **Tests** | ✅ fases 1–6 (**193 tests** + CI) | [`planning/11`](planning/11_proyecto-de-tests.md) | `14c9e76` + |
+| 11 | **Tests** | ✅ fases 1–6 (**202 tests** + CI) | [`planning/11`](planning/11_proyecto-de-tests.md) | `14c9e76` + |
 | 12 | Deuda de la revisión 2026-08-30 | ✅ (§12.5 en [`planning/18`](planning/18_deuda-de-mensajeria.md)) | [`planning/12`](planning/12_deuda-revision-multiagente.md) | — |
 | 13 | Refresh tokens y revocación | ✅ | [`features/13`](features/13_refresh-tokens.feature) · [`planning/13`](planning/13_refresh-tokens.md) | — |
-| 14 | Administración de usuarios | ❌ | [`planning/14`](planning/14_admin-usuarios.md) | — |
+| 14 | Administración de usuarios | ✅ | [`features/14`](features/14_admin-usuarios.feature) · [`planning/14`](planning/14_admin-usuarios.md) | — |
 | 15 | Partir en proyectos | ❌ diferido | [`planning/15`](planning/15_partir-en-proyectos.md) | — |
 | 16 | Idempotencia bajo carga | ✅ | [`features/16`](features/16_idempotencia-bajo-carga.feature) · [`planning/16`](planning/16_idempotencia-bajo-carga.md) | `7f120a2` |
 | 17 | Idempotencia transaccional | ✅ | [`features/17`](features/17_idempotencia-transaccional.feature) · [`planning/17`](planning/17_idempotencia-transaccional.md) | `b9f62aa` |
@@ -38,6 +38,36 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 ---
 
 ## 2. Bitácora
+
+### 2026-09-06 — Administrar usuarios, y el agujero que eso destapó
+
+`planning/14`: listado paginado, dar y quitar roles, bloquear y desbloquear. Todo con
+`UserManager` y **no** con el CRUD genérico — `ApplicationUser` no implementa `IEntity` y
+su ciclo de vida es de Identity, que es quien sabe de hashes y bloqueos.
+
+🔴 **Lo importante no fueron los endpoints, sino lo que aparecieron al escribirlos:
+bloquear una cuenta NO SERVÍA DE NADA.** Identity comprueba el bloqueo en el *login*, pero
+el usuario seguía dentro con su access token y —lo grave— **podía seguir renovándolo
+indefinidamente**, porque renovar no vuelve a pedir credenciales y por tanto no pasaba por
+el bloqueo. Una cuenta «bloqueada» con la sesión abierta se quedaba dentro **para siempre**.
+
+Cerrado por los dos lados, para que no dependa de acordarse: `LockAsync` revoca todas las
+sesiones del usuario, y `RotateAsync` comprueba el bloqueo antes de renovar —esto último
+cubre además al usuario que se bloquea solo por fallar el login, donde nadie llama a
+`LockAsync`—.
+
+**Reglas duras**, que son las que un descuido rompe sin que nada más falle: un admin no
+puede quitarse su propio rol (409, y verificado que sigue siéndolo), no puede bloquearse a
+sí mismo —no estaba en el plan y es la más fácil de olvidar—, un rol inexistente se rechaza
+con 400 (Identity lo crearía al vuelo, y tendríamos roles fantasma que no protege ningún
+`[Authorize]`), y toda promoción se audita con quién, a quién y cuándo.
+
+✏️ **Y una regla que resulta ser inalcanzable**: «no se puede quitar el rol al último
+administrador» no se puede provocar por HTTP, porque la regla de «no puedes quitarte el
+tuyo» la subsume — o el objetivo soy yo, o hay al menos dos admins. Se deja como defensa
+para un futuro endpoint de borrado, pero **queda dicho** en vez de darla por probada.
+
+**202 tests** en verde (eran 193).
 
 ### 2026-09-06 — Sesiones que se pueden revocar
 
