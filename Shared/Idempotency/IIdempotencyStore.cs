@@ -58,11 +58,14 @@ public interface IIdempotencyStore
   /// Un <c>GET</c> seguido de un <c>SET</c> volvería a ser read-then-write y dos
   /// peticiones simultáneas con la misma clave pasarían las dos.
   /// </remarks>
+  /// <param name="key">Clave completa (usuario + método + ruta + clave del cliente).</param>
   /// <param name="requestHash">
   /// Huella del cuerpo. Se guarda <b>desde la reserva</b> y no al terminar: si solo
   /// estuviera en la respuesta, una segunda petición con la misma clave y otro cuerpo
   /// que llegue <i>mientras la primera sigue en curso</i> no tendría contra qué comparar.
   /// </param>
+  /// <param name="ttl">Vida de la RESERVA, corta: se libera sola si el proceso muere.</param>
+  /// <param name="ct">Token de cancelación.</param>
   Task<bool> TryAcquireAsync(string key, string requestHash, TimeSpan ttl, CancellationToken ct = default);
 
   /// <summary>Estado de la clave, o <c>null</c> si no existe.</summary>
