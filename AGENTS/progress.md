@@ -4,7 +4,7 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-06** (deuda de mensajería cerrada; `planning/12` completo).
+Última actualización: **2026-09-06** (mensajería y errores bajo carga cerrados).
 
 ---
 
@@ -22,14 +22,15 @@
 | 08 | Idempotencia de peticiones | ✅ | [`features/08`](features/08_idempotencia.feature) · [`planning/08`](planning/08_idempotencia.md) | `63269ac` |
 | 09 | Eventos de dominio (outbox + RabbitMQ) | ✅ | [`features/09`](features/09_eventos-de-dominio.feature) · [`planning/09`](planning/09_eventos-de-dominio.md) | `63269ac` + fix |
 | 10 | Límites, salud y despliegue | ✅ | [`features/10`](features/10_limites-y-salud.feature) · [`planning/10`](planning/10_limites-y-salud.md) | `63269ac` |
-| 11 | **Tests** | ✅ fases 1–6 (**183 tests** + CI) | [`planning/11`](planning/11_proyecto-de-tests.md) | `14c9e76` + |
+| 11 | **Tests** | ✅ fases 1–6 (**186 tests** + CI) | [`planning/11`](planning/11_proyecto-de-tests.md) | `14c9e76` + |
 | 12 | Deuda de la revisión 2026-08-30 | ✅ (§12.5 en [`planning/18`](planning/18_deuda-de-mensajeria.md)) | [`planning/12`](planning/12_deuda-revision-multiagente.md) | — |
 | 13 | Refresh tokens y revocación | ❌ | [`planning/13`](planning/13_refresh-tokens.md) | — |
 | 14 | Administración de usuarios | ❌ | [`planning/14`](planning/14_admin-usuarios.md) | — |
 | 15 | Partir en proyectos | ❌ diferido | [`planning/15`](planning/15_partir-en-proyectos.md) | — |
 | 16 | Idempotencia bajo carga | ✅ | [`features/16`](features/16_idempotencia-bajo-carga.feature) · [`planning/16`](planning/16_idempotencia-bajo-carga.md) | `7f120a2` |
 | 17 | Idempotencia transaccional | ✅ | [`features/17`](features/17_idempotencia-transaccional.feature) · [`planning/17`](planning/17_idempotencia-transaccional.md) | `b9f62aa` |
-| 18 | Deuda de mensajería | ✅ | [`features/18`](features/18_mensajeria-robusta.feature) · [`planning/18`](planning/18_deuda-de-mensajeria.md) | — |
+| 18 | Deuda de mensajería | ✅ | [`features/18`](features/18_mensajeria-robusta.feature) · [`planning/18`](planning/18_deuda-de-mensajeria.md) | `a77b5df` |
+| 19 | Errores bajo carga | ✅ | [`planning/19`](planning/19_errores-bajo-carga.md) | — |
 
 **Ya no queda ningún ⚠️.** El 09 se cerró el 2026-09-05 contra un RabbitMQ real, y esa
 verificación destapó un bug que el build y el smoke test no veían (abajo).
@@ -37,6 +38,44 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 ---
 
 ## 2. Bitácora
+
+### 2026-09-06 — Los «errores» que no eran errores
+
+Lo último que quedaba abierto de `planning/17` §17.4, y sale de las pruebas de carga: el
+log se llenaba de incidentes falsos justo cuando más falta hace leerlo.
+
+- **Un cliente que cuelga no es un fallo del servidor.** EF cancela el `SqlCommand` y
+  SqlClient lanza un **`SqlException`** —no una `OperationCanceledException`, que sí estaba
+  mapeada— así que salía como 500 con traza completa. `ClientAbortMiddleware` lo absorbe:
+  **499**, Information, sin traza.
+  ⚠️ Va **por debajo** de `UseExceptionHandler`, y el orden es lo único que lo hace
+  funcionar: el middleware de diagnóstico del framework escribe su «unhandled exception» a
+  nivel Error **antes** de llamar a ningún `IExceptionHandler`. Lo probé primero en el
+  handler y no servía.
+- Se decide por el **estado de la petición**, no por el tipo de la excepción: la
+  cancelación se propaga distinto según dónde pille, y perseguir tipos es una lista que
+  nunca está completa. (`SqlException` ni siquiera se puede construir en un test.)
+- **Un timeout de base tampoco es un 500**: `SqlException` −2 pasa a **503 + `Retry-After`**,
+  porque es reintentable y un 500 le dice al cliente justo lo contrario.
+- **El `Detail` de un 5xx mapeado deja de censurarse**: la regla «≥500 → mensaje genérico»
+  estaba pensada para excepciones no controladas. El corte pasa a ser «¿lo mapeamos
+  nosotros?».
+
+Medido ejecutando (180 abortos a mitad, con carga de fondo para que la cancelación pillara
+a SqlClient en vuelo): **de 27 «unhandled exception» a 0**, y 30 registradas como cierre de
+cliente con respuesta 499.
+
+✏️ **Dos correcciones propias.** Las primeras lecturas usaron `grep "\[ERR\]"`, que **no
+puede casar** —Serilog escribe `[18:55:27 ERR]`— así que los «0 errores» que di por buenos
+eran un falso negativo; rehecho con el patrón correcto. Y al afinar el `Detail` rompí el de
+los 4xx, donde el mensaje de dominio es el útil: **lo cazó un test que ya existía**.
+
+Queda dicho lo que no se cierra: EF Core sigue registrando a nivel Error sus 7 líneas de
+«An error occurred using the connection», y **se dejan a propósito** —bajar esa categoría
+escondería las caídas reales de base—. Y el timeout no se verificó ejecutando: exigía
+saturar el SQL Server compartido.
+
+**186 tests** en verde (eran 183).
 
 ### 2026-09-06 — La deuda de mensajería, y por qué no se podía probar
 

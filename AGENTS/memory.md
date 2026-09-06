@@ -27,15 +27,22 @@ nunca hace push (`rules.md` §12).
 4. 🔴 **Un bug encontrado ejecutando**: al versionar la cola de espera, cada reintento se
    copiaba a **todas** las colas de espera ligadas al exchange. Arreglado publicando al
    exchange por defecto con el nombre de la cola como routing key.
-5. **183 tests** (eran 160 al empezar la sesión), build sin warnings.
+5. **186 tests** (eran 160 al empezar la sesión), build sin warnings.
+
+5.bis **`planning/19`** — los «errores» que no eran errores: un cliente que cuelga sale
+   ahora como **499** a nivel Information (antes: 500 con traza, porque SqlClient lanza un
+   `SqlException` y no una OCE), y un timeout de base como **503 + `Retry-After`**.
+   ⚠️ El middleware va **por debajo** de `UseExceptionHandler`, o el framework ya ha
+   escrito su línea de Error antes de llamarte.
 
 ### Por dónde seguir (en este orden)
-1. **`SqlException` escapando como 500 bajo carga** (`planning/17` §17.4): «Operation
-   cancelled by user» cuando el cliente cuelga, y Win32 258 por timeout. Ensucia las
-   métricas de error. Es lo único adyacente que quedó abierto y pide su propio planning.
-2. **`planning/13`** refresh tokens · **`planning/14`** administración de usuarios (hoy el
+1. **`planning/13`** refresh tokens · **`planning/14`** administración de usuarios (hoy el
    único camino para tener un admin es el seeder).
-3. `planning/15` (partir en proyectos) sigue **diferido a propósito**.
+2. `planning/15` (partir en proyectos) sigue **diferido a propósito**.
+3. Deuda menor viva, toda anotada: `planning/17` §17.4 (la huella sobre el DTO enlazado,
+   solo `buy` declara intención, la retención compartida en `Outbox:RetentionDays`) y
+   `planning/19` §19.4 (EF sigue logueando a Error sus fallos de conexión — se deja a
+   propósito).
 
 ⚠️ **Colas huérfanas en el broker de desarrollo**: al cambiar `RetryDelaySeconds` quedan
 colas `…retry.<N>s` de plazos anteriores. Están vacías y **ya no reciben nada** (no tienen
@@ -333,7 +340,7 @@ misma transacción que el efecto) y outbox +
 RabbitMQ — este último **verificado de punta a punta contra un broker real** el
 2026-09-05, incluidos deduplicación y DLQ.
 
-**Tests y CI hechos**: `tests/ApiEcommerce.Tests`, **183** (unitarios + integración +
+**Tests y CI hechos**: `tests/ApiEcommerce.Tests`, **186** (unitarios + integración +
 concurrencia + degradación y arranque) y `.github/workflows/ci.yml`. **`planning/12`
 cerrado** salvo la licencia de AutoMapper. Lo siguiente es `planning/12` §12.5 (la deuda
 nueva) y luego refresh tokens y administración de usuarios.

@@ -202,10 +202,7 @@ multiplexer propio, más conexiones— quedaron descartadas o irrelevantes: ver
 - [x] ✅ **Identidad byte a byte del replay** (venía de `planning/12` §12.2). Cerrada
       como efecto secundario en `planning/17`: al memorizar el DTO y no la respuesta HTTP,
       el replay vuelve a pasar por el mismo formateador de MVC. Verificado 3/3.
-- [ ] **`SqlException` escapando como 500 bajo carga.** En las pruebas: «Operation
-      cancelled by user» (el cliente cuelga → EF cancela el `SqlCommand`) y Win32 258
-      (timeout). Los primeros no son un fallo del servidor y ensucian las métricas de
-      error. **Es adyacente a esta tarea, no parte de ella**: pide su propio planning.
+- [x] ✅ **`SqlException` escapando como 500 bajo carga** → **[`planning/19`](19_errores-bajo-carga.md)**.
 - [x] ✅ **Redis compartido con `allkeys-lru`**: deja de importar para la corrección.
       Desalojar una clave solo pierde la puerta de admisión, no la garantía.
 
