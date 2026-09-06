@@ -2412,3 +2412,108 @@ services:
        primer warning que nadie mire. O algo la obliga, o no es una regla
   - -- job aparte que **construye el Dockerfile**: aqui nunca se habia podido construir
        por no haber Docker en el dev container
+
+
+
+
+
+
+## 28. Cerrar la deuda: outbox multi-replica, reintentos reales, ETag y trazas
+- --- ⭐ **Sequence (`bigint IDENTITY`) en vez de ordenar por `OccurredAt`**
+```
+OccurredAt = DateTime.Now DEL PROCESO que escribio la fila
+   -> con 2 replicas, el orden de publicacion depende del RELOJ DE CADA MAQUINA
+   -> y no desempata las filas del mismo milisegundo (con insercion en lote, lo normal)
+```
+  - -- un IDENTITY lo asigna UN SOLO arbitro: el servidor SQL
+  - -- ⚠️ EF genera `ALTER TABLE ADD [Sequence] bigint NOT NULL IDENTITY` y quita solo el
+       `DEFAULT 0` que pondria en cualquier otra columna. Revisar el script igualmente:
+```sh
+dotnet ef migrations script <migracion-anterior>
+```
+  - -- a las filas YA existentes SQL les asigna la secuencia en orden fisico, arbitrario.
+       Da igual: son historico, la garantia es de aqui en adelante
+
+- --- ⭐ **`sp_getapplock` y no un claim por filas** (la decision, no el codigo)
+```
+claim con LockedUntil + UPDATE ... OUTPUT   -> 2 replicas drenan EN PARALELO
+                                            -> adios a la garantia de orden que acabas de ganar
+                                            -> y hay que gestionar la expiracion del claim
+sp_getapplock exclusivo                     -> drena UNA a la vez, orden intacto, cero columnas
+```
+  - -- drenar es un trabajo de fondo cada 5 s con lote acotado: serializarlo no cuesta nada
+  - -- ⚠️ `@LockOwner='Transaction'`, NUNCA `'Session'`: "session" es la conexion, y la
+       conexion sale de un POOL y se reutiliza para otra cosa
+  - -- `@LockTimeout=0`: si otro lo tiene, se salta la vuelta. Encolar replicas esperando
+       un lock solo acumula latencia
+  - -- prueba determinista, mucho mejor que "lanzar dos replicas y ver":
+```python
+# retener el lock desde otra sesion SQL y ver que la app NO publica
+cur.execute("EXEC sp_getapplock @Resource='apiecommerce:outbox-publisher', "
+            "@LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=0")
+```
+    - resultado: compras siguen dando **200** (el lock no toca al negocio), 0 publicaciones,
+      y al soltarlo se publica. Eso es lo que hay que demostrar
+
+- --- ⭐ **Reintentos del consumidor: cola de ESPERA con `x-message-ttl`**
+```
+cola principal --(falla)--> [publico yo] --> exchange .retry --> cola .retry (TTL 30s, sin consumidor)
+                                                                      |  caduca
+                                                                      v
+                                                          dead-letter -> exchange principal
+                                                                      -> cola principal otra vez
+```
+  - -- cada vuelta el broker incrementa `x-death[].count`: **ese** es el contador real.
+       `args.Redelivered` es una BANDERA (se pone a true por un reinicio del pod sin fallo)
+  - -- ⚠️ se añade como topologia NUEVA, sin tocar el `x-dead-letter-exchange` de la cola
+       principal. Redeclarar una cola con argumentos distintos da **406 PRECONDITION_FAILED**:
+       desplegarlo obligaria a BORRAR la cola en produccion, con sus mensajes dentro
+  - -- ⚠️ publicar al reintento **ANTES** de hacer ack. Al reves, morir entremedias pierde
+       el mensaje. Duplicar antes que perder: la misma regla del outbox
+  - -- ⚠️ los valores de texto de `x-death` viajan como **byte[]**: compararlos contra un
+       string sin convertir da siempre false y el contador se queda en 0 PARA SIEMPRE
+```csharp
+byte[] bytes => Encoding.UTF8.GetString(bytes),
+```
+
+- --- ⭐ **ETag / If-Match: `RowVersion` sola NO cierra el lost update**
+```
+A lee (rowversion=7) -> B edita (rowversion pasa a 8) -> A guarda
+   el PATCH de A RELEE la fila -> EF compara contra 8 -> cuadra -> A pisa a B en silencio
+```
+  - -- el unico valor que prueba QUE VERSION LEYO A es el que A traiga de vuelta: el ETag
+  - -- 412 y no 409: el 409 dice "chocas con el estado"; el 412 dice "la precondicion que
+       TU pusiste no se cumple", y eso le dice al cliente que relea
+  - -- OPCIONAL a proposito: exigir `If-Match` romperia a todos los clientes actuales
+  - -- ⚠️ hay que quitar el envoltorio del RFC (comillas, y el `W/` de las etiquetas
+       debiles) o el token no casa nunca y TODO PATCH con If-Match da 412
+
+- --- ⚠️ **El replay de idempotencia no era identico byte a byte**
+  - -- el filtro re-serializaba con SUS opciones: un `+` de base64 salia como `+`
+  - -- solo se nota cuando el `rowVersion` lleva un `+`: fallo **aleatorio y dependiente de
+       los datos**, el peor de diagnosticar. Lo cazo un test que comparaba los dos cuerpos
+  - -- leccion: si memorizas una respuesta para reproducirla, tienes que memorizar lo que
+       de verdad se escribio, no volver a serializarlo
+
+- --- OpenTelemetry: lo que no es obvio
+  - -- **se instrumenta siempre, se exporta solo si hay `OtlpEndpoint`**. Misma regla que
+       Redis y RabbitMQ: la observabilidad no puede ser el motivo de que la API no arranque
+  - -- `ParentBasedSampler`: si quien te llamo decidio trazar, trazas. Decidir por tu cuenta
+       parte las trazas distribuidas por la mitad
+  - -- filtrar `/health`: se ejecuta cada pocos segundos y ahoga cualquier traza que importe
+  - -- ⚠️ el TEXTO de las consultas SQL **no** se captura (desde la 1.10 hay que activar una
+       bandera experimental). No activarla: lleva correos, nombres y precios al backend de
+       trazas, que casi nunca esta tan protegido como la base
+  - -- el `TraceId` en cada linea de log sale de `Activity.Current`, sin paquete extra:
+```csharp
+using (LogContext.PushProperty("TraceId", Activity.Current?.TraceId.ToString()))
+```
+
+- --- ⚠️ `UseHsts()` **fuera de Development**
+  - -- en local la cabecera queda cacheada en el navegador para `localhost` y rompe
+       cualquier otro proyecto servido en claro por ese host — y el fallo aparece en OTRA
+       aplicacion, que es lo que lo hace dificil de atar
+
+- --- ⚠️ `dotnet add package` escribe `Version="*"`
+  - -- en CI eso significa que dos builds del MISMO commit pueden no ser el mismo binario
+  - -- fijar siempre la version resuelta (`obj/project.assets.json` la dice)
