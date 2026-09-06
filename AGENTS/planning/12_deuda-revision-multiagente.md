@@ -4,12 +4,18 @@
 > nuevo. Los P0 y los P1 baratos ya están corregidos (`progress.md` §2).
 
 ## 12.1 Mensajería
-- [ ] **Reintentos del consumidor con contador real.** `args.Redelivered` es una bandera del
-      broker, no un contador: efectivamente son 2 intentos y con 0 ms entre ellos (un
-      requeue devuelve el mensaje a la **cabeza** de la cola).
-      → *retry queue* con `x-message-ttl` que dead-letterea de vuelta a la principal, y
-      leer `x-death[0].count`. Se quitó `MaxDeliveryAttempts` de la configuración por no
-      dejar una opción muerta que documenta algo que no ocurre.
+- [x] **Reintentos del consumidor con contador real.** Cola de espera
+      `…product-purchased.retry` con `x-message-ttl`, que dead-letterea de vuelta a la
+      principal; el contador sale de `x-death[].count` filtrando por esa cola.
+      `MaxDeliveryAttempts` y `RetryDelaySeconds` vuelven a configuración ahora que hay
+      algo real detrás.
+      ⚠️ Se añade como topología **NUEVA** en vez de cambiar el `x-dead-letter-exchange` de
+      la cola principal: redeclarar una cola existente con argumentos distintos da
+      **406 PRECONDITION_FAILED** y obligaría a borrarla en producción, con sus mensajes.
+      ⚠️ Y se publica al reintento **antes** de confirmar el original: al revés, morir
+      entremedias pierde el mensaje.
+      Verificado con un cuerpo ilegible y TTL de 2 s: intentos a los :34, :36 y :38 —el
+      espaciado es el TTL— y al tercero a la DLQ.
 - [x] **Claim en el `OutboxPublisher`.** Resuelto con **`sp_getapplock` exclusivo**
       (`@LockOwner='Transaction'`, `@LockTimeout=0`) en vez de un claim por filas.
       ⚠️ **La decisión importa**: un claim con `LockedUntil` permitiría a dos réplicas
