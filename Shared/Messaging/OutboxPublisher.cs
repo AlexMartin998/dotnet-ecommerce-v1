@@ -51,10 +51,18 @@ public sealed class OutboxPublisher(
       {
         await PublishPendingAsync(stoppingToken);
       }
-      catch (Exception ex) when (ex is not OperationCanceledException)
+      catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
       {
-        // Un fallo aquí NO puede matar el BackgroundService: si el bucle termina,
-        // nadie vuelve a publicar hasta que se reinicie el proceso.
+        break;   // apagado ordenado
+      }
+      catch (Exception ex)
+      {
+        // ⚠️ SIN filtro que excluya OperationCanceledException. Una OCE que NO venga del
+        // stoppingToken —la cancelación de un SqlCommand, un timeout interno del cliente
+        // AMQP, un token enlazado como el de abajo— se escapaba de este catch, salía de
+        // ExecuteAsync y, como desde .NET 6 el default es StopHost, **tumbaba la API
+        // entera**. Verificado reproduciendo la forma del bucle en un host mínimo.
+        // Es el mismo error que el consumidor ya tenía corregido y este no.
         logger.LogError(ex, "Outbox publish loop failed; retrying in {Interval}", interval);
       }
 
@@ -71,21 +79,49 @@ public sealed class OutboxPublisher(
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     var transactions = scope.ServiceProvider.GetRequiredService<ITransactionRunner>();
 
-    await transactions.ExecuteAsync(async token =>
-    {
-      // Si otra réplica está drenando, esta vuelta no hace nada. Es lo correcto: el
-      // trabajo no se pierde, se hace en la siguiente pasada (o la termina la otra).
-      if (!await TryAcquirePublisherLockAsync(db, token))
-      {
-        logger.LogDebug("Another replica is draining the outbox; skipping this cycle");
-        return 0;
-      }
+    // ⚠️ PRESUPUESTO PARA LA TANDA. La transacción —y con ella el sp_getapplock— se
+    // mantiene abierta durante todo el diálogo con el broker. En estado sano son ~0,3 s,
+    // pero si la conexión está abierta y el broker no responde, cada publicación espera
+    // hasta el ContinuationTimeout (20 s) y una tanda de 50 podía tener la transacción
+    // abierta ~16 minutos: `log_reuse_wait_desc = ACTIVE_TRANSACTION` y el resto de
+    // réplicas saltándose la vuelta. Se acota a dos intervalos.
+    using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+    budget.CancelAfter(TimeSpan.FromSeconds(_options.PublishIntervalSeconds * 2));
 
-      return await DrainAsync(db, token);
-    }, ct);
+    // ⚠️ REENTRANCIA. `ExecuteAsync` corre sobre la execution strategy de EF, que ante un
+    // fallo transitorio (deadlock, timeout) **reejecuta el delegado entero** — incluidas
+    // las publicaciones ya hechas al broker, que no se pueden deshacer. Es exactamente la
+    // regla que este repo enuncia para `[Transactional]`, aquí incumplida. Este conjunto
+    // vive FUERA del delegado y sobrevive al reintento, así que un replay no republica.
+    var alreadyPublished = new HashSet<Guid>();
+
+    try
+    {
+      await transactions.ExecuteAsync(async token =>
+      {
+        // Si otra réplica está drenando, esta vuelta no hace nada. Es lo correcto: el
+        // trabajo no se pierde, se hace en la siguiente pasada (o la termina la otra).
+        if (!await TryAcquirePublisherLockAsync(db, token))
+        {
+          logger.LogDebug("Another replica is draining the outbox; skipping this cycle");
+          return 0;
+        }
+
+        return await DrainAsync(db, alreadyPublished, token);
+      }, budget.Token);
+    }
+    catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+    {
+      // Se agotó el presupuesto, no el apagado. Se suelta la transacción y el bloqueo, y
+      // se reintenta en la vuelta siguiente: lo publicado ya está marcado.
+      logger.LogWarning(
+          "Outbox drain exceeded its {Seconds}s budget and was aborted; retrying next cycle",
+          _options.PublishIntervalSeconds * 2);
+    }
   }
 
-  private async Task<int> DrainAsync(AppDbContext db, CancellationToken ct)
+  private async Task<int> DrainAsync(
+      AppDbContext db, HashSet<Guid> alreadyPublished, CancellationToken ct)
   {
     var maxAttempts = _options.MaxPublishAttempts;
 
@@ -103,7 +139,13 @@ public sealed class OutboxPublisher(
     {
       try
       {
-        await publisher.PublishAsync(message.Id, message.Type, message.Payload, ct);
+        // Si la estrategia de EF reejecutó el delegado, esto ya salió al broker en el
+        // intento anterior. Se marca sin volver a publicar.
+        if (!alreadyPublished.Contains(message.Id))
+        {
+          await publisher.PublishAsync(message.Id, message.Type, message.Payload, ct);
+          alreadyPublished.Add(message.Id);
+        }
 
         message.ProcessedAt = DateTime.Now;
         message.LastError = null;
@@ -170,12 +212,17 @@ public sealed class OutboxPublisher(
   /// </para>
   /// <para>
   /// <b>Por qué un bloqueo global y no un claim por filas</b> (una columna
-  /// <c>LockedUntil</c> con <c>UPDATE ... OUTPUT</c>): el claim permite que dos réplicas
-  /// drenen <i>en paralelo</i>, y eso destruye justamente la garantía de orden que da
-  /// <c>Sequence</c>. Además obliga a gestionar la expiración del claim para que una
-  /// réplica que muere no deje filas bloqueadas. Aquí drenar es un trabajo de fondo cada
-  /// pocos segundos y con lote acotado: serializarlo no cuesta nada y sale más simple y
-  /// más correcto.
+  /// <c>LockedUntil</c> con <c>UPDATE ... OUTPUT</c>): el claim obliga a gestionar la
+  /// expiración para que una réplica que muere no deje filas bloqueadas para siempre, y
+  /// añade dos columnas y una consulta con <c>UPDLOCK</c>/<c>READPAST</c> a cambio de un
+  /// paralelismo que aquí no hace falta — drenar es un trabajo de fondo cada pocos
+  /// segundos con lote acotado. Serializarlo sale más simple y no cuesta nada.
+  /// <br/>
+  /// ⚠️ <b>Corrección honesta:</b> la primera versión de este comentario justificaba la
+  /// elección diciendo que el claim "destruye la garantía de orden que da
+  /// <c>Sequence</c>". <b>Esa garantía no existe</b> (ver <see cref="OutboxMessage.Sequence"/>:
+  /// el IDENTITY se asigna al INSERT y la fila se ve al COMMIT), así que el argumento era
+  /// falso aunque la decisión siga siendo la buena por lo dicho arriba.
   /// </para>
   /// <para>
   /// ⚠️ <c>@LockOwner = 'Transaction'</c>: el bloqueo se suelta solo al hacer commit o

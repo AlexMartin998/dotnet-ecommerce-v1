@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
+using RabbitMQ.Client.Exceptions;
 
 namespace ApiEcommerce.Shared.Messaging.RabbitMq;
 
@@ -53,7 +54,13 @@ public sealed class RabbitMqConnection(
         // sin que haya que reiniciar el servicio.
         AutomaticRecoveryEnabled = true,
         TopologyRecoveryEnabled = true,
-        NetworkRecoveryInterval = TimeSpan.FromSeconds(5)
+        NetworkRecoveryInterval = TimeSpan.FromSeconds(5),
+
+        // Explícito y no heredado del default: `ProductPurchasedConsumer` publica el
+        // reintento por el MISMO canal por el que consume, y eso solo es seguro porque
+        // las entregas se despachan de una en una. Si esto sube, hay que darle a la
+        // publicación su propio canal.
+        ConsumerDispatchConcurrency = 1
       };
 
       // La conexión anterior se libera SIEMPRE antes de crear otra. Si se
@@ -76,7 +83,21 @@ public sealed class RabbitMqConnection(
       // siempre y la topología no se declararía nunca más.
       var connection = await factory.CreateConnectionAsync(ct);
 
-      await DeclareTopologyAsync(connection, ct);
+      try
+      {
+        await DeclareTopologyAsync(connection, ct);
+      }
+      catch
+      {
+        // ⚠️ FUGA DE CONEXIONES. Sin este dispose, una topología que falla deja la
+        // conexión local huérfana — y con AutomaticRecoveryEnabled sigue **viva y
+        // enganchada al broker para siempre**, porque nadie tiene ya la referencia.
+        // El bucle del consumidor crea otra cada 10 s. Medido: 22 fallos consecutivos =
+        // 22 conexiones fugadas, exactamente 1:1, y ninguna se cerraba sola; a ese ritmo
+        // son ~8.600 al día hasta agotar los descriptores del broker.
+        await connection.DisposeAsync();
+        throw;
+      }
 
       _connection = connection;
       logger.LogInformation("Connected to RabbitMQ");
@@ -92,7 +113,19 @@ public sealed class RabbitMqConnection(
       // condición ESPERADA y recuperable, y el bucle reintenta cada pocos segundos.
       // Volcar la traza completa cada vez inunda el log justo cuando hace falta
       // leerlo, y deja un incidente real sepultado.
-      logger.LogWarning("RabbitMQ unavailable ({Error}); events stay in the outbox", ex.Message);
+      // ⚠️ Un 406 PRECONDITION_FAILED no es "el broker está caído": es que una cola ya
+      // existe con argumentos distintos a los que pedimos (el caso típico: cambiar
+      // `RabbitMq:RetryDelaySeconds`, que fija el `x-message-ttl` de la cola de espera).
+      // Es un error de CONFIGURACIÓN, permanente, y tratarlo como una caída dejaba la
+      // mensajería entera abajo reintentando en bucle con un simple WARNING.
+      if (ex is OperationInterruptedException { ShutdownReason.ReplyCode: 406 })
+        logger.LogError(ex,
+            "RabbitMQ topology mismatch (406): a queue already exists with different arguments. " +
+            "Messaging is DOWN until it is fixed — delete the offending queue or change its name. " +
+            "This is NOT a broker outage and retrying will not fix it.");
+      else
+        logger.LogWarning("RabbitMQ unavailable ({Error}); events stay in the outbox", ex.Message);
+
       return null;
     }
     finally

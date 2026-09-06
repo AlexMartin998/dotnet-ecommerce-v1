@@ -4,7 +4,7 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-06**.
+Última actualización: **2026-09-06** (segunda revisión multiagente aplicada).
 
 ---
 
@@ -34,6 +34,51 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 ---
 
 ## 2. Bitácora
+
+### 2026-09-06 — Segunda revisión multiagente: 1 P0 y 4 P1 reales, corregidos
+
+Tres agentes con la orden de **verificar ejecutando**, uno por eje. Encontraron lo que ni
+el build limpio ni los 159 tests veían — y el P0 **lo había introducido el trabajo de esa
+misma sesión**:
+
+- 🔴 **La marca de idempotencia se confirmaba ANTES del efecto**, así que si el efecto
+  fallaba, la reentrega se reconocía como duplicado, se hacía ack y **el mensaje
+  desaparecía sin procesarse**: toda la maquinaria de reintentos recién construida era
+  inerte para el único caso para el que existe. El razonamiento original (la PK "abre la
+  puerta" al efecto) era correcto **cuando no había reintentos**; al añadirlos se volvió
+  del revés. Ahora marca y efecto van en **una sola transacción**: si el efecto falla se
+  deshacen los dos, y si dos réplicas corren a la vez la PK sigue arbitrando.
+  ⚠️ Se verificó que no rompe el camino feliz ni la deduplicación, pero **falta el test
+  que fuerce un efecto fallido**: hoy `ProcessAsync` solo escribe un log y no es
+  inyectable. Anotado en `planning/12` §12.5.
+- 🟠 **El reintento publicaba sin *publisher confirms*** y hacía ack: con el binding
+  ausente, el mensaje se evaporaba sin un solo log. Medido borrando el binding.
+- 🟠 **Fuga de conexiones a RabbitMQ**: si la topología fallaba, la conexión quedaba viva
+  para siempre. Medido **22 fallos = 22 conexiones fugadas**, 1:1.
+- 🟠 **`/health/ready` devolvía 503 con Redis caído**, sacando de rotación **todas** las
+  réplicas por una dependencia opcional. Pasa a `Degraded` (200).
+- 🟠 **El `CorrelationId` no salía en ningún log**: la plantilla de fábrica de Serilog no
+  renderiza las propiedades del `LogContext`. El commit anterior lo dio por verificado
+  habiéndolo comprobado **con una plantilla puesta a mano**: se verificó el `PushProperty`,
+  no la salida. Corregido, y corregido también el registro.
+- 🟠 **Un `OperationCanceledException` ajeno al apagado se escapaba** de los bucles del
+  publicador y del recolector → con `StopHost` por defecto, **tumbaba la API entera**.
+- 🟠 **`If-Match` con lista de ETags daba 400** a un cliente conforme al RFC 9110, y
+  aceptaba validadores débiles. Ahora se parsea con `EntityTagHeaderValue`.
+
+✏️ **Corrección honesta de una afirmación mía**: se justificó elegir `sp_getapplock` sobre
+el claim por filas diciendo que el claim "destruye la garantía de orden que da `Sequence`".
+**Esa garantía no existe**: el `IDENTITY` se asigna al `INSERT` y la fila se ve al `COMMIT`,
+así que una transacción lenta con secuencia menor puede confirmar después (verificado). La
+decisión sigue siendo la buena —por simplicidad y por no gestionar expiraciones— pero el
+argumento era falso y está corregido en el código y en los documentos.
+
+También: un endpoint OTLP mal escrito tumbaba el arranque, el índice de pendientes no
+incluía `Attempts` (key lookup por cada mensaje zombi, **para siempre**), MARS desactivaba
+los savepoints en los tests, y la clave de caché de la CI incluía el código del curso.
+
+160 tests en verde, build sin warnings, y verificado ejecutando que `/health/ready` pasa de
+503 a 200 con Redis caído y que el `CorrelationId` ya se renderiza.
 
 ### 2026-09-06 — Deuda 12.3: observabilidad y operación. **`planning/12` cerrado**
 

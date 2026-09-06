@@ -35,15 +35,29 @@ public static class ObservabilityExtensions
     var options = configuration.GetSection(ObservabilityOptions.SectionName).Get<ObservabilityOptions>()
                   ?? new ObservabilityOptions();
 
+    // ⚠️ El `.ValidateOnStart()` de arriba NO cubre esto. Se dispara al resolver
+    // `IOptions<ObservabilityOptions>`, y aquí no lo resuelve nadie: se lee el POCO en
+    // crudo para decidir QUÉ se registra. Así que la validación se hace explícitamente,
+    // y sin lanzar: la observabilidad no puede ser el motivo de que la API no arranque.
+    if (!string.IsNullOrWhiteSpace(options.OtlpEndpoint) && !options.ExportsTraces)
+      Console.Error.WriteLine(
+          $"[observability] Observability:OtlpEndpoint ('{options.OtlpEndpoint}') is not an " +
+          "absolute URI; telemetry will be collected in-process but NOT exported.");
+
+    // Mismo motivo: valores fuera de rango reventaban con excepciones crudas de terceros
+    // ("Must be in the range: [0, 1]") en vez de con un mensaje accionable. Se acota.
+    var samplingRatio = Math.Clamp(options.SamplingRatio, 0d, 1d);
+    var serviceName = string.IsNullOrWhiteSpace(options.ServiceName) ? "apiecommerce" : options.ServiceName;
+
     services.AddOpenTelemetry()
-        .ConfigureResource(resource => resource.AddService(options.ServiceName))
+        .ConfigureResource(resource => resource.AddService(serviceName))
         .WithTracing(tracing =>
         {
           tracing
               // Muestreo padre-consciente: si el servicio que nos llamó decidió trazar la
               // petición, se traza; si no, se aplica la proporción. Decidir por nuestra
               // cuenta partiría las trazas distribuidas por la mitad.
-              .SetSampler(new ParentBasedSampler(new TraceIdRatioBasedSampler(options.SamplingRatio)))
+              .SetSampler(new ParentBasedSampler(new TraceIdRatioBasedSampler(samplingRatio)))
               .AddAspNetCoreInstrumentation(instrumentation =>
               {
                 // Las sondas son ruido: se ejecutan cada pocos segundos, siempre igual, y

@@ -7,6 +7,41 @@
 
 ---
 
+## 0. 🔖 Punto de continuación — **última sesión: 2026-09-06**
+
+**Todo lo commiteado está en `dev`, árbol limpio, SIN push.** El agente commitea pero
+nunca hace push (`rules.md` §12).
+
+### Qué se hizo en la última sesión
+1. **Paso 11 (tests) COMPLETO**: fases 1–6. `tests/ApiEcommerce.Tests`, **160 tests**, y
+   CI en `.github/workflows/ci.yml`.
+2. **Secretos fuera del repo**: los tres valores sensibles pasaron a **user-secrets**.
+   ⚠️ **La app NO arranca tras clonar sin ponerlos** (ver §2).
+3. **`planning/12` (deuda de la revisión de agosto) CERRADO** salvo 12.4: outbox
+   multi-réplica, reintentos con contador real, `ETag`/`If-Match`, hash del cuerpo en la
+   idempotencia, OpenTelemetry, HSTS y unificación de Redis.
+4. **Segunda revisión multiagente** (concurrencia / mensajería / infraestructura, con la
+   orden de verificar ejecutando). Encontró **1 P0 + 4 P1 reales**, todos corregidos en el
+   mismo día. El P0 lo había introducido el propio trabajo de esa sesión.
+
+### Por dónde seguir (en este orden)
+1. **`AGENTS/planning/12` §12.5** — la deuda **nueva** que abrió ese trabajo. Lo primero:
+   el **test del P0 del consumidor** (marca + efecto atómicos), que hoy no se puede
+   escribir porque el efecto no es inyectable: pide extraer `ProcessAsync` a una interfaz.
+2. **`planning/13`** refresh tokens · **`planning/14`** administración de usuarios (hoy el
+   único camino para tener un admin es el seeder).
+3. `planning/15` (partir en proyectos) sigue **diferido a propósito**.
+
+### ⚠️ Decisiones que esperan al owner (bloquean, nadie más puede tomarlas)
+| | |
+|---|---|
+| 🔴 **Token de GitHub en `.git/config`** | Un PAT en texto plano en el remoto. **Revocarlo.** Ver §6.bis |
+| **Licencia de AutoMapper** | La 15.1.1 exige licencia comercial en producción. Es lo único que queda de `planning/12` |
+| **Subir la CI** | El workflow está commiteado pero **sin push**; falta activarlo y proteger la rama |
+| **Migrar a `net10.0`** | Hoy resuelto instalando el runtime 9 |
+
+---
+
 ## 1. Qué es esto
 
 **`ApiEcommerce`** — API REST de e-commerce en **ASP.NET Core 9 + EF Core 9 + SQL Server**,
@@ -198,6 +233,14 @@ Piezas que conviene conocer antes de tocar nada:
 | Editar con scripts | Una sustitución global se cuela en los **bloques comentados** de aprendizaje. Ya pasó dos veces. |
 | Rate limiter propio | 100 req/min global y 10/min en `auth`. Al hacer pruebas de carga te limita **a ti**: reinicia el proceso para resetear la ventana. |
 | Lockout de Identity | 5 logins fallidos bloquean la cuenta 5 min. Probar con un usuario nuevo, no con el de siempre. |
+| **Un `BackgroundService` y `OperationCanceledException`** | `catch (Exception ex) when (ex is not OperationCanceledException)` **deja escapar** una OCE que no venga del `stoppingToken` (cancelación de un `SqlCommand`, timeout del cliente AMQP) → con `StopHost` por defecto desde .NET 6, **tumba la API entera**. El patrón correcto es `catch (OCE) when (stoppingToken.IsCancellationRequested) { break; }` y luego `catch (Exception)` **sin filtro**. |
+| **Marca de idempotencia y efecto** | Van en la **misma transacción**. Confirmar la marca antes del efecto hacía que, si el efecto fallaba, la reentrega se reconociera como duplicado, se hiciera ack y el mensaje **desapareciera sin procesarse**: los reintentos quedaban inertes. |
+| **Publicar por un canal AMQP** | Si el canal no tiene *publisher confirms*, `BasicPublishAsync` vuelve sin excepción aunque el mensaje no llegue a ninguna cola (`mandatory: true` sin handler de retorno lo descarta en silencio). **Nunca hacer ack después de un publish sin confirms.** |
+| **Fuga de conexiones a RabbitMQ** | Si la declaración de topología falla, hay que hacer `DisposeAsync` de la conexión local: con `AutomaticRecoveryEnabled` queda viva para siempre. Medido: 22 fallos = 22 conexiones fugadas. |
+| **406 PRECONDITION_FAILED ≠ broker caído** | Es una cola que ya existe con otros argumentos (p. ej. cambiar `RabbitMq:RetryDelaySeconds`, que fija el `x-message-ttl`). Es un error de configuración **permanente**; tratarlo como caída deja la mensajería abajo reintentando en bucle. |
+| **`Sequence` NO garantiza el orden** | El `IDENTITY` se asigna al `INSERT` y la fila se ve al `COMMIT`: una transacción lenta con secuencia menor puede confirmar después. Es determinista y repetible, no ordenado. |
+| **Serilog no renderiza el `LogContext`** | La plantilla de fábrica **no** imprime las propiedades: el `CorrelationId` se empujaba bien y no salía en ninguna línea. Hace falta `outputTemplate`. ⚠️ Y declarar el sink en código **y** en `Serilog:WriteTo` no sustituye: **duplica** cada línea. |
+| **Redis caído no puede ser `Unhealthy`** | El health check con el `failureStatus` por defecto devolvía **503** en `/health/ready` con Redis muerto: como la caída la ven todas las réplicas, el orquestador las sacaba **todas** de rotación por una dependencia opcional. Va en `Degraded`. |
 | **Tests: `UseSetting`, NO `ConfigureAppConfiguration`** | Varias piezas (`AddDistributedCaching`, `AddMessaging`, `AddHealthProbes`) leen la config **eager** para decidir QUÉ implementación registran, y eso pasa **antes** de que corran esos callbacks. Con `ConfigureAppConfiguration` el host arrancaba con `NoIdempotencyStore` y **los tests de idempotencia pasaban sin probar nada**. `TestHostGuardTests` es la red. |
 | **Tests de integración: sin paralelismo** | Todos van en `[Collection(IntegrationCollection.Name)]`, **incluidos los que levantan su propio host** (degradación, arranque): comparten base de datos y en paralelo chocan con `Database ... already exists`. Pasaban en aislado y fallaban en la suite completa. |
 | `tests/**` en el `.csproj` | Está **excluido** igual que `AGENTS/**`. Sin eso el glob del SDK Web compila los tests dentro de la API (xunit y Moq en la imagen de producción, y referencia circular). **No quitar.** |
@@ -272,9 +315,9 @@ rate limiting, Serilog, health checks, protección de carreras, idempotencia y o
 RabbitMQ — este último **verificado de punta a punta contra un broker real** el
 2026-09-05, incluidos deduplicación y DLQ.
 
-**Ya hay tests**: `tests/ApiEcommerce.Tests`, **153** (unitarios + integración +
-concurrencia + degradación y arranque), verdes en dos corridas seguidas. Falta **CI**
-(fase 6 del `planning/11`): la red existe, pero nadie obliga a que esté tendida antes de
-un merge.
+**Tests y CI hechos**: `tests/ApiEcommerce.Tests`, **160** (unitarios + integración +
+concurrencia + degradación y arranque) y `.github/workflows/ci.yml`. **`planning/12`
+cerrado** salvo la licencia de AutoMapper. Lo siguiente es `planning/12` §12.5 (la deuda
+nueva) y luego refresh tokens y administración de usuarios.
 
 Ver `progress.md` para el detalle de qué está hecho, qué está a medias y qué falta.

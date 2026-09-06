@@ -11,6 +11,11 @@
 
 name: CI
 
+# Permisos minimos explicitos: por defecto el GITHUB_TOKEN hereda los del repo, que
+# suelen ser mas de los que un build necesita.
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main, dev]
@@ -40,7 +45,10 @@ jobs:
         # conexiones. Sin esto, el primer test falla por "connection refused" y parece
         # un fallo del codigo.
         options: >-
-          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'CiPassw0rd!2026' -C -Q 'SELECT 1'"
+          # Con respaldo a la ruta antigua: si `mssql-tools18` no estuviera en la imagen, el
+          # healthcheck no pasaria nunca a healthy y el job se colgaria hasta agotar los
+          # reintentos -sin fallar por los tests, que es el peor modo de fallo en CI-.
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'CiPassw0rd!2026' -C -Q 'SELECT 1' || /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P 'CiPassw0rd!2026' -Q 'SELECT 1'"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
@@ -72,7 +80,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.nuget/packages
-          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          # ⚠️ NO `**/*.csproj`: eso incluye AGENTS/__ref__/01/code/ApiEcommerce.csproj, que
+          # es el codigo del curso y ni siquiera se compila. Tocarlo invalidaria la cache.
+          key: nuget-${{ runner.os }}-${{ hashFiles('ApiEcommerce.csproj', 'tests/**/*.csproj') }}
           restore-keys: nuget-${{ runner.os }}-
 
       - name: Restaurar

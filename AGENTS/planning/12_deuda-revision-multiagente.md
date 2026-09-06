@@ -1,4 +1,4 @@
-# 12 — Deuda abierta de la revisión multiagente (2026-08-30)  ❌
+# 12 — Deuda de la revisión multiagente  ✅ **cerrada** (2026-09-06), salvo 12.4
 
 > Lo que se dejó **a propósito** sin cerrar, para que nadie lo descubra creyendo que es
 > nuevo. Los P0 y los P1 baratos ya están corregidos (`progress.md` §2).
@@ -70,3 +70,37 @@
 - [ ] **Licencia de AutoMapper.** La 15.1.1 exige licencia comercial en producción y lo avisa
       por log al arrancar. Opciones: comprar, fijar ≤13.x (última MIT), o migrar a Mapperly
       (source generator, MIT). Afecta a `docs/05-convenciones.md`.
+
+---
+
+## 12.5 — Deuda NUEVA, abierta por el trabajo del 2026-09-06
+
+Encontrada por la segunda revisión multiagente (tres ejes, con la orden de verificar
+ejecutando). Lo que se corrigió en el acto está en la bitácora; esto es lo que **queda**:
+
+- [ ] **Orden real de publicación del outbox.** `Sequence` es determinista y repetible,
+      pero **no garantiza el orden**: el `IDENTITY` se asigna al `INSERT` y la fila se ve
+      al `COMMIT`, así que una transacción lenta con secuencia menor puede confirmar
+      después de que ya se publicara una mayor (verificado). Hoy da igual —un evento por
+      compra— pero si algún día importa hace falta un *watermark* que espere a las
+      transacciones abiertas, no una columna.
+- [ ] **Test del P0 del consumidor.** El arreglo (marca + efecto en una transacción) es
+      estructural y está verificado que no rompe el camino feliz ni la deduplicación, pero
+      **falta un test que fuerce un efecto que falle** y compruebe que el reintento
+      reejecuta. Hoy `ProcessAsync` solo escribe un log y no hay forma de hacerlo fallar
+      sin inyectarlo: pide extraer el efecto a una interfaz.
+- [ ] **Replay desde la DLQ no resetea el presupuesto de reintentos.** `x-death` sobrevive
+      al paso por la DLQ, así que un mensaje reencolado por un operador vuelve con el
+      contador agotado y muere en la primera entrega. Documentar que el replay debe borrar
+      `x-death`, o llevar el contador en una cabecera propia.
+- [ ] **`RetryDelaySeconds` es inmutable tras el primer despliegue.** Cambiarlo da 406 al
+      redeclarar la cola. Ya se distingue del "broker caído" y se loguea como error
+      accionable, pero la solución real es versionar el nombre de la cola o poner el TTL
+      en el mensaje (⚠️ eso introduce head-of-line blocking).
+- [ ] **`IdempotentAttribute.ReservationTtl` es un *lease* sin renovación.** Una operación
+      que tarde más de 60 s libera la clave y una duplicada puede ejecutarse de verdad.
+- [ ] **El replay de idempotencia no es idéntico byte a byte** (viene de 12.2).
+- [ ] **Un canal AMQP por mensaje** en `RabbitMqEventPublisher`: funciona, pero es caro en
+      una tanda de 50.
+- [ ] **CI y entorno de trabajo compilan con SDK distintos** (9.0.x vs 10.0.400) sin
+      `global.json`: "0 warnings" se mide con analizadores distintos en cada sitio.

@@ -52,11 +52,16 @@ public sealed class OutboxCleaner(
       {
         await CleanAsync(stoppingToken);
       }
-      catch (Exception ex) when (ex is not OperationCanceledException)
+      catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
       {
-        // Mismo motivo que en el publicador: si el bucle muere, nadie vuelve a purgar
-        // hasta el siguiente reinicio, y desde .NET 6 una excepción que escapa de
-        // ExecuteAsync tumba el host entero.
+        break;   // apagado ordenado
+      }
+      catch (Exception ex)
+      {
+        // ⚠️ SIN filtro que excluya OperationCanceledException: una OCE que no venga del
+        // stoppingToken (la cancelación de un SqlCommand, por ejemplo) se escapaba y, con
+        // BackgroundServiceExceptionBehavior.StopHost por defecto desde .NET 6, tumbaba la
+        // API entera. El comentario decía justo eso y el filtro dejaba la puerta abierta.
         logger.LogError(ex, "Outbox cleanup failed; retrying in {Interval}", interval);
       }
 

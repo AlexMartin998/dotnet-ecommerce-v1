@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
+using ApiEcommerce.Shared.Db;
 using ApiEcommerce.Shared.Messaging;
 
 namespace ApiEcommerce.Features.Catalog.Messaging;
@@ -79,14 +80,29 @@ public sealed class ProductPurchasedConsumer(
     var conn = await connection.TryGetConnectionAsync(ct);
     if (conn is null) return;   // broker caído: se reintenta en la siguiente vuelta
 
-    await using var channel = await conn.CreateChannelAsync(cancellationToken: ct);
+    // ⚠️ Con publisher confirms. Este canal no solo consume: `ScheduleRetryAsync` PUBLICA
+    // por él. Sin confirms, `BasicPublishAsync` vuelve sin excepción aunque el mensaje no
+    // haya llegado a ninguna cola (`mandatory: true` sin handler de retorno lo descarta en
+    // silencio) y justo después se hacía ack del original: **pérdida silenciosa**. Medido:
+    // borrando el binding del exchange de reintento, el mensaje se evaporaba sin un solo
+    // log de error. El publicador del outbox ya usaba confirms; este camino no lo heredó.
+    await using var channel = await conn.CreateChannelAsync(
+        new CreateChannelOptions(publisherConfirmationsEnabled: true,
+                                 publisherConfirmationTrackingEnabled: true),
+        cancellationToken: ct);
 
     // QoS: como mucho N mensajes sin confirmar por consumidor. Sin esto, RabbitMQ
     // empuja la cola entera a la primera réplica que se conecte y las demás quedan
     // ociosas mientras esa se atraganta.
     await channel.BasicQosAsync(0, _options.PrefetchCount, global: false, cancellationToken: ct);
 
-    // Sin esto, una excepción dentro del dispatcher del canal (p. ej. si el propio
+    // ⚠️ Este canal se comparte entre el consumo y la publicación del reintento, y eso es
+    // seguro por una razón CONCRETA que conviene no olvidar: `ConsumerDispatchConcurrency`
+    // vale 1 por defecto, así que con `prefetch = 10` las entregas se despachan de una en
+    // una. Si alguien sube esa concurrencia, hay que darle a la publicación su propio
+    // canal — los `IChannel` no prometen ser thread-safe.
+    //
+    // Sin lo de abajo, una excepción dentro del dispatcher del canal (p. ej. si el propio
     // ack falla porque el canal se cerró) se publica en este evento y, si nadie está
     // suscrito, se pierde: fallo completamente mudo.
     channel.CallbackExceptionAsync += (_, e) =>
@@ -144,31 +160,54 @@ public sealed class ProductPurchasedConsumer(
 
       using var scope = scopeFactory.CreateScope();
       var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+      var transactions = scope.ServiceProvider.GetRequiredService<ITransactionRunner>();
 
-      // ---- idempotencia ---------------------------------------------------
-      // El outbox garantiza at-least-once, así que este mensaje PUEDE llegar dos
-      // veces. La clave primaria de ProcessedMessages es la que lo impide de verdad:
-      // si dos réplicas procesan el duplicado a la vez, una de las dos revienta al
-      // insertar y ese es el resultado correcto.
-      if (await db.ProcessedMessages.AnyAsync(m => m.Id == messageId, ct))
+      // ---- idempotencia + efecto, ATÓMICOS --------------------------------
+      // El outbox garantiza at-least-once, así que este mensaje PUEDE llegar dos veces.
+      // La clave primaria de ProcessedMessages es lo que impide el duplicado de verdad:
+      // si dos réplicas procesan el mismo mensaje a la vez, una revienta al insertar.
+      //
+      // ⚠️ La marca y el efecto van en la MISMA transacción, y eso corrige un bug real.
+      // Antes la marca se confirmaba ANTES del efecto, con el razonamiento de que así la
+      // restricción única "abría la puerta" al efecto y quien perdía el choque no lo
+      // ejecutaba. Ese razonamiento valía cuando NO había reintentos; en cuanto los hubo,
+      // se volvió al revés: si el efecto fallaba, la marca ya estaba confirmada, y en la
+      // reentrega el mensaje se reconocía como duplicado, se hacía ack y **desaparecía sin
+      // haberse procesado nunca**. Toda la maquinaria de reintentos era inerte para el
+      // único caso para el que existe.
+      //
+      // En una sola transacción se cumplen las dos cosas: si el efecto falla, la marca se
+      // deshace con él y el reintento puede volver a intentarlo; y si dos réplicas corren
+      // a la vez, la PK hace fallar a una y su efecto se deshace también.
+      var processed = await transactions.ExecuteAsync(async token =>
       {
+        // Atajo barato para el caso normal (ya procesado): evita abrir el efecto.
+        if (await db.ProcessedMessages.AnyAsync(m => m.Id == messageId, token))
+          return false;
+
+        db.ProcessedMessages.Add(new ProcessedMessage { Id = messageId, Type = eventType! });
+
+        await ProcessAsync(@event, token);
+
+        // El choque de PK sale AQUÍ, y arrastra al efecto en el rollback.
+        await db.SaveChangesAsync(token);
+
+        return true;
+      }, ct);
+
+      if (!processed)
         logger.LogInformation("Duplicate {MessageId} ignored", messageId);
-        await channel.BasicAckAsync(args.DeliveryTag, multiple: false, CancellationToken.None);
-        return;
-      }
-
-      // ⚠️ La marca se escribe ANTES de aplicar el efecto, no después.
-      // El AnyAsync de arriba es solo un atajo barato: entre esa consulta y el INSERT
-      // cabe otra réplica, así que si el efecto fuera primero se aplicaría DOS VECES
-      // y la PK solo arbitraría cuál de las dos filas sobrevive. Con este orden, la
-      // restricción única es lo que ABRE la puerta al efecto: quien pierde el choque
-      // no llega a ejecutarlo.
-      db.ProcessedMessages.Add(new ProcessedMessage { Id = messageId, Type = eventType! });
-      await db.SaveChangesAsync(ct);
-
-      await ProcessAsync(@event, ct);
 
       await channel.BasicAckAsync(args.DeliveryTag, multiple: false, CancellationToken.None);
+    }
+    catch (JsonException ex)
+    {
+      // Reencolarlo no lo va a arreglar NUNCA. El comentario de arriba ya decía que un
+      // mensaje ilegible va directo a la DLQ, pero solo cubría el payload literal `null`:
+      // un cuerpo que no parsea lanza aquí, ANTES de aquella comprobación, y caía en el
+      // catch genérico gastando los 3 intentos y dos TTL para acabar igual en la DLQ.
+      logger.LogError(ex, "Unparseable payload for {MessageId}; sending to DLQ", messageId);
+      await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: false, CancellationToken.None);
     }
     catch (DbUpdateException ex) when (ex.InnerException is SqlException { Number: 2601 or 2627 })
     {
@@ -270,13 +309,25 @@ public sealed class ProductPurchasedConsumer(
       Headers = args.BasicProperties.Headers
     };
 
-    await channel.BasicPublishAsync(
-        exchange: _options.RetryExchange,
-        routingKey: _options.RoutingKey,
-        mandatory: true,
-        basicProperties: properties,
-        body: args.Body.ToArray(),
-        cancellationToken: ct);
+    try
+    {
+      await channel.BasicPublishAsync(
+          exchange: _options.RetryExchange,
+          routingKey: _options.RoutingKey,
+          mandatory: true,
+          basicProperties: properties,
+          body: args.Body.ToArray(),
+          cancellationToken: ct);
+    }
+    catch (Exception ex) when (ex is not OperationCanceledException)
+    {
+      // Con confirms activos, un mensaje que no encuentra cola destino lanza aquí
+      // (`312 NO_ROUTE`) en vez de perderse. Si no se puede encolar el reintento, el
+      // mensaje va a la DLQ: es peor perderlo que dejarlo donde alguien pueda verlo.
+      logger.LogError(ex, "Could not schedule the retry; sending to DLQ instead");
+      await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: false, CancellationToken.None);
+      return;
+    }
 
     await channel.BasicAckAsync(args.DeliveryTag, multiple: false, CancellationToken.None);
   }

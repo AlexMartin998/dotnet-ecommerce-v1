@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
 
 namespace ApiEcommerce.Features.Catalog.Dtos;
 
@@ -37,15 +38,27 @@ public class UpdateProductDto
 
 
   /// <summary>
-  /// Versión que el cliente leyó. <b>No la manda en el cuerpo</b>: la rellena el controller
-  /// desde la cabecera <c>If-Match</c>.
+  /// Versiones que el cliente dice haber leído, tomadas de la cabecera <c>If-Match</c>.
   /// </summary>
   /// <remarks>
-  /// Está aquí y no como parámetro de <c>ICrudService.UpdateAsync</c> para no meter una
-  /// preocupación de HTTP en el contrato genérico del CRUD, que lo comparten todas las
-  /// entidades. El DTO ya es el transporte entre controller y servicio; esto es un campo
-  /// más de ese transporte.
+  /// <para>
+  /// Es una <b>lista</b> porque el RFC 9110 permite <c>If-Match: "a", "b"</c> y la
+  /// precondición se cumple si <b>alguna</b> casa. Tratarlo como un token único devolvía
+  /// <b>400</b> a un cliente perfectamente conforme —y a cualquiera que mandara la
+  /// cabecera dos veces, porque <c>StringValues.ToString()</c> las une con coma—.
+  /// </para>
+  /// <para>
+  /// <c>[JsonIgnore]</c>: <b>no se enlaza desde el cuerpo</b>. La rellena el controller
+  /// desde la cabecera. Sin esto, Swagger la publicaba como un campo más del body y un
+  /// cliente podía mandarla ahí para que el controller la pisara en silencio.
+  /// </para>
+  /// <para>
+  /// Vive aquí y no como parámetro de <c>ICrudService.UpdateAsync</c> para no meter una
+  /// preocupación de HTTP en el contrato genérico del CRUD, que comparten todas las
+  /// entidades.
+  /// </para>
   /// </remarks>
-  public string? RowVersion { get; set; }
+  [JsonIgnore]
+  public IReadOnlyList<string>? IfMatch { get; set; }
 
 }
