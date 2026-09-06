@@ -4,7 +4,7 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-06** (segunda revisión multiagente aplicada).
+Última actualización: **2026-09-06** (idempotencia validada bajo carga real).
 
 ---
 
@@ -27,6 +27,7 @@
 | 13 | Refresh tokens y revocación | ❌ | [`planning/13`](planning/13_refresh-tokens.md) | — |
 | 14 | Administración de usuarios | ❌ | [`planning/14`](planning/14_admin-usuarios.md) | — |
 | 15 | Partir en proyectos | ❌ diferido | [`planning/15`](planning/15_partir-en-proyectos.md) | — |
+| 16 | Idempotencia bajo carga | ✅ | [`features/16`](features/16_idempotencia-bajo-carga.feature) · [`planning/16`](planning/16_idempotencia-bajo-carga.md) | — |
 
 **Ya no queda ningún ⚠️.** El 09 se cerró el 2026-09-05 contra un RabbitMQ real, y esa
 verificación destapó un bug que el build y el smoke test no veían (abajo).
@@ -34,6 +35,72 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 ---
 
 ## 2. Bitácora
+
+### 2026-09-06 — La idempotencia, validada con carga de verdad
+
+Fase de revisión sobre `Idempotency-Key`, contra SQL Server, Redis 7.0.15 y RabbitMQ
+reales (la IP del host cambió a `192.168.3.82`). Ejecutando, no compilando.
+
+**Lo que aguantó** — y conviene que quede escrito, porque es la mitad del trabajo:
+
+- **Exactamente-una-vez** con ráfagas simultáneas de 60, 150, 250 y 350 peticiones con la
+  misma clave sobre un SKU aislado: el stock baja **1**. 4/4.
+- **Exactamente-una-vez entre DOS RÉPLICAS** (dos procesos contra el mismo Redis y la
+  misma base, 80 simultáneas alternando instancia). Es la razón por la que el store vive
+  en Redis y no en memoria, y **no se había comprobado nunca**.
+- Contrato completo: replay, 422 por cuerpo distinto, aislamiento entre usuarios, el
+  error no se memoriza, clave acotada por ruta.
+
+**El hallazgo 🔴 — la garantía se apaga sola bajo carga.** `SyncTimeout`/`AsyncTimeout`
+están en 1000 ms, una decisión buena tomada para el caso «Redis caído». Pero con Redis
+**vivo y sano** basta una ráfaga: un solo multiplexer, 3 operaciones por petición, el
+`SET NX` agota el plazo, el store degrada en abierto y **la petición se ejecuta sin
+garantía**. Es el caso patológico exacto: la API va lenta → el cliente reintenta → el
+reintento entra en la ventana saturada, y la protección contra el doble cobro está
+apagada justo entonces.
+
+⚠️ **No se consiguió provocar una duplicación real** en ~20 tandas: hace falta que el
+timeout caiga sobre el duplicado, y los duplicados son una fracción minúscula del
+tráfico. Se reporta como lo que es —mecanismo demostrado y contado, probabilidad baja,
+impacto alto— y no como un bug reproducido.
+
+**Lo corregido:**
+
+- **`SET clave valor EX ttl NX GET`** (Redis ≥ 7.0): reservar y leer en **un** viaje.
+  Medido **3,00 → 2,00 viajes por petición**. Y de paso cierra una carrera: el camino que
+  reproducía una respuesta recién terminada llamaba a `Replay` **sin comparar la huella
+  del cuerpo** — la misma falla silenciosa que el 422 vino a cerrar, alcanzable por
+  carrera. Ahora el estado existente sólo puede llegar por un sitio.
+- **Token de propiedad en la reserva.** Lo encontró la revisión adversarial y es el
+  agujero más feo: `Release` y `Save` eran incondicionales, así que una petición cuya
+  reserva ya había caducado podía **borrar la reserva viva de otra**. La ventana de
+  duplicación dejaba de estar acotada por el TTL y se reabría en cada vuelta. Ahora
+  `Release`/`Save` son un CAS por script Lua y no tocan lo que ya no es suyo.
+- **`IdempotencyOptions`** (`ResponseTtlHours`, `ReservationTtlSeconds`, `MaxKeyLength`).
+  Los plazos eran `static readonly`: además de saltarse la regla §5, hacían que la
+  caducidad de la reserva **no se pudiera probar**.
+- **Límite de longitud de la clave** → 400. Se aceptaban claves de 7000 caracteres.
+- **El fail-open deja rastro**: `Unavailable` se distingue de `Acquired` (antes eran el
+  mismo `true`), sale `Idempotency-Guaranteed: false` y sube un contador.
+- **Retirado el código muerto** que intentaba capturar el `Location` para el replay: un
+  filtro de acción recupera el control **antes** de que se ejecute el `IActionResult`, así
+  que esa cabecera aún no existe. No afectaba a nadie —el único endpoint idempotente
+  devuelve 200— pero la documentación lo daba por resuelto.
+
+⚠️ **Lo que NO quedó cerrado, y es lo que importa**: repetida la carga tras el cambio
+(14 400 peticiones sobre dos réplicas), el acquire **sigue degradando**: 174 (1,21 %) sin
+garantía. Bajar los viajes mueve el umbral, no elimina el modo de fallo. Las salidas
+—fallar en cerrado con 503 distinguiendo por `IsConnected`, un multiplexer propio, o más
+de una conexión— son decisión del owner, porque `rules.md` §8 exige invertir el fail-open
+explícitamente y en todas las implementaciones a la vez.
+
+✏️ **Afirmación retirada**: una primera medición con 200 hilos de `urllib` dio «13× menos
+throughput con `Idempotency-Key`». Era el **arnés**, no la API: con un cliente asyncio
+sobre sockets crudos el filtro no se mide por encima del ruido, y el pico de 20 s aparecía
+también en la columna *sin* clave. Se rehízo la medición antes de apuntar el número.
+
+**169 tests** en verde (eran 160), build sin warnings. Los 9 nuevos incluyen el primer
+test que ataca el store directamente, que es donde vive la semántica del token.
 
 ### 2026-09-06 — Segunda revisión multiagente: 1 P0 y 4 P1 reales, corregidos
 

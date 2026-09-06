@@ -13,24 +13,34 @@
 nunca hace push (`rules.md` §12).
 
 ### Qué se hizo en la última sesión
-1. **Paso 11 (tests) COMPLETO**: fases 1–6. `tests/ApiEcommerce.Tests`, **160 tests**, y
-   CI en `.github/workflows/ci.yml`.
-2. **Secretos fuera del repo**: los tres valores sensibles pasaron a **user-secrets**.
-   ⚠️ **La app NO arranca tras clonar sin ponerlos** (ver §2).
-3. **`planning/12` (deuda de la revisión de agosto) CERRADO** salvo 12.4: outbox
-   multi-réplica, reintentos con contador real, `ETag`/`If-Match`, hash del cuerpo en la
-   idempotencia, OpenTelemetry, HSTS y unificación de Redis.
-4. **Segunda revisión multiagente** (concurrencia / mensajería / infraestructura, con la
-   orden de verificar ejecutando). Encontró **1 P0 + 4 P1 reales**, todos corregidos en el
-   mismo día. El P0 lo había introducido el propio trabajo de esa sesión.
+1. **`planning/16` — la idempotencia validada bajo carga real** (SQL Server, Redis 7.0.15
+   y RabbitMQ en `192.168.3.82`; la IP del host cambió, `172.17.0.1` sigue valiendo por ser
+   la puerta del bridge de Docker). Es una fase de **revisión**, no una feature.
+2. **Aguantó**: exactamente-una-vez con ráfagas de 350 simultáneas y —comprobado por
+   primera vez— **entre dos réplicas** contra el mismo Redis.
+3. **Se corrigió**: `SET NX GET` (3,00 → 2,00 viajes por petición), **token de propiedad**
+   en la reserva (un `Release` tardío borraba la reserva viva de otro), la huella del
+   cuerpo comparada en **todos** los caminos, `IdempotencyOptions`, límite de longitud de
+   la clave, y el fail-open ahora deja rastro (cabecera + métrica).
+4. **169 tests** (eran 160), build sin warnings.
+
+### 🔴 Lo que quedó ABIERTO y es lo importante
+Bajo carga el store **degrada en abierto y ejecuta sin garantía de idempotencia**: 174 de
+14 400 peticiones (1,21 %) con **Redis sano**. La causa es que `SyncTimeout`/`AsyncTimeout`
+están en 1000 ms —elegidos para el caso «Redis caído»— sobre un único multiplexer. Bajar
+los viajes movió el umbral pero **no eliminó el modo de fallo**.
+Las tres salidas están en `planning/16` §16.6 y **ninguna se puede tomar sin el owner**,
+porque `rules.md` §8 exige invertir el fail-open explícitamente y en todas las
+implementaciones a la vez.
 
 ### Por dónde seguir (en este orden)
-1. **`AGENTS/planning/12` §12.5** — la deuda **nueva** que abrió ese trabajo. Lo primero:
-   el **test del P0 del consumidor** (marca + efecto atómicos), que hoy no se puede
-   escribir porque el efecto no es inyectable: pide extraer `ProcessAsync` a una interfaz.
-2. **`planning/13`** refresh tokens · **`planning/14`** administración de usuarios (hoy el
-   único camino para tener un admin es el seeder).
-3. `planning/15` (partir en proyectos) sigue **diferido a propósito**.
+1. **Decidir el §16.6**: ¿la idempotencia falla en cerrado (503) cuando Redis está vivo
+   pero lento? Se distingue con `IConnectionMultiplexer.IsConnected`.
+2. **`AGENTS/planning/12` §12.5** — la deuda que sigue abierta. Lo primero: el **test del
+   P0 del consumidor** (marca + efecto atómicos), que pide extraer `ProcessAsync` a una
+   interfaz para poder hacer fallar el efecto.
+3. **`planning/13`** refresh tokens · **`planning/14`** administración de usuarios.
+4. `planning/15` (partir en proyectos) sigue **diferido a propósito**.
 
 ### ⚠️ Decisiones que esperan al owner (bloquean, nadie más puede tomarlas)
 | | |
@@ -39,6 +49,7 @@ nunca hace push (`rules.md` §12).
 | **Licencia de AutoMapper** | La 15.1.1 exige licencia comercial en producción. Es lo único que queda de `planning/12` |
 | **Subir la CI** | El workflow está commiteado pero **sin push**; falta activarlo y proteger la rama |
 | **Migrar a `net10.0`** | Hoy resuelto instalando el runtime 9 |
+| **IP del host en `appsettings.Development.json`** | Quedó `192.168.3.82` (la LAN del autor), que **cambia con DHCP**, en un fichero commiteado. `172.17.0.1` —la puerta del bridge— es estable desde el dev container. Decidir cuál se deja |
 
 ---
 
@@ -111,9 +122,16 @@ con otros proyectos, en la red `backend`:
 
 | Servicio | Host desde la app | Estado |
 |---|---|---|
-| `sqlserver_ecommerce` | `172.17.0.1,1434` · BD `ApiEcommerceNET8` | ✅ arriba |
-| `redis_generic` | `172.17.0.1:6999` | ✅ arriba |
-| `rabbitmq_generic` | `172.17.0.1:5672` | ✅ arriba (desde 2026-09-05; UI en `:15672`, guest/guest) |
+| `sqlserver_ecommerce` | `192.168.3.82,1434` · BD `ApiEcommerceNET8` | ✅ arriba |
+| `redis_generic` | `192.168.3.82:6999` | ✅ arriba · `maxmemory 0` / `noeviction` |
+| `rabbitmq_generic` | `192.168.3.82:5672` | ✅ arriba (desde 2026-09-05; UI en `:15672`, guest/guest) |
+
+⚠️ **Dos direcciones valen para lo mismo**: `192.168.3.82` es la IP LAN del host
+(2026-09-06; cambia con DHCP) y `172.17.0.1` es la puerta del bridge de Docker, estable
+desde dentro del dev container. Las dos responden. Los **tests** siguen usando
+`172.17.0.1` por defecto (`TEST_SQL_HOST` / `TEST_REDIS` lo sobreescriben).
+⚠️ Ese Redis es **compartido con otros proyectos**: si alguien le pone `allkeys-lru`, la
+idempotencia se rompe **en silencio** (las claves se desalojarían).
 
 El bloque de RabbitMQ está en **`docker-compose.fragment.yml`** (raíz del repo), ya pegado
 en el compose central. Si algún día no está, la app arranca igual y los eventos se acumulan
@@ -315,7 +333,7 @@ rate limiting, Serilog, health checks, protección de carreras, idempotencia y o
 RabbitMQ — este último **verificado de punta a punta contra un broker real** el
 2026-09-05, incluidos deduplicación y DLQ.
 
-**Tests y CI hechos**: `tests/ApiEcommerce.Tests`, **160** (unitarios + integración +
+**Tests y CI hechos**: `tests/ApiEcommerce.Tests`, **169** (unitarios + integración +
 concurrencia + degradación y arranque) y `.github/workflows/ci.yml`. **`planning/12`
 cerrado** salvo la licencia de AutoMapper. Lo siguiente es `planning/12` §12.5 (la deuda
 nueva) y luego refresh tokens y administración de usuarios.

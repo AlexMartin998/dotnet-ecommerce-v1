@@ -151,6 +151,30 @@ Opciones: comprar, fijar ≤13.x (última MIT), o migrar a Mapperly. Afecta a
 - El publicador mantiene una transacción abierta mientras publica al broker. El lote está
   acotado, pero conviene medirlo si el lote crece.
 
+### Paso 8.bis — Idempotencia bajo carga — ✅ **cerrado** (2026-09-06)
+
+Fase de revisión, sin feature nueva: validar `Idempotency-Key` contra
+infraestructura real y con carga de verdad. Detalle en
+[`planning/16`](../planning/16_idempotencia-bajo-carga.md).
+
+Lo que **aguantó**: exactamente-una-vez con ráfagas de hasta 350 simultáneas y
+—por primera vez comprobado— **entre dos réplicas** contra el mismo Redis, que es
+la razón por la que el store no vive en memoria.
+
+Lo que se **corrigió**: la reserva ahora se toma con `SET NX GET` (un viaje en vez
+de dos, 3,00 → 2,00 operaciones por petición) y lleva **token de propiedad**, así
+que un `Release` tardío no puede borrar la reserva de otro; la huella del cuerpo se
+compara en **todos** los caminos, no sólo en el secuencial; los plazos pasan a
+`IdempotencyOptions`; y la clave del cliente tiene límite.
+
+⚠️ **Lo que NO se cerró y es lo importante**: bajo carga el almacén **degrada en
+abierto y ejecuta sin garantía** — 174 de 14 400 peticiones (1,21 %) con Redis
+sano, porque el timeout de 1000 ms se eligió para el caso «Redis caído». Bajar los
+viajes mueve el umbral pero no elimina el modo de fallo. Las salidas —fallar en
+cerrado, un multiplexer propio para la idempotencia, o más de una conexión— son
+decisión del owner: `rules.md` §8 exige invertir el fail-open explícitamente y en
+todas las implementaciones a la vez.
+
 ### Paso 9 — Partir en proyectos (cuando duela, no antes)
 
 Los tres bloques del composition root (`AddApplication` / `AddInfrastructure` /
@@ -187,6 +211,13 @@ admin). Hoy el único camino para tener un admin es el seeder.
   cambio a blob storage sea de una clase.
 - **`UseForwardedHeaders`.** El rate limiting particiona por IP remota; detrás de
   un proxy hará falta activarlo o todos los clientes compartirán partición.
+- **La idempotencia es *best effort*, no una garantía.** El almacén degrada en
+  abierto cuando Redis no contesta a tiempo, y bajo carga eso pasa con Redis sano.
+  Se cuenta (`apiecommerce.idempotency.requests{outcome=unguaranteed}`) y se avisa
+  al cliente (`Idempotency-Guaranteed: false`), pero no se impide. Decisión
+  pendiente en `planning/16` §16.6.
+- **La reserva es un lease sin renovación.** Una operación más lenta que
+  `Idempotency:ReservationTtlSeconds` libera su propia clave.
 - **Rotación de `Jwt:SecretKey` en caliente.** `JwtTokenService` es singleton y
   materializa las `SigningCredentials` en el constructor, así que rotar la clave
   exige reiniciar. Se resuelve cambiando `IOptions` por `IOptionsMonitor`.

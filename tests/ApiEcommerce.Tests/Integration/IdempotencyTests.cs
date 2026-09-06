@@ -153,6 +153,108 @@ public class IdempotencyTests(ApiFactory factory)
     Assert.Equal(6, await StockOf(admin, sku));
   }
 
+  [Fact]
+  public async Task TheReplayIsMarkedWithTheReplayedHeader()
+  {
+    // La cabecera es parte del contrato y estaba en el .feature, pero no la afirmaba
+    // ningún test: se podía haber dejado de emitir sin que nada se pusiera rojo. Es lo
+    // único que distingue "tu compra se ejecutó ahora" de "te devuelvo la de antes".
+    using var admin = await factory.AsAdminAsync();
+    var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
+
+    using var user = await factory.AsNewUserAsync();
+    var key = Guid.NewGuid().ToString();
+
+    var first = await Buy(user, sku, 2, key);
+    var second = await Buy(user, sku, 2, key);
+
+    Assert.False(first.Headers.Contains(IdempotentAttribute.ReplayedHeader));
+    Assert.Equal("true", second.Headers.GetValues(IdempotentAttribute.ReplayedHeader).Single());
+  }
+
+  [Fact]
+  public async Task AKeyLongerThanTheLimitIsRejectedAndNothingRuns()
+  {
+    // La clave la elige el cliente y acaba entera dentro de una clave de Redis que vive
+    // 24 h, en una instancia compartida con otros proyectos. Sin límite se aceptaban
+    // claves de 7000 caracteres (medido contra la API corriendo).
+    using var admin = await factory.AsAdminAsync();
+    var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
+
+    using var user = await factory.AsNewUserAsync();
+
+    var response = await Buy(user, sku, 3, new string('k', 256));
+
+    Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+    var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+    Assert.Equal("idempotency_key_invalid", problem.GetProperty("code").GetString());
+
+    // Y sobre todo: se rechaza ANTES de ejecutar nada.
+    Assert.Equal(10, await StockOf(admin, sku));
+  }
+
+  [Fact]
+  public async Task EachUserGetsItsOwnResponseAndNotTheOtherOnes()
+  {
+    // El test que ya había miraba el stock, que sube a 6 tanto si cada uno ejecutó lo
+    // suyo como si algo raro pasó por medio. Lo que de verdad hay que descartar es la
+    // FUGA ENTRE CUENTAS: que B reciba el cuerpo de la compra de A. Eso sólo se ve
+    // comparando los cuerpos.
+    using var admin = await factory.AsAdminAsync();
+    var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
+
+    using var a = await factory.AsNewUserAsync();
+    using var b = await factory.AsNewUserAsync();
+    var key = Guid.NewGuid().ToString();
+
+    var first = await Buy(a, sku, 2, key);
+    var second = await Buy(b, sku, 3, key);   // MISMA clave, otro usuario
+
+    var firstBody = await first.Content.ReadFromJsonAsync<JsonElement>();
+    var secondBody = await second.Content.ReadFromJsonAsync<JsonElement>();
+
+    // Cada uno ve el stock que dejó SU compra, no el del otro.
+    Assert.Equal(8, firstBody.GetProperty("stock").GetInt32());
+    Assert.Equal(5, secondBody.GetProperty("stock").GetInt32());
+    Assert.False(second.Headers.Contains(IdempotentAttribute.ReplayedHeader));
+  }
+
+  [Fact]
+  public async Task ConcurrentRequestsWithTheSameKeyBuyOnceAndTheLosersSayWhy()
+  {
+    // Simultáneas, NUNCA en secuencia: en secuencia esto pasaba también con la
+    // implementación que tenía la carrera.
+    //
+    // Y se afirma "exactamente UNA no reproducida" en vez de "exactamente un 200": los
+    // que llegan después de que la primera termine reciben 200 CON la cabecera de
+    // replay, que es correcto. Lo que no puede haber es dos ejecuciones de verdad.
+    using var admin = await factory.AsAdminAsync();
+    var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 20);
+
+    using var user = await factory.AsNewUserAsync();
+    var key = Guid.NewGuid().ToString();
+
+    var responses = await Task.WhenAll(
+        Enumerable.Range(0, 8).Select(_ => Buy(user, sku, 2, key)));
+
+    var executed = responses.Count(r =>
+        r.StatusCode == HttpStatusCode.OK && !r.Headers.Contains(IdempotentAttribute.ReplayedHeader));
+
+    Assert.Equal(1, executed);
+    Assert.Equal(18, await StockOf(admin, sku));
+
+    // Quien pierde la carrera tiene que poder distinguir este 409 del 409 de "no hay
+    // stock": son dos cosas muy distintas para un cliente que reintenta.
+    foreach (var conflict in responses.Where(r => r.StatusCode == HttpStatusCode.Conflict))
+    {
+      var problem = await conflict.Content.ReadFromJsonAsync<JsonElement>();
+      Assert.Equal("idempotency_in_progress", problem.GetProperty("code").GetString());
+    }
+
+    foreach (var response in responses) response.Dispose();
+  }
+
   // ---- helpers ------------------------------------------------------------
 
   private static Task<HttpResponseMessage> Buy(HttpClient client, string sku, int quantity, string? key)

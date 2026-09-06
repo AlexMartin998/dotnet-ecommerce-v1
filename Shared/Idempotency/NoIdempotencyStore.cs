@@ -13,18 +13,20 @@ namespace ApiEcommerce.Shared.Idempotency;
 /// </remarks>
 public sealed class NoIdempotencyStore : IIdempotencyStore
 {
-  public Task<bool> TryAcquireAsync(
+  // `Acquired` y no `Unavailable`: aquí no hay ninguna anomalía que contar. Que no haya
+  // Redis configurado es un hecho del arranque, no un fallo en caliente — avisar en cada
+  // petición de algo que ya se sabe desde que la app levantó sería ruido. La DECISIÓN,
+  // que es lo que exige la regla §8, sí es la misma en las dos implementaciones:
+  // ejecutar la acción.
+  public Task<IdempotencyAcquisition> TryAcquireAsync(
       string key, string requestHash, TimeSpan ttl, CancellationToken ct = default)
-      => Task.FromResult(true);
-
-  public Task<IdempotencyEntry?> GetAsync(string key, CancellationToken ct = default)
-      => Task.FromResult<IdempotencyEntry?>(null);
+      => Task.FromResult(IdempotencyAcquisition.Acquired(string.Empty));
 
   public Task SaveAsync(
-      string key, string requestHash, IdempotentResponse response, TimeSpan ttl,
+      string key, string fence, string requestHash, IdempotentResponse response, TimeSpan ttl,
       CancellationToken ct = default)
       => Task.CompletedTask;
 
-  public Task ReleaseAsync(string key, CancellationToken ct = default)
+  public Task ReleaseAsync(string key, string fence, CancellationToken ct = default)
       => Task.CompletedTask;
 }
