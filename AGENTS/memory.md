@@ -13,32 +13,33 @@
 nunca hace push (`rules.md` §12).
 
 ### Qué se hizo en la última sesión
-1. **`planning/16`** — la idempotencia validada bajo carga real contra infraestructura de
-   verdad (`192.168.3.82`; la IP del host cambió, `172.17.0.1` sigue valiendo por ser la
-   puerta del bridge de Docker). Aguantó exactamente-una-vez con ráfagas de 350 y **entre
-   dos réplicas**; se destapó que el store **se apagaba solo** bajo carga (174 de 14 400
-   sin garantía, con Redis sano).
-2. **`planning/17`** — y eso se cerró **cambiando dónde vive la garantía**, no eligiendo
-   entre degradar o devolver 503. La marca del comando pasa a `ExecutedCommands`, escrita
-   en la **misma transacción que el efecto** y arbitrada por su clave primaria. Es el
-   *inbox pattern* (Azure), es lo que hace Stripe, y es lo que este repo **ya hacía bien**
-   en `ProductPurchasedConsumer`.
-3. `BuyAsync` recibe una **`CommandIntent` obligatoria**: la garantía deja de depender de
-   que el controller lleve un atributo. `[Idempotent]` se queda en **puerta de admisión**.
-4. ⭐ Verificado **con Redis apuntando a un puerto muerto**: 40 simultáneas con la misma
-   clave descuentan 1 y todas dan 200. Antes era **imposible por diseño**.
-5. La **identidad byte a byte** del replay se arregló sola (deuda desde `planning/12`).
-6. **171 tests**, build sin warnings, `rules.md` §8 reescrita.
+1. **`planning/16` + `17`** — la idempotencia validada bajo carga real y luego convertida
+   en **garantía transaccional**: la marca del comando vive en `ExecutedCommands`, en la
+   misma transacción que el efecto. Verificado **con Redis apuntando a un puerto muerto**:
+   40 simultáneas con la misma clave descuentan 1 y todas dan 200.
+2. **`planning/18`** — cerrada la deuda de mensajería (`planning/12` §12.5 **completa**).
+   El patrón de casi todos los puntos era el mismo: **lo que no se podía probar vivía
+   dentro de un `BackgroundService`**. El efecto sale a `IProductPurchasedHandler`, la
+   unidad transaccional a `IMessageInbox` y el contador de intentos a `RetryAttempts`.
+3. Además: contador de reintentos en cabecera propia (el replay desde la DLQ ya funciona),
+   `RetryDelaySeconds` deja de ser inmutable (el TTL va en el nombre de la cola), canal
+   AMQP reutilizado, y `global.json` + CI con los dos SDK.
+4. 🔴 **Un bug encontrado ejecutando**: al versionar la cola de espera, cada reintento se
+   copiaba a **todas** las colas de espera ligadas al exchange. Arreglado publicando al
+   exchange por defecto con el nombre de la cola como routing key.
+5. **183 tests** (eran 160 al empezar la sesión), build sin warnings.
 
 ### Por dónde seguir (en este orden)
-1. **`AGENTS/planning/12` §12.5** — lo primero: el **test del P0 del consumidor** (marca +
-   efecto atómicos), que pide extraer `ProcessAsync` a una interfaz para poder hacer
-   fallar el efecto.
-2. **`SqlException` escapando como 500 bajo carga** (`planning/17` §17.4): «Operation
+1. **`SqlException` escapando como 500 bajo carga** (`planning/17` §17.4): «Operation
    cancelled by user» cuando el cliente cuelga, y Win32 258 por timeout. Ensucia las
-   métricas de error. Pide su propio planning.
-3. **`planning/13`** refresh tokens · **`planning/14`** administración de usuarios.
-4. `planning/15` (partir en proyectos) sigue **diferido a propósito**.
+   métricas de error. Es lo único adyacente que quedó abierto y pide su propio planning.
+2. **`planning/13`** refresh tokens · **`planning/14`** administración de usuarios (hoy el
+   único camino para tener un admin es el seeder).
+3. `planning/15` (partir en proyectos) sigue **diferido a propósito**.
+
+⚠️ **Colas huérfanas en el broker de desarrollo**: al cambiar `RetryDelaySeconds` quedan
+colas `…retry.<N>s` de plazos anteriores. Están vacías y **ya no reciben nada** (no tienen
+binding), pero se ven en la UI. Se borran a mano cuando estorben.
 
 ### ⚠️ Decisiones que esperan al owner (bloquean, nadie más puede tomarlas)
 | | |
@@ -332,7 +333,7 @@ misma transacción que el efecto) y outbox +
 RabbitMQ — este último **verificado de punta a punta contra un broker real** el
 2026-09-05, incluidos deduplicación y DLQ.
 
-**Tests y CI hechos**: `tests/ApiEcommerce.Tests`, **171** (unitarios + integración +
+**Tests y CI hechos**: `tests/ApiEcommerce.Tests`, **183** (unitarios + integración +
 concurrencia + degradación y arranque) y `.github/workflows/ci.yml`. **`planning/12`
 cerrado** salvo la licencia de AutoMapper. Lo siguiente es `planning/12` §12.5 (la deuda
 nueva) y luego refresh tokens y administración de usuarios.

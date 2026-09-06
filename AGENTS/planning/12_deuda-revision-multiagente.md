@@ -73,27 +73,36 @@
 
 ---
 
-## 12.5 — Deuda NUEVA, abierta por el trabajo del 2026-09-06
+## 12.5 — Deuda NUEVA, abierta por el trabajo del 2026-09-06  ✅ **cerrada** por [`planning/18`](18_deuda-de-mensajeria.md)
 
 Encontrada por la segunda revisión multiagente (tres ejes, con la orden de verificar
 ejecutando). Lo que se corrigió en el acto está en la bitácora; esto es lo que **queda**:
 
-- [ ] **Orden real de publicación del outbox.** `Sequence` es determinista y repetible,
+- [x] ⚪ **Orden real de publicación del outbox.** → **`planning/18` §18.6**: se convierte
+      en no-goal deliberado, documentado en el XML doc de `OutboxMessage.Sequence` con la
+      señal concreta para reabrirlo. `Sequence` es determinista y repetible,
       pero **no garantiza el orden**: el `IDENTITY` se asigna al `INSERT` y la fila se ve
       al `COMMIT`, así que una transacción lenta con secuencia menor puede confirmar
       después de que ya se publicara una mayor (verificado). Hoy da igual —un evento por
       compra— pero si algún día importa hace falta un *watermark* que espere a las
       transacciones abiertas, no una columna.
-- [ ] **Test del P0 del consumidor.** El arreglo (marca + efecto en una transacción) es
+- [x] ✅ **Test del P0 del consumidor.** → **`planning/18` §18.1**: el efecto sale a
+      `IProductPurchasedHandler` y la unidad transaccional a `IMessageInbox`, así que los
+      tests ya no necesitan broker. **4 tests**, incluido el que fuerza un efecto fallido
+      y comprueba que el reintento reejecuta de verdad. Antes decía: El arreglo (marca + efecto en una transacción) es
       estructural y está verificado que no rompe el camino feliz ni la deduplicación, pero
       **falta un test que fuerce un efecto que falle** y compruebe que el reintento
       reejecuta. Hoy `ProcessAsync` solo escribe un log y no hay forma de hacerlo fallar
       sin inyectarlo: pide extraer el efecto a una interfaz.
-- [ ] **Replay desde la DLQ no resetea el presupuesto de reintentos.** `x-death` sobrevive
+- [x] ✅ **Replay desde la DLQ no reseteaba el presupuesto.** → **`planning/18` §18.2**:
+      el contador pasa a una cabecera nuestra (`x-retry-attempt`), así que el replay es
+      borrar una cabecera con nombre conocido. Antes decía: `x-death` sobrevive
       al paso por la DLQ, así que un mensaje reencolado por un operador vuelve con el
       contador agotado y muere en la primera entrega. Documentar que el replay debe borrar
       `x-death`, o llevar el contador en una cabecera propia.
-- [ ] **`RetryDelaySeconds` es inmutable tras el primer despliegue.** Cambiarlo da 406 al
+- [x] ✅ **`RetryDelaySeconds` era inmutable tras el primer despliegue.** →
+      **`planning/18` §18.3**: el nombre de la cola de espera lleva su TTL dentro, así que
+      cambiarlo declara una cola nueva en vez de dar 406. Verificado ejecutando. Antes decía: Cambiarlo da 406 al
       redeclarar la cola. Ya se distingue del "broker caído" y se loguea como error
       accionable, pero la solución real es versionar el nombre de la cola o poner el TTL
       en el mensaje (⚠️ eso introduce head-of-line blocking).
@@ -111,7 +120,10 @@ ejecutando). Lo que se corrigió en el acto está en la bitácora; esto es lo qu
       **segunda copia** del cuerpo ya serializado. Al memorizar el DTO en vez de la
       respuesta HTTP, el replay vuelve a pasar por el mismo formateador de MVC.
       Verificado 3/3, y el test pasó de comparar JSON parseado a comparar bytes.
-- [ ] **Un canal AMQP por mensaje** en `RabbitMqEventPublisher`: funciona, pero es caro en
-      una tanda de 50.
-- [ ] **CI y entorno de trabajo compilan con SDK distintos** (9.0.x vs 10.0.400) sin
-      `global.json`: "0 warnings" se mide con analizadores distintos en cada sitio.
+- [x] ✅ **Un canal AMQP por mensaje** en `RabbitMqEventPublisher`. → **`planning/18`
+      §18.4**: el canal se reutiliza. Medido: 30 eventos publicados abriendo **1** canal.
+- [x] ✅ **CI y entorno de trabajo compilaban con SDK distintos.** → **`planning/18`
+      §18.5**: `global.json` fija la banda y la CI instala los dos SDK (el 10 para
+      compilar, el 9 porque el SDK 10 no trae su runtime).
+
+**§12.5 queda cerrada.**

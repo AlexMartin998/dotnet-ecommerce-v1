@@ -1,0 +1,7 @@
+{
+  "//": "Fija la BANDA del SDK, no el parche. Sin esto, aqui se compilaba con 10.0.400 y en CI con 9.0.x: 'cero warnings' se medía con analizadores distintos en cada sitio, asi que la CI podia fallar por algo que aqui no salia -o al reves, que es peor-. Se fija la 10 porque es la unica que hay en el dev container; el proyecto sigue siendo net9.0 y el SDK 10 lo compila sin problema. OJO: para EJECUTAR net9.0 hace falta ademas el runtime 9, que el SDK 10 no trae.",
+  "sdk": {
+    "version": "10.0.100",
+    "rollForward": "latestFeature"
+  }
+}
