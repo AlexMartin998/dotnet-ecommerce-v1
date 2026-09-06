@@ -28,4 +28,15 @@ public class ProductDto
   public int CategoryId { get; set; }
   public string? CategoryName { get; set; }
 
+
+  /// <summary>
+  /// Versión del recurso, en base64. El controller la publica como cabecera <c>ETag</c>.
+  /// </summary>
+  /// <remarks>
+  /// Viaja como <c>string</c> y no como <c>byte[]</c> porque su destino es una cabecera
+  /// HTTP, que es texto. Es opaca para el cliente: solo tiene que devolverla tal cual en
+  /// <c>If-Match</c>.
+  /// </remarks>
+  public string? RowVersion { get; set; }
+
 }

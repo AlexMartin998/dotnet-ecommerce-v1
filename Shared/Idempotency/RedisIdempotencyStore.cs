@@ -39,17 +39,20 @@ public sealed class RedisIdempotencyStore(
 
   private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
-  /// <summary>Marca de "en curso": la clave está reservada pero aún no hay respuesta.</summary>
-  private const string InProgress = "__in_progress__";
-
-  public async Task<bool> TryAcquireAsync(string key, TimeSpan ttl, CancellationToken ct = default)
+  public async Task<bool> TryAcquireAsync(
+      string key, string requestHash, TimeSpan ttl, CancellationToken ct = default)
   {
     ct.ThrowIfCancellationRequested();
 
     try
     {
+      // La reserva ya lleva la huella dentro: `Response` null significa "en curso".
+      // Antes era un centinela de texto; ahora el mismo valor sirve para las dos cosas
+      // y no hace falta una segunda clave con su propio TTL que mantener sincronizado.
       return await redis.GetDatabase().StringSetAsync(
-          _prefix + key, InProgress, ttl, When.NotExists);
+          _prefix + key,
+          JsonSerializer.Serialize(new IdempotencyEntry(requestHash, null), SerializerOptions),
+          ttl, When.NotExists);
     }
     catch (Exception ex) when (ex is not OperationCanceledException)
     {
@@ -60,7 +63,7 @@ public sealed class RedisIdempotencyStore(
     }
   }
 
-  public async Task<IdempotentResponse?> GetAsync(string key, CancellationToken ct = default)
+  public async Task<IdempotencyEntry?> GetAsync(string key, CancellationToken ct = default)
   {
     ct.ThrowIfCancellationRequested();
 
@@ -78,12 +81,9 @@ public sealed class RedisIdempotencyStore(
 
     if (!value.HasValue) return null;
 
-    // Reservada pero todavía ejecutándose: no hay nada que reproducir.
-    if (value == InProgress) return null;
-
     try
     {
-      return JsonSerializer.Deserialize<IdempotentResponse>(value!, SerializerOptions);
+      return JsonSerializer.Deserialize<IdempotencyEntry>(value!, SerializerOptions);
     }
     catch (JsonException ex)
     {
@@ -93,12 +93,15 @@ public sealed class RedisIdempotencyStore(
   }
 
   public async Task SaveAsync(
-      string key, IdempotentResponse response, TimeSpan ttl, CancellationToken ct = default)
+      string key, string requestHash, IdempotentResponse response, TimeSpan ttl,
+      CancellationToken ct = default)
   {
     try
     {
       await redis.GetDatabase().StringSetAsync(
-          _prefix + key, JsonSerializer.Serialize(response, SerializerOptions), ttl);
+          _prefix + key,
+          JsonSerializer.Serialize(new IdempotencyEntry(requestHash, response), SerializerOptions),
+          ttl);
     }
     catch (Exception ex)
     {

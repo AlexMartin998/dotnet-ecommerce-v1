@@ -13,13 +13,16 @@ namespace ApiEcommerce.Shared.Idempotency;
 /// </remarks>
 public sealed class NoIdempotencyStore : IIdempotencyStore
 {
-  public Task<bool> TryAcquireAsync(string key, TimeSpan ttl, CancellationToken ct = default)
+  public Task<bool> TryAcquireAsync(
+      string key, string requestHash, TimeSpan ttl, CancellationToken ct = default)
       => Task.FromResult(true);
 
-  public Task<IdempotentResponse?> GetAsync(string key, CancellationToken ct = default)
-      => Task.FromResult<IdempotentResponse?>(null);
+  public Task<IdempotencyEntry?> GetAsync(string key, CancellationToken ct = default)
+      => Task.FromResult<IdempotencyEntry?>(null);
 
-  public Task SaveAsync(string key, IdempotentResponse response, TimeSpan ttl, CancellationToken ct = default)
+  public Task SaveAsync(
+      string key, string requestHash, IdempotentResponse response, TimeSpan ttl,
+      CancellationToken ct = default)
       => Task.CompletedTask;
 
   public Task ReleaseAsync(string key, CancellationToken ct = default)

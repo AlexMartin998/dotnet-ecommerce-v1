@@ -17,6 +17,20 @@ public sealed record IdempotentResponse(
 
 
 /// <summary>
+/// Estado de una clave de idempotencia: la huella del cuerpo con el que se reservó y,
+/// si ya terminó, la respuesta que hay que reproducir.
+/// </summary>
+/// <remarks>
+/// Las dos cosas viajan juntas <b>a propósito</b>: el filtro necesita comparar la huella
+/// y decidir si reproduce en el mismo punto, y separarlas obligaría a dos viajes a Redis
+/// por petición para responder una sola pregunta.
+/// </remarks>
+/// <param name="RequestHash">SHA-256 del cuerpo de la petición que reservó la clave.</param>
+/// <param name="Response">La respuesta ya emitida, o <c>null</c> si sigue en curso.</param>
+public sealed record IdempotencyEntry(string RequestHash, IdempotentResponse? Response);
+
+
+/// <summary>
 /// Almacén de claves de idempotencia. Permite que reintentar un POST no duplique el
 /// efecto: la segunda petición con la misma <c>Idempotency-Key</c> devuelve la
 /// respuesta de la primera en vez de volver a ejecutarla.
@@ -44,13 +58,18 @@ public interface IIdempotencyStore
   /// Un <c>GET</c> seguido de un <c>SET</c> volvería a ser read-then-write y dos
   /// peticiones simultáneas con la misma clave pasarían las dos.
   /// </remarks>
-  Task<bool> TryAcquireAsync(string key, TimeSpan ttl, CancellationToken ct = default);
+  /// <param name="requestHash">
+  /// Huella del cuerpo. Se guarda <b>desde la reserva</b> y no al terminar: si solo
+  /// estuviera en la respuesta, una segunda petición con la misma clave y otro cuerpo
+  /// que llegue <i>mientras la primera sigue en curso</i> no tendría contra qué comparar.
+  /// </param>
+  Task<bool> TryAcquireAsync(string key, string requestHash, TimeSpan ttl, CancellationToken ct = default);
 
-  /// <summary>Respuesta ya guardada para la clave, o <c>null</c> si aún no terminó.</summary>
-  Task<IdempotentResponse?> GetAsync(string key, CancellationToken ct = default);
+  /// <summary>Estado de la clave, o <c>null</c> si no existe.</summary>
+  Task<IdempotencyEntry?> GetAsync(string key, CancellationToken ct = default);
 
   /// <summary>Guarda la respuesta para poder reproducirla en los reintentos.</summary>
-  Task SaveAsync(string key, IdempotentResponse response, TimeSpan ttl, CancellationToken ct = default);
+  Task SaveAsync(string key, string requestHash, IdempotentResponse response, TimeSpan ttl, CancellationToken ct = default);
 
   /// <summary>
   /// Libera la reserva. Se llama cuando la operación <b>falló</b>: si no, un error

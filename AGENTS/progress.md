@@ -35,6 +35,28 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 
 ## 2. Bitácora
 
+### 2026-09-06 — Deuda 12.2: `ETag`/`If-Match` y hash del cuerpo en la idempotencia
+
+**`ETag` / `If-Match`.** Cierra el *lost update* entre dos administradores, que
+`RowVersion` **por sí sola no podía**: el PATCH relee la fila, así que EF compara contra el
+rowversion del otro y todo cuadra. El GET publica el token como `ETag`, el PATCH lo lee de
+`If-Match` y `ProductRules` lo compara → **412**. Opcional a propósito. Verificado el
+escenario completo: A lee, B edita (204), A guarda con su token viejo → 412 **y el cambio
+de B sobrevive**; A relee y ya puede. Token ilegible → 400, no 500.
+
+**Hash del cuerpo.** Reutilizar una `Idempotency-Key` con otro cuerpo reproducía la
+respuesta de la primera **en silencio**. Ahora es **422**. Verificado: compra de 1 → 200,
+misma clave mismo cuerpo → 200 (replay), misma clave con `quantity: 5` → 422 y **el stock
+solo bajó una vez**.
+
+🟠 **Y destapó un fallo intermitente que llevaba ahí desde el principio**: el replay
+re-serializaba el cuerpo con sus propias opciones, así que no era idéntico byte a byte al
+de MVC (`+` sale como `\u002B`). Solo se nota cuando el base64 del `rowVersion` lleva un
+`+` — o sea, de forma aleatoria. Se pasó a las opciones de MVC y el test compara ahora el
+JSON parseado, con la limitación anotada en `planning/12`.
+
+159 tests (6 nuevos: los cinco de `ETag`/`If-Match` y el del 422).
+
 ### 2026-09-06 — Deuda 12.1: reintentos del consumidor con contador REAL
 
 `args.Redelivered` es una bandera del broker, no un contador: eran 2 intentos como mucho y
