@@ -4,7 +4,7 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-06** (documentación regenerada contra el código).
+Última actualización: **2026-09-06** (recuperación desde la DLQ y recolector de huérfanos).
 
 ---
 
@@ -31,7 +31,8 @@
 | 17 | Idempotencia transaccional | ✅ | [`features/17`](features/17_idempotencia-transaccional.feature) · [`planning/17`](planning/17_idempotencia-transaccional.md) | `b9f62aa` |
 | 18 | Deuda de mensajería | ✅ | [`features/18`](features/18_mensajeria-robusta.feature) · [`planning/18`](planning/18_deuda-de-mensajeria.md) | `a77b5df` |
 | 19 | Errores bajo carga | ✅ | [`planning/19`](planning/19_errores-bajo-carga.md) | `347f901` |
-| 20 | **Órdenes y comprobante en PDF** | ✅ | [`features/20`](features/20_ordenes-y-comprobante.feature) · [`planning/20`](planning/20_ordenes-y-comprobante.md) | — |
+| 20 | **Órdenes y comprobante en PDF** | ✅ | [`features/20`](features/20_ordenes-y-comprobante.feature) · [`planning/20`](planning/20_ordenes-y-comprobante.md) | `7df6df0` |
+| 21 | Recuperar de la DLQ y recoger basura | ✅ | [`features/21`](features/21_recuperar-comprobantes-y-recoger-basura.feature) · [`planning/21`](planning/21_recuperar-comprobantes-y-recoger-basura.md) | — |
 
 **Ya no queda ningún ⚠️.** El 09 se cerró el 2026-09-05 contra un RabbitMQ real, y esa
 verificación destapó un bug que el build y el smoke test no veían (abajo).
@@ -40,6 +41,54 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 
 ## 2. Bitácora
 
+### 2026-09-06 — La DLQ deja de ser un callejón sin salida
+
+`planning/21`, y cierra las dos deudas que dejó abierta `planning/20`. Son **dos mitades del
+mismo problema**: que un efecto pueda fallar sin dejar ni trabajo perdido ni basura.
+
+**El agujero era mío, de ayer.** Cuando un comprobante agotaba sus reintentos, el aviso de
+agotado marcaba la orden como `failed` y el cliente dejaba de esperar —eso estaba bien—,
+pero **reemitirlo exigía entrar a la consola del broker**. Una cola de la que no se sale no
+es una red de seguridad, es un vertedero.
+
+- **`GET /api/v1/dead-letter`** dice cuántos hay parados en cada cola, y
+  **`POST /{queue}/replay`** los devuelve a la principal. ⚠️ La cola llega **en la petición**,
+  así que se resuelve contra las suscripciones **registradas**: es una allowlist por
+  construcción, y sin ella el endpoint movería mensajes de cualquier cola del broker — que
+  es compartido con otros proyectos. Cola desconocida → 404.
+- ⚠️ **Reemitir es una decisión humana, no un job.** Si algo agotó sus intentos es porque
+  estaba roto de verdad; automatizarlo convierte la DLQ en un bucle caro que además esconde
+  el incidente.
+- Se reutilizan dos reglas que ya estaban escritas: **publicar antes de confirmar** (al
+  revés, morir entremedias pierde el mensaje) y **el contador de intentos a cero** — que es
+  exactamente por lo que el contador es nuestro y no `x-death`, que sobrevive al paso por la
+  DLQ y habría hecho que la herramienta de recuperar mensajes no recuperara ninguno.
+- Sin broker, el Null Object falla **en cerrado** con un 503. Es la distinción de
+  `rules.md` §8: los otros Null Object degradan en abierto porque envuelven optimizaciones;
+  aquí «no hay mensajes muertos» sería **mentira**, no degradación.
+
+**Y el recolector de huérfanos**: el PDF se escribe dentro de la transacción y un fichero no
+se deshace con ella, así que un commit fallido deja basura que nadie apunta.
+- ⚠️ 🔴 **El periodo de gracia es la única línea que no se puede equivocar.** El fichero
+  existe *antes* que la fila que lo apunta, así que sin corte el recolector borraría
+  comprobantes **buenos a mitad de vuelo** — y eso no se recupera. 24 h por defecto, tres
+  órdenes de magnitud por encima de la ventana real.
+- **Ante la duda, no se borra**: si la base no contesta, se salta el lote entero. La
+  asimetría del coste decide sola.
+- ✏️ Un PDF **truncado** no necesita caso especial, al contrario de lo que decía
+  `planning/20` §20.11: como `SaveAsync` nunca devolvió clave, nadie lo referencia y cae por
+  la misma regla. Queda corregido.
+- El efecto vive **fuera** del `BackgroundService` (la lección de `planning/18`), y aquí eso
+  importa más que en ningún sitio: este componente **borra ficheros**, y los tests que hacen
+  falta son los dos que comprueban que *no* borra.
+
+**Verificado ejecutando** el ciclo completo contra RabbitMQ real: comprobante que muere →
+orden `failed` → el endpoint lo ve (2 en la DLQ de órdenes, 0 en la del catálogo) → cola
+desconocida da 404 → se arregla el almacén → `{"replayed": 2}` → la orden pasa a
+`available` y el PDF baja. Las dos DLQ a cero y **0 errores** en el log.
+
+**274 tests** en verde (eran 262).
+
 ### 2026-09-06 — Regenerar la documentación, y lo que eso destapó
 
 `CLAUDE.md` se carga en **toda** sesión de agente, así que cada afirmación falsa contamina
@@ -47,7 +96,7 @@ todas a la vez. Una auditoría contra el código encontró **~20**: carpetas que
 (`Models/Dtos/`, `Service/Crud/`, `Service/Auth/`), nombres del composition root inventados
 (`AddApplication`/`AddInfrastructure`), «`[Transactional]` está aplicado a `POST /buy`»
 cuando no lo lleva ningún endpoint, y —la peor— **«no hay proyecto de tests: `dotnet build`
-es el único check»** con 262 tests y CI en verde.
+es el único check»** con 261 tests y CI en verde.
 
 Reescrito entero contra el código, con cuatro agentes levantando el inventario en paralelo
 (Shared, slices, configuración/despliegue, auditoría) y **un quinto intentando refutar el
@@ -152,7 +201,7 @@ sin permiso de escritura. Medido: 2 intentos → DLQ → la orden pasa a `failed
 `receipt_failed`, **con la compra intacta** (`paid`, total y líneas), y el mensaje muerto en
 la DLQ de órdenes y **no** en la del catálogo.
 
-**262 tests** en verde (eran 202), build sin warnings.
+**261 tests** en verde (eran 202), build sin warnings.
 
 ### 2026-09-06 — Administrar usuarios, y el agujero que eso destapó
 

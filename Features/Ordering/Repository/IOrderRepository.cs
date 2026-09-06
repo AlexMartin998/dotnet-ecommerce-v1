@@ -44,5 +44,16 @@ public interface IOrderRepository
   /// <summary>Marca que la generación del comprobante falló.</summary>
   Task SetReceiptFailedAsync(int orderId, CancellationToken ct = default);
 
+  /// <summary>
+  /// De las claves dadas, cuáles referencia alguna orden.
+  /// </summary>
+  /// <remarks>
+  /// Se pregunta <b>por lotes</b> y no fichero a fichero: el recolector recorre el almacén
+  /// entero, y una consulta por documento convierte una tarea de fondo en una tormenta
+  /// contra la base.
+  /// </remarks>
+  Task<IReadOnlySet<string>> FindReferencedKeysAsync(
+      IReadOnlyCollection<string> keys, CancellationToken ct = default);
+
   Task SaveChangesAsync(CancellationToken ct = default);
 }

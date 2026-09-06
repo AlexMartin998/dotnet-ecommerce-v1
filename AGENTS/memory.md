@@ -36,34 +36,39 @@ en `AddFeatures()`, y toda la dependencia hacia `Catalog` en **una** clase (`Cat
    «unhandled exception» a nivel Error con traza. 30 compras simultáneas sobre stock 20 →
    **10 incidentes falsos**; un 404 de categoría, igual. Silenciada la línea duplicada del
    framework (`GlobalExceptionHandler` ya lo registraba, y mejor): de 10 a **0**.
-6. **Documentación regenerada contra el código** (§6.ter): `CLAUDE.md` tenía **~20
+6. **`planning/21` — la DLQ deja de ser un callejón sin salida**: `GET /api/v1/dead-letter`
+   y `POST /{queue}/replay` (solo admin, la cola validada contra las suscripciones
+   registradas: allowlist por construcción), más un **recolector de comprobantes huérfanos**
+   con periodo de gracia. ⚠️ Ese periodo es la única línea que no se puede equivocar: el PDF
+   se escribe dentro de la transacción, así que existe antes que la fila que lo apunta.
+7. **Documentación regenerada contra el código** (§6.ter): `CLAUDE.md` tenía **~20
    afirmaciones falsas** —carpetas inexistentes, nombres del composition root inventados,
    «no hay proyecto de tests»— y ese archivo se carga en **toda** sesión. Reescrito con
    cuatro agentes de inventario y uno intentando refutar el resultado. 🔴 Y verificarlo
    destapó un bug: el orden por defecto de `BaseRepository` **no tenía desempate estable**,
    así que `/paged` podía repetir filas y saltarse otras.
-7. **Revisión multiagente** (`rules.md` §9): 🔴 `ReceiptStatus.Failed` era **inalcanzable**
+8. **Revisión multiagente** (`rules.md` §9): 🔴 `ReceiptStatus.Failed` era **inalcanzable**
    (comprobante muerto en la DLQ = 409 `receipt_not_ready` eterno) → hook `OnExhaustedAsync`
    en `EventConsumer`; 🔴 **deadlock evitable** descontando stock en el orden del carrito →
    se ordenan las líneas por SKU; la canonicalización de rutas **no seguía enlaces
    simbólicos**; una barra final en `Documents:RootPath` rompía el almacén en silencio; y
    `?page=MAXINT` daba **500** en todos los `/paged` (previo).
-8. **262 tests** (eran 202), build sin warnings. Verificado ejecutando: ciclo completo
+9. **274 tests** (eran 202), build sin warnings. Verificado ejecutando: ciclo completo
    compra → evento → PDF, **30 simultáneas → 20 órdenes con 20 números únicos**, y el ciclo
    de reintentos con un fallo real → DLQ → orden `failed` (la compra sigue válida).
 
 ### Por dónde seguir (en este orden)
 
-**El roadmap sigue sin pendientes salvo el 15, diferido a propósito.** Lo que hay son
-deudas menores, todas anotadas en `docs/06` §Paso 12:
+**El roadmap sigue sin pendientes salvo el 15, diferido a propósito**, y `planning/21` cerró
+las dos deudas que dejaba `planning/20` (recuperar desde la DLQ y recoger huérfanos). Lo que
+queda son deudas menores, todas en `docs/06` §Paso 12:
 
-1. **Deuda nueva de `planning/20`**: nadie recolecta los **documentos huérfanos** —el PDF se
-   escribe dentro de la transacción del inbox y un fichero no se deshace con ella—, y con el
-   arreglo de `SaveAsync` puede haber además alguno **truncado**. Tampoco hay quien consuma
-   la DLQ (el aviso de agotado ya marca la orden, pero el mensaje se queda ahí).
-2. **Deuda menor viva**: `planning/13` (la cookie es una decisión para SPA: un cliente móvil
+1. **Deuda menor viva**: `planning/13` (la cookie es una decisión para SPA: un cliente móvil
    no está cubierto), `planning/17` §17.4, `planning/19` §19.4 (EF loguea a Error sus fallos
-   de conexión — se deja a propósito).
+   de conexión — se deja a propósito), `planning/21` §21.6 (nadie **alerta** cuando la DLQ
+   crece: hay que mirar).
+2. **Lo grande que falta es dominio, no infraestructura**: `Payments` y `Shipping` son los
+   contextos acotados previstos y no existen. `Ordering` dejó el molde hecho.
 3. `planning/15` (partir en proyectos) sigue **diferido a propósito**. La señal para
    retomarlo está en `docs/06`.
 
@@ -108,7 +113,7 @@ autoridad**: se trajo la *feature*, nunca el *código*.
 
 ```sh
 dotnet build                                          # build de la solución (API + tests)
-dotnet test tests/ApiEcommerce.Tests                  # 262 tests, ~85 s
+dotnet test tests/ApiEcommerce.Tests                  # 274 tests, ~85 s
 dotnet watch run --urls "http://0.0.0.0:8021"         # dev
 ASPNETCORE_ENVIRONMENT=Development dotnet ef database update
 ```
@@ -119,7 +124,7 @@ desarrollo. Tras clonar hay que poner tres valores (`ConnectionStrings:ConexionS
 `UserSecretsId` = `apiecommerce-dev-2026`. Sin la clave JWT, el arranque falla con
 `OptionsValidationException` — es lo correcto, no un fallo de configuración del entorno.
 
-**CI**: `.github/workflows/ci.yml` corre build (`-warnaserror`) + los 262 tests en cada
+**CI**: `.github/workflows/ci.yml` corre build (`-warnaserror`) + los 274 tests en cada
 push y PR, con SQL Server y Redis como `services` del runner, y construye el `Dockerfile`.
 
 ### Los tests (paso 11, fases 1–5; falta la 6, CI)
@@ -327,7 +332,7 @@ bloques ```sh``` con los comandos reales, y mucha separación entre capítulos. 
 portar algo del curso— **qué hacía mal el original**. Ese contraste es lo que más valora.
 Los gotchas se marcan con ⚠️. Los números medidos van con su medición.
 
-Los capítulos 30–36 son la referencia de estilo más reciente.
+Los capítulos 30–37 son la referencia de estilo más reciente.
 
 ---
 
@@ -410,7 +415,7 @@ idempotencia **transaccional** (`ExecutedCommands`, en la misma transacción que
 outbox + RabbitMQ **con varias colas** —verificado de punta a punta contra un broker real—
 y un almacén de documentos privados sustituible (`IDocumentStore`).
 
-**Tests y CI**: `tests/ApiEcommerce.Tests`, **262** (unitarios + integración + concurrencia
+**Tests y CI**: `tests/ApiEcommerce.Tests`, **274** (unitarios + integración + concurrencia
 + degradación y arranque) y `.github/workflows/ci.yml`. El roadmap está **sin pendientes
 salvo el 15** (partir en proyectos, diferido a propósito); lo que queda son deudas menores,
 anotadas en §0.

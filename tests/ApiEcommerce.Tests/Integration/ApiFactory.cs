@@ -143,6 +143,13 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
           ["Documents:Provider"] = "filesystem",
           ["Documents:RootPath"] = DocumentsRoot,
 
+          // ⚠️ El recolector de huérfanos APAGADO en la suite. Hoy no llegaría a correr
+          // —espera 5 minutos antes de la primera pasada y la suite dura ~80 s— pero eso es
+          // una coincidencia, no una garantía: un job que BORRA FICHEROS no puede depender
+          // de llegar tarde. El recolector se prueba invocándolo a mano, que además es
+          // determinista.
+          ["Documents:CleanupIntervalHours"] = "0",
+
           ["Serilog:MinimumLevel:Default"] = "Warning",
         };
 

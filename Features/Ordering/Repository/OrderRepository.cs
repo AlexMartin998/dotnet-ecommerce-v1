@@ -97,5 +97,23 @@ public sealed class OrderRepository(AppDbContext db) : IOrderRepository
             .SetProperty(o => o.UpdatedAt, now), ct);
   }
 
+  public async Task<IReadOnlySet<string>> FindReferencedKeysAsync(
+      IReadOnlyCollection<string> keys, CancellationToken ct = default)
+  {
+    ArgumentNullException.ThrowIfNull(keys);
+
+    if (keys.Count == 0) return new HashSet<string>(StringComparer.Ordinal);
+
+    var referenced = await db.Orders
+        .AsNoTracking()
+        .Where(o => o.ReceiptDocumentKey != null && keys.Contains(o.ReceiptDocumentKey))
+        .Select(o => o.ReceiptDocumentKey!)
+        .ToListAsync(ct);
+
+    // Ordinal: la clave la generó el almacén y se compara byte a byte. Una comparación
+    // sensible a la cultura aquí decidiría si se borra el fichero de un cliente.
+    return referenced.ToHashSet(StringComparer.Ordinal);
+  }
+
   public Task SaveChangesAsync(CancellationToken ct = default) => db.SaveChangesAsync(ct);
 }

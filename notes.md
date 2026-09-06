@@ -3399,3 +3399,105 @@ BaseRepository.ApplyDefaultOrder:  OrderByDescending(CreatedAt)   <- y nada mas
   - -- ⭐ **la moraleja**: la afirmacion del documento era correcta *como regla* y el codigo
        no la cumplia. Escribir la regla obligo a comprobarla, y ahi salio. Documentar bien
        es una forma barata de auditar
+
+
+
+
+<br>
+
+
+
+
+## 37. Sacar cosas de la DLQ  <- una cola de la que no se sale es un vertedero
+
+- --- ⭐ **El agujero: `failed` era un callejon sin salida**
+```
+comprobante agota sus reintentos -> DLQ -> la orden queda "failed"
+   el cliente deja de esperar    <- bien, eso ya estaba
+   reemitirlo                    <- ENTRANDO AL BROKER A MANO
+```
+  - -- una cola de la que no se sale **no es una red de seguridad, es un vertedero**
+  - -- lo dejo abierto el capitulo anterior y era mio: al arreglar que `Failed` fuera
+       inalcanzable, se cerro la mitad del problema y se dio por hecha la otra
+
+- --- **Reemitir es una decision HUMANA, no un job**
+  - -- si un mensaje agoto sus intentos es porque algo estaba **roto de verdad**;
+       reencolarlo automaticamente solo repite el fallo
+  - -- y peor: convierte la DLQ en un bucle caro que **esconde el incidente**
+  - -- por eso es un endpoint de administracion. El recolector de basura si es un job,
+       porque su decision —"esto no lo referencia nadie"— es mecanica
+
+- --- ⚠️ **El nombre de la cola llega en la peticion, asi que es un problema de seguridad**
+```
+POST /api/v1/dead-letter/{queue}/replay
+```
+  - -- sin validarlo, el endpoint mueve mensajes de **CUALQUIER cola del broker**... y el
+       broker esta **compartido con otros proyectos**
+  - -- la lista de `EventSubscription` registradas es una **allowlist por construccion**:
+       no hay que mantenerla, ya existe. Cola desconocida -> **404**, no 400: para quien
+       llama, una cola que este servicio no consume no existe
+  - -- y **no se expone el contenido** de los mensajes, solo recuentos: un `order.placed` no
+       lleva datos personales, pero un endpoint que vuelca payloads es una fuga esperando a
+       que alguien publique un evento mas rico
+
+- --- **Dos reglas viejas que aqui se cobran solas**
+  - -- **publicar antes de confirmar**: al reves, morir entremedias pierde el mensaje (ya
+       confirmado en la DLQ, aun no publicado). Es la misma de `ScheduleRetryAsync`
+  - -- **el contador de intentos a cero**: si volviera con el presupuesto gastado, moriria
+       en la primera entrega y la herramienta de recuperar mensajes **no recuperaria
+       ninguno**. Es exactamente por lo que el contador es NUESTRO y no `x-death`, que
+       sobrevive al paso por la DLQ (cap. 31). Aquella decision se paga hoy
+  - -- se publica al **exchange principal** con la routing key de la suscripcion, no
+       directo a la cola: el mensaje recorre el mismo camino que uno nuevo
+
+- --- **El Null Object que falla en CERRADO**
+```
+NoCacheService / NoIdempotencyStore  -> degradan en ABIERTO (envuelven optimizaciones)
+NoDeadLetterAdmin                    -> falla en CERRADO, 503
+```
+  - -- "no hay mensajes muertos" seria **mentira**, no degradacion. `rules.md` §8 en una
+       linea: se degrada lo que tiene fuente de verdad alternativa
+  - -- se registra igual con el **mismo lifetime** que el real; sin la rama, el controller
+       ni se construye sin broker y sale un 500 de DI en vez del 503 que describe lo que pasa
+
+- --- 🔴 ⚠️ **El recolector de huerfanos: el periodo de gracia es TODO**
+```
+el PDF se escribe DENTRO de la transaccion
+   -> el fichero existe ANTES que la fila que lo apunta
+   -> sin gracia, el recolector borra comprobantes BUENOS a mitad de vuelo
+```
+  - -- 24 h por defecto: **tres ordenes de magnitud** por encima de la ventana real. Aqui lo
+       barato es esperar y lo caro es acertar por poco
+  - -- **ante la duda, no se borra**: si la base no contesta, se salta el lote entero.
+       Borrar de mas pierde el documento de un cliente; borrar de menos deja basura una
+       vuelta mas. La asimetria del coste decide sola
+  - -- `CleanupIntervalHours = 0` lo **apaga**: es un job que borra ficheros, y ante
+       cualquier sospecha lo primero es pararlo **sin desplegar**
+  - -- ✏️ un PDF **truncado** NO necesita caso especial, al contrario de lo que escribi en el
+       capitulo anterior: como `SaveAsync` nunca devolvio clave, nadie lo referencia y cae
+       por la misma regla. Corregido
+  - -- vive en `Ordering` y no en `Shared/Documents` aunque hable de un almacen transversal:
+       la pregunta "¿quien referencia esta clave?" solo la responde quien tiene la tabla, y
+       `Shared/` no puede nombrar tipos de `Features/`
+
+- --- **Y otra vez la leccion del cap. 31, aplicada de entrada**
+  - -- el efecto sale del `BackgroundService` a `IOrphanReceiptCollector`; el job solo pone
+       el reloj
+  - -- **aqui importa mas que en ningun otro sitio**: este componente BORRA FICHEROS, y los
+       tests que de verdad hacen falta son los dos que comprueban que **NO** borra —el
+       referenciado y el recien escrito—. Contra un job con un temporizador de horas dentro
+       no se pueden escribir
+
+- --- **Verificado ejecutando el ciclo entero** (no compilando)
+```sh
+# 1) romper el almacen para que el comprobante muera de verdad
+Documents__RootPath=/root/denegado RabbitMq__MaxDeliveryAttempts=2 dotnet ...
+#    -> orden ORD-2026-000029 queda "failed", 2 mensajes en order-placed.dlq, 0 en la del catalogo
+# 2) cola desconocida -> 404   (la allowlist)
+# 3) arreglar el almacen y reemitir
+curl -X POST ".../dead-letter/apiecommerce.order-placed/replay?max=10"   # {"replayed":2}
+#    -> la orden pasa a "available", el PDF baja (29 KB), las dos DLQ a 0, 0 errores
+```
+  - -- ⚠️ lo que **NO** se verifico: que un mensaje reemitido que **vuelve a fallar** tenga
+       otra vez sus N intentos. El codigo pone el contador a cero y `RetryAttempts` tiene sus
+       6 tests, pero ese ciclo concreto no se provoco. Queda dicho

@@ -45,10 +45,21 @@ public static class MessagingExtensions
     var options = configuration.GetSection(RabbitMqOptions.SectionName).Get<RabbitMqOptions>()
                   ?? new RabbitMqOptions();
 
-    if (!options.IsEnabled) return services;
+    if (!options.IsEnabled)
+    {
+      // ⚠️ Se registra el Null Object y con el MISMO lifetime que el real. Sin esta rama,
+      // el controller de dead-letters no se podría construir sin broker y saldría un 500
+      // de DI en vez del 503 que describe lo que pasa. Y ojo: este Null Object falla en
+      // CERRADO, al revés que los de cache o idempotencia — "no hay mensajes muertos"
+      // sería mentira, no degradación (rules.md §8).
+      services.AddSingleton<IDeadLetterAdmin, NoDeadLetterAdmin>();
+
+      return services;
+    }
 
     services.AddSingleton<RabbitMqConnection>();
     services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();
+    services.AddSingleton<IDeadLetterAdmin, RabbitMqDeadLetterAdmin>();
 
     services.AddHostedService<OutboxPublisher>();
 

@@ -55,6 +55,14 @@ public static class OrderingExtensions
     services.AddEventConsumer<OrderPlacedConsumer>(
         configuration, OrderPlacedConsumer.Subscription);
 
+    // ---- recolección de basura ---------------------------------------------
+    // Recoge los comprobantes que ninguna orden referencia. Se registra SIEMPRE, también
+    // sin broker: el huérfano lo produce un commit fallido, no el transporte, así que una
+    // réplica sin mensajería acumula basura igual. Se apaga con
+    // `Documents:CleanupIntervalHours = 0`.
+    services.AddScoped<IOrphanReceiptCollector, OrphanReceiptCollector>();
+    services.AddHostedService<ReceiptCleaner>();
+
     return services;
   }
 

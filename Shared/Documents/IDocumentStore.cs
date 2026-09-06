@@ -51,7 +51,39 @@ public interface IDocumentStore
 
   /// <summary>Borra un documento. Idempotente: si no existe, no hace nada.</summary>
   Task DeleteAsync(string key, CancellationToken ct = default);
+
+  /// <summary>
+  /// Enumera los documentos escritos <b>antes</b> de un instante dado.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Existe para que alguien pueda recoger la basura: el documento se escribe <b>dentro</b>
+  /// de la transacción que lo referencia, así que un commit fallido deja un fichero que
+  /// ninguna fila apunta. Sin poder enumerar, esos huérfanos no se pueden encontrar nunca.
+  /// </para>
+  /// <para>
+  /// ⚠️ El filtro por fecha es parte del contrato y <b>no una comodidad</b>: entre que el
+  /// fichero existe y existe la fila que lo apunta hay una ventana, así que quien recoja
+  /// basura tiene que poder decir «solo lo viejo». Ver
+  /// <c>DocumentStorageOptions.OrphanGraceHours</c>.
+  /// </para>
+  /// <para>
+  /// Devuelve un flujo y no una lista: todo almacén sabe hacer esto (S3 <c>ListObjects</c>,
+  /// R2, MinIO, Cloudinary), pero todos pagan por página, y materializar un bucket entero
+  /// en memoria para borrar tres ficheros no es una opción.
+  /// </para>
+  /// </remarks>
+  /// <param name="writtenBefore">Solo documentos escritos antes de este instante.</param>
+  /// <param name="ct">Token de cancelación.</param>
+  IAsyncEnumerable<DocumentEntry> ListAsync(DateTime writtenBefore, CancellationToken ct = default);
 }
+
+
+/// <summary>Un documento enumerado en el almacén.</summary>
+/// <param name="Key">Su clave opaca, la misma que devolvió <c>SaveAsync</c>.</param>
+/// <param name="WrittenAt">Cuándo se escribió, para poder aplicar el periodo de gracia.</param>
+/// <param name="SizeBytes">Tamaño.</param>
+public readonly record struct DocumentEntry(string Key, DateTime WrittenAt, long SizeBytes);
 
 
 /// <summary>Un documento guardado.</summary>
