@@ -1432,7 +1432,7 @@ POST /api/v1/product/buy
   - -- **el correcto para publicar es `apiecommerce.events`**; el `.dlx` no se publica a mano nunca,
        solo recibe lo que el consumidor rechaza
 
-- --- Glosario: que es cada termino y **donde vive EN ESTE REPO**
+- --- Glosario: que es cada termino y **donde vive EN ESTE REPO**  (el porque, cap. 24)
   - -- **vhost** — namespace del broker: exchanges y colas viven dentro de uno. Aqui el
        default, `/`. En la HTTP API va URL-encoded como `%2F`, de ahi las URLs raras del curl
   - -- **exchange** — donde PUBLICAS. Recibe el mensaje, decide a que colas va y se olvida.
@@ -1470,23 +1470,9 @@ persistent  -> propiedad del MENSAJE (DeliveryMode): se escribe a disco
   - -- **propiedades del mensaje** — cabeceras AMQP que viajan aparte del cuerpo. Aqui dos
        llevan peso: `MessageId` (el Id del outbox) y `Type` (el nombre del evento)
 
-- --- ⭐ La idea de fondo: **el publicador NUNCA conoce la cola**
-  - -- publica en un exchange con una routing key; **quien escucha lo decide el BINDING**
-  - -- añadir un segundo consumidor = otra cola con otro binding, y **cero cambios en la API**
-  - -- por eso `topic` y no `direct`: deja suscribirse a `product.*` sin tocar al publicador.
-       Hoy el binding es exacto, pero el tipo ya lo permite
-  - -- y por eso el DLX es `fanout`: ahi no hay nada que enrutar, todo lo rechazado va al mismo sitio
-
-- --- ⚠️ La routing key con la que se PUBLICA sale del EVENTO, no de la configuracion
-```csharp
-routingKey: eventType   // = ProductPurchased.EventType = "product.purchased"
-```
-  - -- `RabbitMq:RoutingKey` de `appsettings.json` solo declara el **binding** (el paso 3)
-  - -- es facil leerlo al reves y creer que la config decide con que clave se publica
-
-- --- ⚠️ **Un exchange no guarda nada.** Es una tabla de enrutado, no un buzon
-  - -- si un mensaje no casa con ningun binding, se **pierde en silencio**
-  - -- por eso el publicador usa `mandatory: true`: el broker lo DEVUELVE en vez de tragarselo
+- --- ⭐ **El PORQUE de cada eleccion esta en el cap. 24**: por que el publicador nunca
+      conoce la cola, por que `topic` y no `direct`, por que el DLX es `fanout`, las tres
+      formas de caer en la DLQ, y por que RabbitMQ y no Kafka
 
 - --- Topologia (se declara sola al conectar, es idempotente)
   - -- declarar algo que ya existe con los mismos parametros no hace nada; declararlo con
@@ -1955,3 +1941,181 @@ WHERE ProcessedAt IS NULL AND Attempts >= 5;
        en silencio y el `SELECT` posterior te dice que no paso nada
   - -- purgar la DLQ: `DELETE /api/queues/%2F/<cola>/contents` (204). Las metricas de la UI
        tardan unos segundos en refrescarse: no te asustes si sigue diciendo 1
+
+
+
+
+
+
+## 24. Por que cada pieza de RabbitMQ es la que es
+> Los terminos estan definidos en el glosario del cap. 18. Esto es el PORQUE de cada
+> eleccion: por que topic y no direct, por que el DLX es fanout, y por que no Kafka.
+
+- --- ⭐ El diagrama que falta: **como decide el exchange** (el del cap. 18 es el camino feliz)
+```
+                     routing key = "product.purchased"
+                                   |
+                                   v
+ +=================================================================+
+ |  exchange  apiecommerce.events                    tipo: TOPIC   |
+ |  NO guarda nada. Compara la clave contra CADA binding y copia.  |
+ +=================================================================+
+        |                      |                        |
+   binding                binding                  binding
+   "product.purchased"    "product.#"              "order.#"
+   CASA -> copia          CASA -> copia            NO casa -> nada
+        |                      |                        |
+        v                      v                        x
+ +--------------------+  +----------------------+
+ | apiecommerce.      |  | facturacion.product  |   <- consumidor FUTURO:
+ | product-purchased  |  | (ejemplo)            |      cola + binding nuevos,
+ +--------------------+  +----------------------+      CERO cambios en la API
+        |
+        |  consumidor: comprueba Type -> deduplica por MessageId -> efecto
+        |
+   ack (OK)                       nack requeue:false  (mensaje malo)
+                                          |
+                                          v
+ +=================================================================+
+ |  exchange  apiecommerce.events.dlx               tipo: FANOUT   |
+ |  IGNORA la routing key: copia a TODAS sus colas.                |
+ +=================================================================+
+                                          |
+                                          v
+                        +------------------------------------+
+                        | apiecommerce.product-purchased.dlq |
+                        +------------------------------------+
+
+ Si la clave NO casa con NINGUN binding: el mensaje se pierde en silencio.
+ Por eso el publicador va con `mandatory: true` -> el broker lo DEVUELVE.
+```
+
+- --- **Exchange** = una tabla de enrutado, **no un buzon**
+  - -- recibe el mensaje, mira su etiqueta, decide a que colas copiarlo, y se olvida
+  - -- no guarda nada, no tiene estado, **no puedes "leer de un exchange"**
+  - -- ⚠️ consecuencia: si al publicar no hay ninguna cola atada que case, el mensaje
+       **desaparece sin error**. De ahi `mandatory: true`
+
+- --- **Routing key** = la etiqueta que el publicador pega al mensaje. Nada mas
+  - -- NO es una direccion, NO nombra una cola, NO nombra un consumidor
+  - -- es una **descripcion de lo que paso**, y es el unico criterio que mira el exchange
+```csharp
+// RabbitMqEventPublisher.cs
+await channel.BasicPublishAsync(
+    exchange: _options.Exchange,   // "apiecommerce.events"
+    routingKey: eventType,         // "product.purchased"  <- LA ETIQUETA
+    mandatory: true, ...);
+```
+  - -- convencion jerarquica de mayor a menor: `<sustantivo>.<que le paso>`
+       (`product.purchased`, `product.created`, `order.shipped`). Esa jerarquia es la que
+       luego deja filtrar por trozos
+  - -- ⚠️ la clave con la que se PUBLICA sale del evento (`ProductPurchased.EventType`).
+       `RabbitMq:RoutingKey` es otra cosa: el patron del BINDING. Se llaman parecido
+
+- --- **Binding** = la regla que declara la COLA: *"atame a este exchange y mandame lo que
+      case con este patron"*
+  - -- ⭐ y aqui esta el punto de todo el diseño: **el publicador nunca nombra una cola**.
+       No sabe cuantas hay, ni si hay cero
+  - -- añadir mañana un servicio de facturacion = una cola nueva con su binding a
+       `product.purchased`. **Cero lineas tocadas en la API.** Eso es lo que se compra
+
+- --- Los **4 tipos de exchange**, y cuando quieres cada uno
+```
+direct    igualdad exacta del string      -> el destino es fijo y no va a crecer:
+                                             colas de trabajo, RPC
+topic     patron con comodines            -> EVENTOS DE DOMINIO: cada consumidor quiere
+                                             un subconjunto distinto
+fanout    no compara: copia a TODAS       -> difusion total: invalidar caches, notificar
+                                             a N replicas, DLQ
+headers   por cabeceras, no por clave     -> casi nunca; filtrar por varios criterios
+                                             que no caben en un string
+```
+  - -- comodines de `topic`, sobre palabras separadas por PUNTOS:
+```
+*   exactamente UNA palabra    product.*   casa product.purchased, NO product.item.sold
+#   cero o mas palabras        product.#   casa product.purchased Y product.item.sold
+                               #           casa absolutamente todo
+```
+  - -- el `(AMQP default)` de la UI es un `direct` especial donde cada cola esta atada
+       automaticamente con su propio nombre: por eso publicar con `exchange: ""` y
+       `routingKey: "mi-cola"` funciona
+    - ⚠️ no usarlo: acopla el publicador al NOMBRE de la cola, justo lo que se evita
+
+- --- ⭐ Por que **`topic` y no `direct`** aqui
+  - -- hoy el binding es exacto (`product.purchased`), asi que **`direct` funcionaria igual**
+  - -- la diferencia es que `direct` cierra la puerta y `topic` la deja abierta:
+    - con `topic`, un consumidor futuro se ata a `product.#` y recibe los eventos de
+      producto de hoy **y los que añadas mañana**
+    - con `direct`, ese consumidor necesita un binding por cada tipo nuevo, y **alguien
+      tiene que acordarse cada vez**
+  - -- y no cuesta nada: mismo rendimiento en la practica, misma API. Es elegir el tipo por
+       la forma que **va a tener** el sistema, no por la que tiene hoy
+  - -- ⚠️ si el destino fuera fijo por diseño (una cola `enviar-email` y punto), `direct`
+       seria lo correcto y `topic` seria sobreingenieria
+
+- --- **DLX / DLQ**: `DLQ` es la cola donde acaba lo que no se pudo procesar; `DLX` es el
+      exchange por el que pasa para llegar
+  - -- ⚠️ **NO hay "tipos de DLX"**. Un DLX es un exchange normal y corriente —puede ser
+       direct, topic o fanout—. Lo que lo convierte en DLX es que **una cola lo señala**:
+```csharp
+// RabbitMqConnection.DeclareTopologyAsync
+arguments: new Dictionary<string, object?>
+{
+    ["x-dead-letter-exchange"] = _options.DeadLetterExchange   // "apiecommerce.events.dlx"
+}
+```
+  - -- un mensaje cae al DLX en **tres** casos, y conviene conocer los tres:
+```
+1. nack/reject con requeue:false   <- el nuestro, el consumidor lo hace a proposito
+2. se le expira el TTL en la cola
+3. la cola llego a x-max-length y se descarta por la cabeza
+```
+  - -- ⭐ **por que el DLX es `fanout`**: al dead-letterear, el mensaje **conserva su routing
+       key original** (`product.purchased`). Con un DLX `topic` o `direct` habria que
+       declarar bindings que casen con TODAS las claves que puedan llegar a morir, y el dia
+       que añadas `order.shipped` sus fallos **se perderian en silencio** porque nadie ato
+       ese patron. `fanout` ignora la clave y lo manda todo: es lo que quieres de un cubo
+       de basura, **no discriminar**
+  - -- y por que existe: sin DLQ, un mensaje envenenado (un payload que no va a deserializar
+       nunca) se reencola **para siempre** y bloquea la cola
+
+- --- ⭐ El porque del diseño ENTERO, en una linea: **no puedes escribir en SQL Server y en
+      RabbitMQ atomicamente**. No hay transaccion que abarque a los dos
+```
+publicar -> commit    si falla el commit, anunciaste una compra que NO existe
+commit -> publicar    si falla la publicacion, la compra existe y NADIE se entera
+```
+  - -- el **outbox** lo resuelve moviendo el problema: el evento es *una fila mas de la misma
+       transaccion*. O se guardan el descuento de stock y el evento, o no se guarda ninguno
+  - -- de ahi salen tres consecuencias **encadenadas**:
+```
+1. la API funciona con el broker CAIDO   -> la compra se completa, el evento espera
+2. se publica primero y se marca despues -> un crash en medio REPUBLICA = at-least-once
+3. luego el consumidor esta OBLIGADO a deduplicar (ProcessedMessages, MessageId como PK)
+```
+  - -- el 3 no es un extra: es la **contrapartida obligatoria** del 2
+
+- --- ⭐ Por que **RabbitMQ y no Kafka**. Son cosas distintas, no dos marcas de lo mismo
+```
+                     RabbitMQ                        Kafka
+modelo        COLA: reparte y BORRA al ack     LOG: el mensaje se queda, cada
+                                               consumidor lleva su offset
+enrutado      rico (exchanges, patrones),      ninguno: publicas a un topic y el
+              lo decide el BROKER              consumidor filtra
+confirmacion  POR MENSAJE (ack/nack)           por offset, avanza en bloque
+reintentar 1  nativo                           incomodo: el offset es una POSICION,
+                                               no puedes saltarte uno
+DLQ           nativa (x-dead-letter-exchange)  a mano: topics de retry/DLT + codigo
+fuerte en     enrutado y reintentos finos      volumen bruto y REPLAY historico
+```
+  - -- nuestro caso pide exactamente la columna izquierda: reintentar **un** mensaje concreto,
+       mandar a la DLQ **ese** y no los demas, y enrutar por tipo de evento
+  - -- "este mensaje fallo, los otros no" es justo lo que **peor** se hace en Kafka
+  - -- **Kafka gana** cuando necesitas: reprocesar el historico desde el principio (event
+       sourcing, rehacer una proyeccion), varios consumidores independientes leyendo el
+       mismo flujo a su ritmo, orden estricto por clave, o decenas de miles de msg/s.
+       Nada de eso aplica aqui
+  - -- ⭐ y lo importante: **la decision es reversible barata**. El outbox —la parte que de
+       verdad importa— es agnostico. Migrar seria reimplementar `IEventPublisher` y el
+       consumidor; ni el servicio de negocio, ni la tabla, ni la transaccion se enteran.
+       Por eso no merece la pena elegir Kafka "por si acaso"
