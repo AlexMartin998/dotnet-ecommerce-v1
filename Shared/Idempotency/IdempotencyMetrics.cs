@@ -4,20 +4,20 @@ namespace ApiEcommerce.Shared.Idempotency;
 
 
 /// <summary>
-/// Contador de cómo termina cada petición protegida por <c>Idempotency-Key</c>.
+/// Contador de cómo se resuelve la puerta de admisión de <c>Idempotency-Key</c>.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Existe por un hallazgo concreto: bajo carga el almacén <b>se apaga solo</b> —el
-/// <c>SET</c> agota el timeout de 1000 ms con Redis sano, se degrada en abierto y la
-/// petición se ejecuta sin garantía— y la única señal era una línea de <c>Warning</c>
-/// que nadie mira. Un fallo silencioso en el mecanismo que existe precisamente para no
-/// cobrar dos veces.
+/// Nació de un hallazgo: bajo carga el almacén <b>se apagaba solo</b> —el <c>SET</c>
+/// agotaba el timeout de 1000 ms con Redis sano— y la única señal era un <c>Warning</c>
+/// que nadie mira. Entonces eso significaba ejecutar sin garantía; hoy, con la garantía
+/// en la transacción, significa solo que se perdió el atajo.
 /// </para>
 /// <para>
-/// La dimensión que importa es <c>outcome=unguaranteed</c>: si eso deja de ser cero, la
-/// protección contra el doble cobro está desactivada para esa fracción del tráfico,
-/// aunque todas las respuestas sean 200.
+/// La dimensión a vigilar es <c>outcome=gate_unavailable</c>. Ya no es un problema de
+/// corrección, pero sí un aviso temprano: sin puerta, las tormentas de reintentos pasan
+/// enteras a SQL y se resuelven bloqueándose en la clave primaria, o sea consumiendo
+/// conexiones.
 /// </para>
 /// </remarks>
 public sealed class IdempotencyMetrics
@@ -36,25 +36,16 @@ public sealed class IdempotencyMetrics
         description: "Peticiones con Idempotency-Key, por cómo se resolvieron.");
   }
 
-  /// <summary>Se reservó la clave y la acción se ejecutó con garantía.</summary>
-  public void Executed() => Count("executed");
-
-  /// <summary>Se reprodujo una respuesta ya memorizada.</summary>
-  public void Replayed() => Count("replayed");
-
-  /// <summary>Había otra petición idéntica en curso (409).</summary>
+  /// <summary>Había otra petición idéntica en vuelo (409).</summary>
   public void InProgress() => Count("in_progress");
-
-  /// <summary>La clave se reusó con otro cuerpo (422).</summary>
-  public void BodyMismatch() => Count("body_mismatch");
 
   /// <summary>La clave del cliente no era aceptable (400).</summary>
   public void InvalidKey() => Count("invalid_key");
 
   /// <summary>
-  /// ⚠️ La acción se ejecutó <b>sin garantía</b> porque el almacén no contestó.
+  /// La puerta no contestó. La petición sigue: la garantía no depende de ella.
   /// </summary>
-  public void Unguaranteed() => Count("unguaranteed");
+  public void GateUnavailable() => Count("gate_unavailable");
 
   private void Count(string outcome) => _requests.Add(1, new KeyValuePair<string, object?>("outcome", outcome));
 }

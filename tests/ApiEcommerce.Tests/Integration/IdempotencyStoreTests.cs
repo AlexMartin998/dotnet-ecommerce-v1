@@ -5,19 +5,18 @@ namespace ApiEcommerce.Tests.Integration;
 
 
 /// <summary>
-/// El almacén de idempotencia por dentro, contra Redis <b>real</b>.
+/// La puerta de admisión por dentro, contra Redis <b>real</b>.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Estos invariantes no se pueden probar desde HTTP: piden controlar quién reserva, con
-/// qué token y en qué orden. Y son justo los que fallaban en silencio — la reserva no
-/// tenía dueño, así que <c>Release</c> y <c>Save</c> eran incondicionales y una petición
-/// cuya reserva ya había caducado podía tirar la de otra.
+/// ⚠️ Lo que se prueba aquí es un <b>atajo</b>, no la garantía de idempotencia. Que esta
+/// puerta falle no puede producir una doble ejecución: eso lo impide
+/// <c>ExecutedCommands</c> desde la transacción de negocio, y está probado en
+/// <c>DegradationTests</c> con Redis caído.
 /// </para>
 /// <para>
-/// Contra Redis de verdad y no contra un doble en memoria: lo que se está probando es
-/// precisamente la atomicidad de <c>SET NX GET</c> y de los scripts Lua. Un falso en
-/// memoria probaría el falso.
+/// Contra Redis de verdad y no contra un doble en memoria: lo que se prueba es
+/// precisamente la atomicidad de <c>SET NX</c> y del script de liberación.
 /// </para>
 /// </remarks>
 [Collection(IntegrationCollection.Name)]
@@ -27,110 +26,77 @@ public class IdempotencyStoreTests(ApiFactory factory)
 
   private static readonly TimeSpan Ttl = TimeSpan.FromSeconds(30);
 
-  private static string NewKey() => $"store-test:{Guid.NewGuid():N}";
-
-  private static IdempotentResponse SomeResponse(int status = 200, string body = "{\"ok\":true}")
-      => new(status, body, "application/json", null);
+  private static string NewKey() => $"gate-test:{Guid.NewGuid():N}";
 
   [Fact]
-  public async Task TheFirstCallerReservesAndTheSecondSeesTheReservation()
+  public async Task TheFirstCallerEntersAndTheSecondFindsItBusy()
   {
     var key = NewKey();
 
-    var first = await Store.TryAcquireAsync(key, "hash-a", Ttl);
-    var second = await Store.TryAcquireAsync(key, "hash-a", Ttl);
+    var first = await Store.TryEnterAsync(key, Ttl);
+    var second = await Store.TryEnterAsync(key, Ttl);
 
-    Assert.Equal(IdempotencyOutcome.Acquired, first.Outcome);
+    Assert.Equal(IdempotencyGateOutcome.Entered, first.Outcome);
     Assert.NotEmpty(first.Fence);
 
-    // El segundo no reserva y recibe el estado que ya había, con la huella puesta
-    // DESDE la reserva: sin eso, una segunda petición con otro cuerpo que llegue
-    // mientras la primera sigue en curso no tendría contra qué compararse.
-    Assert.Equal(IdempotencyOutcome.Existing, second.Outcome);
-    Assert.Equal("hash-a", second.Entry!.RequestHash);
-    Assert.Null(second.Entry.Response);
+    Assert.Equal(IdempotencyGateOutcome.Busy, second.Outcome);
     Assert.Empty(second.Fence);
   }
 
   [Fact]
-  public async Task ReleasingWithSomeoneElsesFenceDoesNotTouchTheReservation()
+  public async Task ReleasingWithSomeoneElsesFenceDoesNotOpenTheGate()
   {
-    // El bug: A reserva, su acción se eterniza, la reserva caduca, B reserva y ejecuta,
-    // y entonces A termina en error y hace Release — borrando la reserva VIVA de B. El
-    // siguiente reintento vuelve a pasar el SET NX y ejecuta otra vez. Sin dueño, la
-    // ventana de duplicación deja de estar acotada por el TTL: se reabre en cada vuelta.
+    // Sin comprobar el dueño, una petición cuyo marcador ya caducó borraría el marcador
+    // VIVO de otra, y la puerta dejaría pasar a un tercero mientras la segunda sigue
+    // ejecutando. Es el `release` canónico de un lock distribuido.
     var key = NewKey();
 
-    var mine = await Store.TryAcquireAsync(key, "hash-a", Ttl);
+    var mine = await Store.TryEnterAsync(key, Ttl);
 
     await Store.ReleaseAsync(key, fence: "00000000000000000000000000000000");
 
-    var afterForeignRelease = await Store.TryAcquireAsync(key, "hash-a", Ttl);
-    Assert.Equal(IdempotencyOutcome.Existing, afterForeignRelease.Outcome);
+    Assert.Equal(IdempotencyGateOutcome.Busy, (await Store.TryEnterAsync(key, Ttl)).Outcome);
 
-    // Y con el token bueno sí se libera, que es lo que permite reintentar tras un fallo.
+    // Con el token bueno sí se suelta, que es lo que permite reintentar tras un fallo.
     await Store.ReleaseAsync(key, mine.Fence);
 
-    var afterOwnRelease = await Store.TryAcquireAsync(key, "hash-a", Ttl);
-    Assert.Equal(IdempotencyOutcome.Acquired, afterOwnRelease.Outcome);
+    Assert.Equal(IdempotencyGateOutcome.Entered, (await Store.TryEnterAsync(key, Ttl)).Outcome);
   }
 
   [Fact]
-  public async Task SavingWithSomeoneElsesFenceDoesNotOverwriteTheEntry()
+  public async Task AnExpiredMarkerOpensTheGateAgain()
   {
-    // La otra mitad del mismo problema: si A termina con éxito DESPUÉS de que su reserva
-    // caducara y B tomara la clave, el Save de A pisaba la entrada de B. El replay
-    // devolvía entonces el cuerpo de una compra mientras en base había dos.
+    // El marcador caduca solo si el proceso muere a mitad; si no, la clave quedaría
+    // cerrada devolviendo 409 para siempre.
+    //
+    // ⚠️ Que caduque antes de tiempo ya NO permite una doble ejecución: la duplicada
+    // pasa la puerta y va a chocar contra la clave primaria de ExecutedCommands. Cuando
+    // este plazo gobernaba la GARANTÍA, era un lease sin renovación y sí abría esa
+    // ventana — es la deuda que el rediseño cerró.
     var key = NewKey();
 
-    var owner = await Store.TryAcquireAsync(key, "hash-a", Ttl);
-    await Store.SaveAsync(key, owner.Fence, "hash-a", SomeResponse(body: "{\"quien\":\"dueño\"}"), Ttl);
-
-    await Store.SaveAsync(key, "ffffffffffffffffffffffffffffffff", "hash-b",
-        SomeResponse(body: "{\"quien\":\"intruso\"}"), Ttl);
-
-    var seen = await Store.TryAcquireAsync(key, "hash-a", Ttl);
-
-    Assert.Equal(IdempotencyOutcome.Existing, seen.Outcome);
-    Assert.Equal("{\"quien\":\"dueño\"}", seen.Entry!.Response!.Body);
-    Assert.Equal("hash-a", seen.Entry.RequestHash);
-  }
-
-  [Fact]
-  public async Task TheSavedResponseIsWhatGetsReplayed()
-  {
-    var key = NewKey();
-
-    var owner = await Store.TryAcquireAsync(key, "hash-a", Ttl);
-    await Store.SaveAsync(key, owner.Fence, "hash-a", SomeResponse(201, "{\"id\":7}"), Ttl);
-
-    var replay = await Store.TryAcquireAsync(key, "hash-a", Ttl);
-
-    Assert.Equal(IdempotencyOutcome.Existing, replay.Outcome);
-    Assert.Equal(201, replay.Entry!.Response!.StatusCode);
-    Assert.Equal("{\"id\":7}", replay.Entry.Response.Body);
-    Assert.Equal("application/json", replay.Entry.Response.ContentType);
-  }
-
-  [Fact]
-  public async Task AnExpiredReservationLetsADuplicateThrough()
-  {
-    // ⚠️ Este test NO arregla nada: FIJA una limitación conocida para que nadie la
-    // descubra creyendo que es un bug nuevo. La reserva es un lease SIN renovación, así
-    // que una operación más lenta que el TTL libera su propia clave y una petición
-    // duplicada se ejecuta de verdad. Por eso ReservationTtlSeconds es configuración:
-    // debe quedar holgadamente por encima del peor caso de la acción más lenta.
-    // La solución de verdad —renovar mientras la acción corre— está en planning/16 §16.6.
-    var key = NewKey();
-
-    var first = await Store.TryAcquireAsync(key, "hash-a", TimeSpan.FromSeconds(1));
-    Assert.Equal(IdempotencyOutcome.Acquired, first.Outcome);
+    var first = await Store.TryEnterAsync(key, TimeSpan.FromSeconds(1));
+    Assert.Equal(IdempotencyGateOutcome.Entered, first.Outcome);
 
     await Task.Delay(TimeSpan.FromSeconds(1.5));
 
-    var afterExpiry = await Store.TryAcquireAsync(key, "hash-a", Ttl);
+    var afterExpiry = await Store.TryEnterAsync(key, Ttl);
 
-    Assert.Equal(IdempotencyOutcome.Acquired, afterExpiry.Outcome);
+    Assert.Equal(IdempotencyGateOutcome.Entered, afterExpiry.Outcome);
     Assert.NotEqual(first.Fence, afterExpiry.Fence);
+  }
+
+  [Fact]
+  public async Task OnlyOneOfManyConcurrentCallersEnters()
+  {
+    // Simultáneas, no en secuencia: lo que se prueba es que `SET NX` decide, y eso en
+    // secuencia se cumple hasta con un read-then-write mal escrito.
+    var key = NewKey();
+
+    var gates = await Task.WhenAll(
+        Enumerable.Range(0, 12).Select(_ => Store.TryEnterAsync(key, Ttl)));
+
+    Assert.Equal(1, gates.Count(g => g.Outcome == IdempotencyGateOutcome.Entered));
+    Assert.Equal(11, gates.Count(g => g.Outcome == IdempotencyGateOutcome.Busy));
   }
 }

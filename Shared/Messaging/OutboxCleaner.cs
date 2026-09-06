@@ -94,10 +94,21 @@ public sealed class OutboxCleaner(
                 .Take(DeleteBatchSize),
         ct);
 
-    if (outbox + processed > 0)
+    // Los comandos ya ejecutados caducan por el mismo criterio. ⚠️ El plazo NO se copia
+    // de nadie: tiene que cubrir el PEOR reintento de un cliente, porque a partir de ahí
+    // la misma Idempotency-Key vuelve a ejecutar de verdad. (Stripe recuerda 24 h, Adyen
+    // 7-14 días; el número correcto depende de los clientes de cada quien.)
+    var commands = await DeleteInBatchesAsync(
+        () => db.ExecutedCommands
+                .Where(c => c.ExecutedAt < cutoff)
+                .OrderBy(c => c.ExecutedAt)
+                .Take(DeleteBatchSize),
+        ct);
+
+    if (outbox + processed + commands > 0)
       logger.LogInformation(
-          "Outbox cleanup removed {Outbox} outbox row(s) and {Processed} processed-message row(s) older than {Cutoff:u}",
-          outbox, processed, cutoff);
+          "Outbox cleanup removed {Outbox} outbox row(s), {Processed} processed-message row(s) and {Commands} executed-command row(s) older than {Cutoff:u}",
+          outbox, processed, commands, cutoff);
   }
 
   /// <summary>

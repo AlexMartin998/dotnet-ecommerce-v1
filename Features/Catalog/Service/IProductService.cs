@@ -1,6 +1,7 @@
 using ApiEcommerce.Shared.Storage;
 using ApiEcommerce.Shared.Crud;
 using ApiEcommerce.Features.Catalog.Dtos;
+using ApiEcommerce.Shared.Idempotency;
 
 namespace ApiEcommerce.Features.Catalog.Service;
 
@@ -33,8 +34,29 @@ public interface IProductService
 
   /// <summary>
   /// Descuenta stock por SKU y devuelve el producto ya actualizado.
-  /// 404 si el SKU no existe; 409 si el stock es insuficiente.
+  /// 404 si el SKU no existe; 409 si el stock es insuficiente; 422 si la intención se
+  /// reusó con otra compra distinta.
   /// </summary>
-  Task<ProductDto> BuyAsync(BuyProductDto dto, string? buyerUserId = null, CancellationToken ct = default);
+  /// <remarks>
+  /// <para>
+  /// <paramref name="intent"/> <b>no tiene valor por defecto, a propósito</b>. La
+  /// idempotencia de esta operación es una invariante suya, no algo que dependa de que
+  /// el controller lleve puesto un atributo: llamarla desde un job o desde otro endpoint
+  /// sin declarar la intención perdería la garantía en silencio. Es exactamente el bug
+  /// que motivó mover la transacción aquí, y se evita igual — obligando a decidir.
+  /// Renunciar se escribe: <see cref="CommandIntent.None"/>.
+  /// </para>
+  /// </remarks>
+  /// <param name="dto">Qué se compra y cuánto.</param>
+  /// <param name="intent">La identidad de este intento de compra.</param>
+  /// <param name="buyerUserId">Quién compra, para el evento de dominio.</param>
+  /// <param name="ct">Token de cancelación.</param>
+  /// <returns>
+  /// El producto actualizado, y si la compra <b>ya se había ejecutado</b> con esta misma
+  /// intención. Ese segundo dato es un hecho de negocio; traducirlo a una cabecera es
+  /// cosa del adaptador.
+  /// </returns>
+  Task<CommandOutcome<ProductDto>> BuyAsync(
+      BuyProductDto dto, CommandIntent intent, string? buyerUserId = null, CancellationToken ct = default);
 
 }

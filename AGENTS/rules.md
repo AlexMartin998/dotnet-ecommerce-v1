@@ -83,6 +83,13 @@ en `IEntityRules`.
 - **La transacción es política de NEGOCIO**, no de HTTP: va en el servicio con
   `ITransactionRunner`, no en un atributo del controller. (`[Transactional]` no puede dar
   una unidad reintentable: `ActionExecutionDelegate` no es reentrante.)
+- **La idempotencia de una operación también**, y por la misma razón. La operación recibe
+  una `CommandIntent` **obligatoria** y registra su ejecución dentro de su propia
+  transacción; `[Idempotent]` quedó como puerta de admisión para duplicados en vuelo. Una
+  garantía que depende de que alguien se acuerde de poner un atributo se pierde en
+  silencio en cuanto la llama un job — que es literalmente el bug que motivó lo anterior.
+  ⚠️ Lo que **no** baja al servicio es el protocolo: leer la cabecera, validar su forma y
+  elegir el código HTTP siguen arriba, porque el servicio no conoce `StatusCodes`.
 - `Catalog` es el **slice de referencia** y `Category` la entidad de referencia dentro
   de él. Ante la duda, copia su forma.
 
@@ -207,7 +214,7 @@ Estas reglas nacen de bugs **medidos**, no de teoría:
 | Contador con contención (stock, saldo, cupos) | **UPDATE condicional atómico** (`ExecuteUpdateAsync` con `WHERE`) |
 | Editar una entidad (dos admins a la vez) | **Concurrencia optimista** (`[Timestamp] RowVersion`) |
 | Unicidad de un campo | **Índice único en la BASE** (la regla aplicativa es solo el mensaje bonito) |
-| Doble submit / reintento del cliente | **`Idempotency-Key` + `SET NX` en Redis** |
+| Doble submit / reintento del cliente | **Marca del comando en la MISMA transacción que el efecto** (`ExecutedCommands`, PK como árbitro). El `SET NX` en Redis queda como puerta de admisión, no como garantía |
 | Escribir en BD y en el broker | **Outbox transaccional** |
 
 - ⚠️ `nvarchar(max)` **no es indexable** en SQL Server: un campo con índice único necesita
@@ -219,17 +226,35 @@ Estas reglas nacen de bugs **medidos**, no de teoría:
 
 ---
 
-## 8. Todo lo que degrada, degrada **en abierto** — y de forma coherente
+## 8. Toda degradación es **explícita**, y solo degrada lo que es una optimización
 
-Cache, idempotencia y mensajería son **optimizaciones**, no dependencias duras:
+La regla decía «cache, idempotencia y mensajería son optimizaciones». **Dos de las tres
+lo son; la idempotencia no lo era** — y meterlas en la misma frase costó un agujero real:
+bajo carga el almacén se apagaba solo y la compra se ejecutaba sin garantía. Medido: 174
+de 14 400 peticiones, con Redis **sano**.
 
-- Redis caído → se sirve de la base; la idempotencia se salta. **Nunca un 500.**
-- RabbitMQ caído → la compra se completa y el evento queda en el outbox.
-- **La decisión debe ser la MISMA en todas las implementaciones de una interfaz.**
-  Que `RedisCacheService` fallara en abierto y `RedisIdempotencyStore` en cerrado hacía
-  que un corte de Redis devolviera 500 por una compra ya cobrada.
-- Si algún día algo debe fallar en cerrado (pagos), se invierte **explícitamente y en los
-  dos sitios a la vez**, y se devuelve 503, no un 500 accidental.
+La corrección no fue elegir entre degradar o no, sino **mover la garantía a un sitio donde
+la pregunta no se plantea**:
+
+- **Una optimización tiene fuente de verdad alternativa.** La cache cae → se lee de la
+  base: misma respuesta, más lenta. RabbitMQ cae → el evento espera en el outbox: mismo
+  efecto, más tarde. Eso **sí** degrada en abierto, y **nunca** con un 500.
+- **Una garantía no tiene plan B**, así que no puede vivir fuera de la transacción que
+  protege. La marca de «este comando ya se ejecutó» se escribe en la **misma transacción**
+  que el efecto (`ExecutedCommands`, igual que `ProcessedMessages` para el consumidor).
+  Entonces «el almacén no está» y «la operación no puede ocurrir» son el mismo evento, y
+  no hay nada que decidir. Es el *inbox pattern*, y es lo que documenta Azure y lo que
+  hace Stripe (sus claves viven en su misma base de negocio, no en una cache).
+- **Un adaptador no decide relajar una invariante de negocio.** Un `catch` puede
+  *reportar* un hecho («no pude», «no contestó»); interpretarlo es política, y la política
+  vive junto al caso de uso. Por eso el store devuelve un resultado con su motivo y no un
+  `bool` que mezcla «eres el primero» con «no me enteré».
+- **La decisión debe ser la MISMA en todas las implementaciones de una interfaz.** Que
+  `RedisCacheService` fallara en abierto y `RedisIdempotencyStore` en cerrado hacía que un
+  corte de Redis devolviera 500 por una compra ya cobrada.
+- **Renunciar a una garantía lo decide el cliente, no nosotros en silencio.** Por HTTP eso
+  ya tiene forma estándar: *no mandar* la cabecera `Idempotency-Key`. Es lo que documenta
+  Adyen, que ante su propio almacén caído devuelve 503 y ofrece esa salida explícita.
 - Un `BackgroundService` que lanza **muere y no vuelve** — y desde .NET 6 el default es
   `StopHost`, así que **tumba la API entera**. El bucle va siempre en `try/catch`, y
   `OperationCanceledException` solo se trata como apagado si el `stoppingToken` está

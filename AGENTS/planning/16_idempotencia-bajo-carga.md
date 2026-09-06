@@ -1,5 +1,8 @@
 # 16 — Afinar la idempotencia para carga alta
 
+> ⚠️ **Continúa en [`planning/17`](17_idempotencia-transaccional.md)**, que cierra el
+> hallazgo principal de este documento cambiando dónde vive la garantía.
+
 > Fase de **revisión y afinamiento**. No hay feature nueva: se valida exhaustivamente lo
 > que ya existe (`planning/08`) contra infraestructura real y se corrige lo que la carga
 > destapa. Spec: [`features/16`](../features/16_idempotencia-bajo-carga.feature).
@@ -153,43 +156,38 @@ Huecos que se cierran (los demás quedan listados en §16.6):
 
 ## 16.6 Queda abierto (decisión del owner o deuda anotada)
 
-### 🔴 Lo primero: el fail-open **sigue ahí**, y bajar los viajes no lo cerró
+### ✅ RESUELTO por [`planning/17`](17_idempotencia-transaccional.md) — la pregunta estaba mal planteada
 
-Tras el cambio, con carga sostenida contra **las dos réplicas** (6 rondas × 2400
-peticiones, 96 conexiones por réplica):
+Lo que sigue quedó **medido y cerrado**, pero no eligiendo entre degradar o devolver 503:
+moviendo la marca de idempotencia a la **misma transacción que el efecto**. Con eso, «el
+almacén no está» y «la operación no puede ocurrir» son el mismo evento.
+
+Estos eran los números **antes** de ese cambio, con carga sostenida sobre dos réplicas:
 
 | | |
 |---|---|
 | Peticiones | 14 400 |
-| `acquire` degradado (ejecuta **sin garantía**) | **174 (1,21 %)** |
-| `save` fallido (respuesta no memorizada) | **0** |
-| `release` fallido (la clave queda reservada hasta el TTL) | 68 |
+| `acquire` degradado (ejecutaba **sin garantía**) | **174 (1,21 %)** |
+| `save` fallido | 0 |
+| `release` fallido | 68 |
 
-Menos presión sobre el multiplexer **mueve el umbral, no elimina el modo de fallo**. No
-se puede presentar como resuelto. Las tres salidas reales, ninguna tomable sin el owner:
-
-- [ ] **Fallar en cerrado (503) cuando Redis está VIVO pero lento.** `IsConnected`
-      distingue «Redis caído» —el caso para el que se tomó la decisión de degradar en
-      abierto— de «Redis sano y saturado», que es otra cosa: ahí ejecutar sin garantía es
-      cobrar dos veces. ⚠️ `rules.md` §8 exige invertirlo **explícitamente y en las dos
-      implementaciones a la vez**.
-- [ ] **Subir el timeout sólo para la idempotencia.** Los 1000 ms se eligieron pensando
-      en la cache, que es un atajo: si no contesta rápido no sirve esperarla. La
-      idempotencia no es un atajo, es una garantía. Pide un multiplexer propio.
-- [ ] **Más de una conexión a Redis.** Hoy hay un único multiplexer para cache,
-      idempotencia y health check; toda la carga se serializa en una conexión TCP.
+Bajar los viajes de 3 a 2 movió el umbral pero **no eliminó el modo de fallo**, y por eso
+no se podía dar por resuelto aquí. Las tres salidas que se listaban —fallar en cerrado,
+multiplexer propio, más conexiones— quedaron descartadas o irrelevantes: ver
+`planning/17` §17.0 para el debate completo y §17.3 para qué cierra cada cosa.
 
 ### Deuda que sigue abierta
 
-- [ ] **Muerte del proceso entre el commit y el `SaveAsync`.** La compra ya está cobrada
+- [x] ✅ **Muerte del proceso entre el commit y el `SaveAsync`.** Cerrado en `planning/17`: ya no hay dos escrituras que sincronizar, es una. La compra ya está cobrada
       y la respuesta no se memorizó: el cliente recibe **409 «still being processed»**
       —que es mentira, no hay nadie procesando— hasta que caduque la reserva, y su
       siguiente reintento **vuelve a comprar**. Un deploy a media compra basta.
       Arreglarlo de verdad pide que la marca de idempotencia se escriba en la **misma
       transacción** que el efecto, o sea en SQL y no en Redis. Es el mismo razonamiento
       que ya se aplicó al outbox y al consumidor.
-- [ ] **El lease sin renovación** (§16.4 lo fija con un test, no lo cierra). La solución
-      es renovar la reserva mientras la acción corre.
+- [x] ✅ **El lease sin renovación.** Cerrado como riesgo en `planning/17`: que el
+      marcador caduque solo hace que la duplicada pase la puerta y choque contra la clave
+      primaria de `ExecutedCommands`. Ya no abre una ventana de doble ejecución.
 - [ ] **Memorizar desde un `IAsyncResultFilter`** para poder capturar el `Location` de un
       201. Hoy no afecta —el único endpoint idempotente devuelve 200— pero el sitio donde
       se hace ahora **no puede** verlo: el `IActionResult` se ejecuta después de los
@@ -201,16 +199,15 @@ se puede presentar como resuelto. Las tres salidas reales, ninguna tomable sin e
 - [ ] **Se libera la clave en caminos donde la operación SÍ ocurrió.** Si el `Commit`
       lanza después de que SQL Server lo aplicara (transacción *in doubt*), el cliente ve
       500, la clave se borra y el reintento vuelve a comprar.
-- [ ] **Identidad byte a byte del replay** — viene de `planning/12` §12.2. Confirmado que
-      sigue: el `+` del base64 de `rowVersion` sale como `\u002B` en el replay y sin
-      escapar en la respuesta viva. Equivalente para cualquier cliente que parsee JSON.
+- [x] ✅ **Identidad byte a byte del replay** (venía de `planning/12` §12.2). Cerrada
+      como efecto secundario en `planning/17`: al memorizar el DTO y no la respuesta HTTP,
+      el replay vuelve a pasar por el mismo formateador de MVC. Verificado 3/3.
 - [ ] **`SqlException` escapando como 500 bajo carga.** En las pruebas: «Operation
       cancelled by user» (el cliente cuelga → EF cancela el `SqlCommand`) y Win32 258
       (timeout). Los primeros no son un fallo del servidor y ensucian las métricas de
       error. **Es adyacente a esta tarea, no parte de ella**: pide su propio planning.
-- [ ] **Redis compartido**: hoy `maxmemory 0` / `noeviction` (comprobado). Si alguien
-      pone `allkeys-lru` en esa instancia —que es de varios proyectos— la idempotencia se
-      rompe **en silencio**. Anotarlo donde se documente la infraestructura.
+- [x] ✅ **Redis compartido con `allkeys-lru`**: deja de importar para la corrección.
+      Desalojar una clave solo pierde la puerta de admisión, no la garantía.
 
 ---
 

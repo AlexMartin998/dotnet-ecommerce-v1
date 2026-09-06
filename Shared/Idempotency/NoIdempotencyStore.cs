@@ -2,30 +2,27 @@ namespace ApiEcommerce.Shared.Idempotency;
 
 
 /// <summary>
-/// Null Object para cuando no hay Redis configurado: nunca reserva nada, así que el
-/// filtro deja pasar todas las peticiones. Mismo patrón que <c>NoCacheService</c>.
+/// Null Object para cuando no hay Redis configurado: la puerta siempre está abierta.
 /// </summary>
 /// <remarks>
-/// Elección consciente: <b>falla en abierto</b>. Sin Redis se pierde la protección
-/// contra el doble submit, pero la API sigue funcionando. Si algún día la
-/// idempotencia fuera un requisito duro (pagos), lo correcto sería lo contrario:
-/// rechazar la petición antes que ejecutarla sin garantía.
+/// <para>
+/// Sin Redis se pierde el atajo, no la garantía. Las peticiones duplicadas llegan hasta
+/// SQL y allí las arbitra la clave primaria de <c>ExecutedCommands</c>, igual que con
+/// Redis caído. Que la API funcione idénticamente en un entorno sin Redis —desarrollo,
+/// CI— sin renunciar a la corrección es justo lo que se ganó al bajar la garantía a la
+/// transacción.
+/// </para>
+/// <para>
+/// Antes esta clase era un problema real: al ser el almacén de idempotencia entero,
+/// devolver «adelante» significaba que en cualquier entorno sin Redis <b>no había
+/// idempotencia en absoluto</b>, y la única señal era su propio XML doc.
+/// </para>
 /// </remarks>
 public sealed class NoIdempotencyStore : IIdempotencyStore
 {
-  // `Acquired` y no `Unavailable`: aquí no hay ninguna anomalía que contar. Que no haya
-  // Redis configurado es un hecho del arranque, no un fallo en caliente — avisar en cada
-  // petición de algo que ya se sabe desde que la app levantó sería ruido. La DECISIÓN,
-  // que es lo que exige la regla §8, sí es la misma en las dos implementaciones:
-  // ejecutar la acción.
-  public Task<IdempotencyAcquisition> TryAcquireAsync(
-      string key, string requestHash, TimeSpan ttl, CancellationToken ct = default)
-      => Task.FromResult(IdempotencyAcquisition.Acquired(string.Empty));
-
-  public Task SaveAsync(
-      string key, string fence, string requestHash, IdempotentResponse response, TimeSpan ttl,
-      CancellationToken ct = default)
-      => Task.CompletedTask;
+  // `Entered` con token vacío: no hay marcador que soltar después.
+  public Task<IdempotencyGate> TryEnterAsync(string key, TimeSpan ttl, CancellationToken ct = default)
+      => Task.FromResult(IdempotencyGate.Entered(string.Empty));
 
   public Task ReleaseAsync(string key, string fence, CancellationToken ct = default)
       => Task.CompletedTask;

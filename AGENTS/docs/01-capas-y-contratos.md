@@ -159,3 +159,24 @@ registrarlo a mano.
   root**: no registra nada, compone en tres bloques (`AddApplication`,
   `AddInfrastructure`, `AddWebApi`) los `Add…` que cada feature declara en su
   propia carpeta. Ver `05-convenciones.md` → Inyección de dependencias.
+
+
+## Idempotencia: dónde va cada mitad
+
+Es el ejemplo más claro de que «una preocupación» pueden ser **dos**, y de que partirla
+por la costura correcta importa más que elegir una capa.
+
+| | Dónde | Por qué |
+|---|---|---|
+| Leer `Idempotency-Key`, validar su forma, elegir 400/409 | **Adaptador** (`[Idempotent]`, controller) | Es protocolo. El servicio no conoce `StatusCodes`, y un job no manda cabeceras |
+| «Este intento no se ejecuta dos veces» | **Servicio**, dentro de su transacción (`ICommandLog`) | Es una invariante de negocio, indistinguible de «descontar stock y emitir el evento son atómicos» |
+
+La prueba de que el corte está bien hecho: la operación recibe una `CommandIntent`
+**obligatoria**, así que un llamador nuevo —un job, otro endpoint— no puede perder la
+garantía por descuido. Es exactamente lo que se ganó al mover la transacción del
+`[Transactional]` del controller a `ITransactionRunner`.
+
+⚠️ Y al revés: lo que **no** debe bajar es la respuesta HTTP. Memorizar `StatusCode` y
+cabeceras en el servicio lo ataría al protocolo — y de hecho, memorizar el **DTO** en vez
+de la respuesta es lo que hizo que el replay volviera a ser idéntico byte a byte, porque
+vuelve a pasar por el mismo formateador.

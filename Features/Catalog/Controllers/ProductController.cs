@@ -191,21 +191,37 @@ public class ProductController : ControllerBase
     /// <summary>Descuenta stock por SKU.</summary>
     // Sin atributo: hereda el [Authorize] de la clase = cualquier usuario autenticado.
     [HttpPost("buy", Name = "BuyProduct")]
-    [Idempotent]   // reintentar con la misma Idempotency-Key no vuelve a descontar stock
+    // ATAJO, no la garantía: responde un reintento sin tocar la base y frena una tormenta
+    // de duplicados antes de que se apile sobre la misma fila. Si Redis no contesta, esto
+    // se salta y no pasa nada: quien garantiza que no se compra dos veces es el servicio,
+    // que escribe la marca en la MISMA transacción que el descuento de stock.
+    [Idempotent]
     // Sin [Transactional]: la transacción la abre ProductService con ITransactionRunner,
     // que sí es compatible con la estrategia de reintentos de EF.
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status422UnprocessableEntity)]
     public async Task<ActionResult<ProductDto>> BuyProduct([FromBody] BuyProductDto dto, CancellationToken ct)
     {
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
-        // SKU inexistente -> 404 ; stock insuficiente -> 409
-        var product = await _service.BuyAsync(dto, User.GetUserId(), ct);
-        return Ok(product);
+        // El controller es quien traduce el protocolo al dominio: la cabecera del cliente
+        // se convierte aquí en una intención, y el servicio ya no sabe que existe HTTP.
+        var intent = HttpContext.CommandIntentFor("catalog.buy-product");
+
+        // SKU inexistente -> 404 ; stock insuficiente -> 409 ; clave reusada -> 422
+        var outcome = await _service.BuyAsync(dto, intent, User.GetUserId(), ct);
+
+        // El servicio reporta un hecho ("esto ya estaba ejecutado") y el adaptador lo
+        // traduce al protocolo. Así la cabecera marca TODOS los replays y no solo los
+        // que resuelve el atajo de Redis.
+        if (outcome.WasReplayed)
+            Response.Headers[IdempotentAttribute.ReplayedHeader] = "true";
+
+        return Ok(outcome.Result);
     }
 
     /// <summary>

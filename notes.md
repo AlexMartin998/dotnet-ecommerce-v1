@@ -2619,3 +2619,105 @@ return 0
        impacto alto— y no como un bug reproducido
   - -- bajar los viajes **movio el umbral, no elimino el modo de fallo**: sigue habiendo
        1,21 % sin garantia. Decir "arreglado" habria sido falso
+
+
+---
+---
+
+
+## 30. Cuando la pregunta esta mal planteada  <- idempotencia como GARANTIA
+
+- --- ⭐ **La pregunta era «¿fallo en cerrado con 503?» y la respuesta fue «ninguna de las dos»**
+  - -- venia del cap. 29: bajo carga el store de Redis se apagaba solo y la compra se
+       ejecutaba sin garantia (174 de 14 400, con Redis SANO)
+  - -- se monto un debate a cuatro: un abogado por postura, investigacion de la industria,
+       y una lectura DDD/Clean
+  - -- **los dos abogados llegaron por su cuenta al mismo sitio**: el 503 sobre Redis es
+       una media medida, compra riesgo de disponibilidad sin comprar correccion
+  - -- leccion de metodo: cuando las dos posturas de un debate convergen en una tercera
+       cosa, la tercera cosa es la respuesta
+
+- --- **Lo que hace la industria** (fuentes primarias, no memoria)
+  - -- **nadie ejecuta sin garantia**. Cero casos documentados
+  - -- Adyen: `503` + codigo 703 + cabecera `transient-error: true`, y la salida sin
+       garantia la toma **el cliente** omitiendo la cabecera. La renuncia es suya, explicita
+  - -- AWS Powertools: falla cerrado por construccion, y **no se puede desactivar**; el
+       registro `INPROGRESS` se escribe ANTES de invocar la funcion
+  - -- ⭐ Azure documenta el patron bueno: *marcador de deduplicacion y efectos de negocio
+       en la MISMA transaccion*, con una restriccion de unicidad como arbitro (inbox pattern)
+  - -- Stripe guarda sus claves de idempotencia en **su misma base de negocio**, no en cache
+  - -- ⚠️ Stripe: un 429 del rate limiter puede dar resultados distintos con la misma clave,
+       porque **el limitador corre ANTES de la capa de idempotencia**. El orden del pipeline
+       es una decision, no un detalle
+
+- --- ⭐ **El reencuadre que lo resuelve todo**
+```
+si el almacen de idempotencia ES la base de datos del negocio,
+   "el almacen no esta"  ==  "la operacion no puede ocurrir"
+   -> la pregunta "¿ejecuto sin garantia?" DESAPARECE
+```
+  - -- la pregunta solo es dificil cuando el almacen es infraestructura SEPARADA (Redis,
+       DynamoDB) de la que escribe el negocio
+  - -- y el repo **ya lo hacia bien** en el consumidor (`ProcessedMessages` + efecto en una
+       transaccion). La misma pregunta tenia dos respuestas, y la debil estaba en el camino
+       que toca el dinero
+
+- --- **No mover la idempotencia entera: PARTIRLA**
+  - -- protocolo (leer la cabecera, validar forma, elegir el codigo) -> adaptador
+  - -- politica ("este intento no se ejecuta dos veces") -> servicio, en su transaccion
+  - -- ⚠️ lo que NO debe bajar es la respuesta HTTP. El servicio no conoce `StatusCodes`
+  - -- el concepto que baja **no es «Idempotency-Key»**, es **intencion de comando**: un job
+       tiene la suya (el `MessageId`) y no manda cabeceras
+
+- --- ⭐ **El parametro obligatorio como diseño, no como capricho**
+```csharp
+Task<CommandOutcome<ProductDto>> BuyAsync(BuyProductDto dto, CommandIntent intent, ...)
+```
+  - -- sin valor por defecto **a proposito**: es el mismo bug que motivo mover la
+       transaccion —«llamar a BuyAsync desde un job la perdia en silencio»— y se evita igual
+  - -- renunciar hay que ESCRIBIRLO: `CommandIntent.None`. La diferencia entre una decision
+       y un descuido es que una de las dos aparece en el diff
+
+- --- **La base de datos ya sabe hacer esto; no lo emules**
+  - -- se fueron: la reserva, el TTL de 24 h, el estado "en curso", el token de propiedad
+       de la garantia. Todo eso emulaba, mal, un `INSERT` sobre una clave primaria
+  - -- si dos replicas insertan la misma PK a la vez, la segunda **se bloquea** hasta que la
+       primera confirme y entonces choca; su transaccion entera se deshace, stock incluido
+  - -- por eso con Redis caido las 40 simultaneas dan **200 todas** y ni un 409: no hay
+       nada "en curso" que reportar, hay una fila que arbitra
+  - -- ⚠️ hay que mirar el NUMERO de error (2601/2627) recorriendo `InnerException`, no
+       cazar `DbUpdateException` a secas: eso se tragaria timeouts y deadlocks
+
+- --- ⭐ **La identidad byte a byte se arreglo SOLA**
+  - -- era deuda desde el cap. 28: el `+` del base64 salia como `+` en el replay
+  - -- causa real: el filtro memorizaba el cuerpo YA SERIALIZADO, o sea una **segunda copia**
+       que no pasaba por el formateador de MVC
+  - -- al memorizar el **DTO** en vez de la respuesta HTTP, el replay vuelve a pasar por el
+       mismo formateador. El test paso de comparar JSON parseado a comparar bytes
+  - -- leccion: una deuda que se resiste suele ser el sintoma de que la pieza esta en el
+       sitio equivocado, no de que falte codigo
+
+- --- **Lo que se queda Redis, y por que sigue mereciendo la pena**
+  - -- puerta de admision: si ya hay una identica EN VUELO, 409 sin tocar la base
+  - -- sin ella, 300 reintentos simultaneos se quedarian bloqueados en la clave primaria
+       **reteniendo cada uno su conexion**. Serian correctos, pero a costa del pool
+  - -- el marcador vive solo mientras dura la peticion: se suelta en un `finally`
+  - -- ⚠️ y se quito la cabecera `Idempotency-Guaranteed: false` que se habia añadido el
+       dia antes: **ahora seria mentira**. La garantia ya no depende de la puerta
+
+- --- ⚠️ **`IsConnected` no distingue lo que parecia distinguir**
+  - -- la idea era: `IsConnected == true` + timeout => "Redis sano pero saturado" => 503
+  - -- pero es `true` con Redis sano-ocioso **y** con sano-saturado, y con
+       `AbortOnConnectFail = false` oscila durante un incidente real
+  - -- habria dado 503 intermitentes justo en el peor momento: lo peor de las dos politicas
+  - -- me lo tumbo el abogado de la postura contraria, y era mi recomendacion del dia antes
+
+- --- **Y el patron no monotono que delata una cola, no un fallo semantico**
+```
+64 conexiones  -> 2,6 % de degradaciones
+128 conexiones -> 0 %
+260 concurrentes -> 22 %
+```
+  - -- un fallo semantico no es no monotono con la concurrencia; una **cola** si
+  - -- es la firma de head-of-line blocking sobre UNA conexion TCP compartida por cache,
+       idempotencia y health check
