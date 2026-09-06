@@ -1,6 +1,7 @@
 namespace ApiEcommerce.Features.Catalog.Dtos;
 
 
+/// <summary>Producto tal y como lo ve el cliente, con el nombre de su categoría.</summary>
 public class ProductDto
 {
 
@@ -22,9 +23,7 @@ public class ProductDto
   public DateTime? UpdatedAt { get; set; }
 
 
-  // Foreign Key --------
-  // Se expone el id, no la navegación completa. El nombre viaja plano porque el
-  // listado de productos lo necesita (ver AGENTS/docs/01-capas-y-contratos.md).
+  // Se expone el id, no la navegación: el nombre viaja plano porque lo necesita el listado.
   public int CategoryId { get; set; }
   public string? CategoryName { get; set; }
 
@@ -33,9 +32,7 @@ public class ProductDto
   /// Versión del recurso, en base64. El controller la publica como cabecera <c>ETag</c>.
   /// </summary>
   /// <remarks>
-  /// Viaja como <c>string</c> y no como <c>byte[]</c> porque su destino es una cabecera
-  /// HTTP, que es texto. Es opaca para el cliente: solo tiene que devolverla tal cual en
-  /// <c>If-Match</c>.
+  /// Es opaca para el cliente: solo tiene que devolverla tal cual en <c>If-Match</c>.
   /// </remarks>
   public string? RowVersion { get; set; }
 

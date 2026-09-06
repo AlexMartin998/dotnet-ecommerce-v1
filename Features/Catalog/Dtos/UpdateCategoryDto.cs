@@ -4,8 +4,7 @@ namespace ApiEcommerce.Features.Catalog.Dtos;
 
 
 /// <summary>
-/// Body del PATCH de categoría. Todo es opcional: lo que no venga en el JSON
-/// no se toca (el profile ignora los miembros nulos).
+/// Body del PATCH de categoría. Todo es opcional: lo que no venga en el JSON no se toca.
 /// </summary>
 public class UpdateCategoryDto
 {

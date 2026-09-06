@@ -12,17 +12,9 @@ namespace ApiEcommerce.Features.Accounts;
 /// <b>ya enlazadas y validadas</b>.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Antes esto era un lambda dentro de <c>AddJwtBearer(...)</c> que volvía a leer la
-/// sección con <c>configuration.GetSection("Jwt").Get&lt;JwtOptions&gt;()!</c>. Funcionaba,
-/// pero por coincidencia: el <c>!</c> solo era seguro porque <c>ValidateOnStart</c>
-/// aborta el arranque antes de que ese lambda llegue a ejecutarse. Bindear dos veces
-/// la misma sección es además tener dos fuentes de verdad, una validada y otra no.
-/// </para>
-/// <para>
 /// Con <c>IConfigureNamedOptions&lt;JwtBearerOptions&gt;</c> la configuración entra por el
-/// constructor, tipada y validada, igual que en cualquier otro servicio.
-/// </para>
+/// constructor: un lambda en <c>AddJwtBearer</c> tendría que releer la sección y habría dos
+/// fuentes de verdad, una validada y otra no.
 /// </remarks>
 public sealed class ConfigureJwtBearerOptions(IOptions<JwtOptions> jwtOptions)
   : IConfigureNamedOptions<JwtBearerOptions>
@@ -37,16 +29,15 @@ public sealed class ConfigureJwtBearerOptions(IOptions<JwtOptions> jwtOptions)
     Configure(options);
   }
 
+  /// <summary>Aplica los parámetros de validación del token y la comprobación de denylist.</summary>
   public void Configure(JwtBearerOptions options)
   {
     options.SaveToken = true;
 
     options.TokenValidationParameters = new TokenValidationParameters
     {
-      // Las CUATRO validaciones activas. El código de referencia apagaba
-      // ValidateIssuer y ValidateAudience porque su token no emitía `iss`/`aud`:
-      // eso es parchear el síntoma. Un token firmado con la misma clave por
-      // cualquier otro servicio sería aceptado aquí.
+      // Las cuatro validaciones activas: sin issuer ni audience, un token firmado con la
+      // misma clave por otro servicio sería aceptado aquí.
       ValidateIssuerSigningKey = true,
       IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwt.SecretKey)),
 
@@ -57,14 +48,11 @@ public sealed class ConfigureJwtBearerOptions(IOptions<JwtOptions> jwtOptions)
       ValidAudience = _jwt.Audience,
 
       ValidateLifetime = true,
-      // El default son 5 minutos de gracia: un token expirado seguiría valiendo
-      // 5 minutos más. Con reloj sincronizado, 30 s sobra.
+      // El default de 5 minutos alarga la vida de un token expirado; con reloj sincronizado sobra.
       ClockSkew = TimeSpan.FromSeconds(30)
     };
 
-    // Firma buena y sin expirar NO significa "sigue valiendo": un logout puede haberlo
-    // invalidado antes de tiempo. Es el precio de que un JWT sea autocontenido — no hay
-    // estado del lado del servidor a menos que se añada aquí.
+    // Firma buena y sin expirar no significa vigente: un logout pudo invalidarlo antes.
     options.Events = new JwtBearerEvents
     {
       OnTokenValidated = async context =>
@@ -76,8 +64,7 @@ public sealed class ConfigureJwtBearerOptions(IOptions<JwtOptions> jwtOptions)
         var denylist = context.HttpContext.RequestServices.GetRequiredService<IAccessTokenDenylist>();
 
         if (await denylist.IsRevokedAsync(tokenId, context.HttpContext.RequestAborted))
-          // `Fail` y no una excepción: el pipeline lo convierte en un 401 limpio, que es
-          // lo que el cliente debe ver — su token ya no vale, punto.
+          // `Fail` y no una excepción: el pipeline lo convierte en un 401 limpio.
           context.Fail("The access token has been revoked.");
       }
     };

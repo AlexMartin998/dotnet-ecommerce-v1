@@ -6,8 +6,7 @@ namespace ApiEcommerce.Features.Catalog.Dtos;
 
 /// <summary>
 /// Body del PATCH de producto. Todos los campos son nullable a propósito: un
-/// <c>decimal Price</c> no-nullable llegaría como 0 cuando el cliente no lo envía
-/// y borraría el precio. El profile solo mapea los miembros no nulos.
+/// <c>decimal</c> no-nullable llegaría como 0 y borraría el valor que ya había.
 /// </summary>
 public class UpdateProductDto
 {
@@ -41,22 +40,9 @@ public class UpdateProductDto
   /// Versiones que el cliente dice haber leído, tomadas de la cabecera <c>If-Match</c>.
   /// </summary>
   /// <remarks>
-  /// <para>
-  /// Es una <b>lista</b> porque el RFC 9110 permite <c>If-Match: "a", "b"</c> y la
-  /// precondición se cumple si <b>alguna</b> casa. Tratarlo como un token único devolvía
-  /// <b>400</b> a un cliente perfectamente conforme —y a cualquiera que mandara la
-  /// cabecera dos veces, porque <c>StringValues.ToString()</c> las une con coma—.
-  /// </para>
-  /// <para>
-  /// <c>[JsonIgnore]</c>: <b>no se enlaza desde el cuerpo</b>. La rellena el controller
-  /// desde la cabecera. Sin esto, Swagger la publicaba como un campo más del body y un
-  /// cliente podía mandarla ahí para que el controller la pisara en silencio.
-  /// </para>
-  /// <para>
-  /// Vive aquí y no como parámetro de <c>ICrudService.UpdateAsync</c> para no meter una
-  /// preocupación de HTTP en el contrato genérico del CRUD, que comparten todas las
-  /// entidades.
-  /// </para>
+  /// Es una lista porque el RFC 9110 permite <c>If-Match: "a", "b"</c> y basta con que una
+  /// case. <c>[JsonIgnore]</c> impide enlazarla desde el cuerpo: la rellena el controller.
+  /// Vive en el DTO para no meter una preocupación de HTTP en <c>ICrudService</c>.
   /// </remarks>
   [JsonIgnore]
   public IReadOnlyList<string>? IfMatch { get; set; }

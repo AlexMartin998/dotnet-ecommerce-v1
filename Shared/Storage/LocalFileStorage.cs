@@ -8,12 +8,9 @@ namespace ApiEcommerce.Shared.Storage;
 /// Guarda imágenes en <c>wwwroot/{ProductImagesFolder}</c>, validando antes de escribir.
 /// </summary>
 /// <remarks>
-/// <para>
-/// <b>Limitación conocida y aceptada:</b> el disco local no escala horizontalmente
-/// (cada réplica ve el suyo) y no sobrevive al redespliegue de un contenedor. Para
-/// producción de verdad esto se sustituye por blob storage; la interfaz
-/// <see cref="IFileStorage"/> existe justamente para que ese cambio sea de una clase.
-/// </para>
+/// Limitación conocida y aceptada: el disco local no escala horizontalmente ni sobrevive
+/// al redespliegue de un contenedor. <see cref="IFileStorage"/> existe para que pasar a
+/// blob storage sea el cambio de una clase.
 /// </remarks>
 public sealed class LocalFileStorage(
     IWebHostEnvironment environment,
@@ -23,10 +20,9 @@ public sealed class LocalFileStorage(
   private readonly FileStorageOptions _options = options.Value;
 
   /// <summary>
-  /// Allowlist de extensiones. Es allowlist y no denylist: una denylist siempre se
-  /// olvida de algo (<c>.svg</c> lleva JavaScript, <c>.html</c> se sirve como HTML)
-  /// y estos archivos se publican desde el <b>mismo origen</b> que la API, así que un
-  /// archivo malicioso aquí es XSS almacenado con las cookies de la API.
+  /// Allowlist de extensiones, no denylist: estos archivos se publican desde el mismo
+  /// origen que la API, así que uno malicioso (<c>.svg</c>, <c>.html</c>) sería XSS
+  /// almacenado con sus cookies.
   /// </summary>
   private static readonly Dictionary<string, string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
   {
@@ -37,6 +33,7 @@ public sealed class LocalFileStorage(
     [".webp"] = "image/webp"
   };
 
+  /// <inheritdoc />
   public async Task<string> SaveProductImageAsync(FileUpload upload, CancellationToken ct = default)
   {
     ArgumentNullException.ThrowIfNull(upload);
@@ -54,21 +51,20 @@ public sealed class LocalFileStorage(
       throw new BadOperationAppException(
           $"Unsupported file type. Allowed: {string.Join(", ", AllowedExtensions.Keys)}.");
 
-    // Tercera comprobación: los bytes reales. Extensión y Content-Type los pone el
-    // cliente y se pueden mentir los dos; la firma del archivo, no.
+    // Tercera comprobación: extensión y Content-Type los pone el cliente y se pueden
+    // mentir los dos; la firma del archivo, no.
     if (!await LooksLikeImageAsync(upload.Content, expectedType, ct))
       throw new BadOperationAppException("The file content does not match a supported image format.");
 
     var folder = Path.Combine(WebRoot(), _options.ProductImagesFolder);
     Directory.CreateDirectory(folder);
 
-    // El nombre lo genera el SERVIDOR. Usar el del cliente (aunque sea "solo la
-    // extensión") es la puerta de entrada al path traversal.
+    // El nombre lo genera el servidor: usar el del cliente, aunque sea solo la extensión,
+    // es la puerta de entrada al path traversal.
     var fileName = $"{Guid.NewGuid():N}{extension.ToLowerInvariant()}";
     var fullPath = Path.Combine(folder, fileName);
 
-    // Cinturón y tirantes: aunque el nombre es un GUID, se verifica que la ruta
-    // resultante siga estando dentro de la carpeta gestionada.
+    // Cinturón y tirantes: aunque el nombre es un GUID, se verifica la ruta resultante.
     EnsureInsideFolder(fullPath, folder);
 
     await using (var file = new FileStream(fullPath, FileMode.CreateNew, FileAccess.Write, FileShare.None,
@@ -83,6 +79,7 @@ public sealed class LocalFileStorage(
     return $"/{_options.ProductImagesFolder}/{fileName}";
   }
 
+  /// <inheritdoc />
   public Task DeleteAsync(string? relativePath, CancellationToken ct = default)
   {
     // Una URL externa (http://...) o un valor nulo no son archivos nuestros: no-op.
@@ -105,7 +102,6 @@ public sealed class LocalFileStorage(
     catch (Exception ex)
     {
       // Un archivo huérfano es basura en disco; un 500 en el DELETE es un bug visible.
-      // Se registra y se sigue.
       logger.LogWarning(ex, "Could not delete product image {Path}", relativePath);
     }
 
@@ -116,12 +112,12 @@ public sealed class LocalFileStorage(
 
   /// <summary>
   /// <c>WebRootPath</c> y no <c>Directory.GetCurrentDirectory()</c>: el directorio de
-  /// trabajo del proceso no es el del proyecto cuando se publica, se lanza con
-  /// systemd o se corre en un contenedor.
+  /// trabajo del proceso no es el del proyecto al publicar ni en un contenedor.
   /// </summary>
   private string WebRoot()
       => environment.WebRootPath ?? Path.Combine(environment.ContentRootPath, "wwwroot");
 
+  /// <summary>Rechaza una ruta que se salga de la carpeta gestionada.</summary>
   private static void EnsureInsideFolder(string fullPath, string folder)
   {
     var resolved = Path.GetFullPath(fullPath);

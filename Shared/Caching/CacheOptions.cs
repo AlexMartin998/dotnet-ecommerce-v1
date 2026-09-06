@@ -6,18 +6,18 @@ namespace ApiEcommerce.Shared.Caching;
 /// <summary>Configuración de la cache distribuida, sección <c>Redis</c> de <c>appsettings.json</c>.</summary>
 public sealed class CacheOptions
 {
+  /// <summary>Nombre de la sección de configuración.</summary>
   public const string SectionName = "Redis";
 
   /// <summary>
-  /// Cadena de conexión de StackExchange.Redis (<c>host:puerto</c>).
-  /// <b>Vacía = cache desactivada</b> y la app arranca igual: la cache es una
-  /// optimización, no una dependencia dura.
+  /// Cadena de conexión de StackExchange.Redis (<c>host:puerto</c>). Vacía desactiva la
+  /// cache y la app arranca igual: es una optimización, no una dependencia dura.
   /// </summary>
   public string Configuration { get; init; } = string.Empty;
 
   /// <summary>
-  /// Prefijo de todas las claves. Es lo que permite compartir una misma instancia de
-  /// Redis entre varias apps sin que se pisen las claves.
+  /// Prefijo de todas las claves, para compartir una instancia de Redis entre varias apps
+  /// sin que se pisen.
   /// </summary>
   public string InstanceName { get; init; } = "apiecommerce:";
 

@@ -4,27 +4,10 @@ using Microsoft.Extensions.Options;
 namespace ApiEcommerce.Features.Accounts;
 
 
-/// <summary>
-/// Borra los refresh tokens que ya caducaron.
-/// </summary>
+/// <summary>Servicio de fondo que borra periódicamente los refresh tokens ya caducados.</summary>
 /// <remarks>
-/// <para>
-/// La tabla solo crece: cada login abre una familia y cada refresco añade un eslabón.
-/// Un usuario activo genera decenas al día, y ninguno sirve para nada pasada su fecha
-/// —ni siquiera los revocados, porque la comprobación de reuso solo mira dentro de la
-/// ventana de gracia—.
-/// </para>
-/// <para>
-/// ⚠️ <b>Vive en el slice, no en <c>OutboxCleaner</c>.</b> Es tentador meter todas las
-/// purgas en el recolector que ya existe, pero ese vive en <c>Shared/Messaging</c> y
-/// nombrar ahí una entidad de <c>Accounts</c> invierte la dirección de dependencias que
-/// fija <c>rules.md</c> §4: lo transversal no conoce los slices.
-/// </para>
-/// <para>
-/// Se registra <b>siempre</b>, como el resto de purgas: la tabla crece haya o no
-/// actividad, y una limpieza que solo corre en algunos entornos es una que nadie recuerda
-/// que existe hasta que la tabla estorba.
-/// </para>
+/// Vive en el slice y no junto a las demás purgas: esas están en <c>Shared/</c>, y nombrar allí
+/// una entidad de <c>Accounts</c> invertiría la dirección de dependencias.
 /// </remarks>
 public sealed class RefreshTokenCleaner(
     IServiceScopeFactory scopeFactory,
@@ -40,8 +23,7 @@ public sealed class RefreshTokenCleaner(
 
   protected override async Task ExecuteAsync(CancellationToken stoppingToken)
   {
-    // Un respiro antes de la primera pasada: al arrancar hay cosas más urgentes
-    // (migraciones, seeding).
+    // Un respiro antes de la primera pasada: al arrancar hay cosas más urgentes.
     try { await Task.Delay(TimeSpan.FromMinutes(2), stoppingToken); }
     catch (OperationCanceledException) { return; }
 
@@ -57,10 +39,8 @@ public sealed class RefreshTokenCleaner(
       }
       catch (Exception ex)
       {
-        // ⚠️ SIN filtro que excluya OperationCanceledException: una OCE que no venga del
-        // stoppingToken (la cancelación de un SqlCommand) se escaparía y, con
-        // BackgroundServiceExceptionBehavior.StopHost por defecto desde .NET 6, tumbaría
-        // la API entera por una tarea de limpieza.
+        // Sin filtro que excluya OperationCanceledException: una que no venga del stoppingToken
+        // se escaparía y, con StopHost por defecto, tumbaría la API por una tarea de limpieza.
         logger.LogError(ex, "Refresh token cleanup failed; retrying in {Interval}", Interval);
       }
 
@@ -74,9 +54,8 @@ public sealed class RefreshTokenCleaner(
     using var scope = scopeFactory.CreateScope();
     var repository = scope.ServiceProvider.GetRequiredService<IRefreshTokenRepository>();
 
-    // Un margen sobre la caducidad: dentro de la ventana de gracia todavía se consulta un
-    // token recién gastado para distinguir una carrera del cliente de un robo. Borrarlo
-    // antes convertiría esa distinción en "no existe" y perdería la señal.
+    // Un margen sobre la caducidad: la detección de reuso todavía consulta tokens gastados,
+    // y borrarlos antes convertiría esa señal en un simple "no existe".
     var cutoff = DateTime.Now.AddDays(-1);
 
     var deleted = 0;

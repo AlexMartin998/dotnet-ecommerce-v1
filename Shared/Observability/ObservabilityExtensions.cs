@@ -7,23 +7,17 @@ using ApiEcommerce.Shared.Idempotency;
 namespace ApiEcommerce.Shared.Observability;
 
 
+/// <summary>Registro en DI de las trazas y métricas de la aplicación.</summary>
 public static class ObservabilityExtensions
 {
   /// <summary>
-  /// Trazas y métricas con OpenTelemetry.
+  /// Trazas y métricas con OpenTelemetry: se instrumenta siempre, se exporta solo si hay
+  /// a dónde.
   /// </summary>
   /// <remarks>
-  /// <para>
-  /// <b>Se instrumenta siempre; se exporta solo si hay a dónde.</b> Sin recolector, las
-  /// trazas siguen existiendo en proceso —y son las que dan el <c>TraceId</c> que aparece
-  /// en cada línea de log— pero no se intenta enviar nada. Es la misma decisión que con
-  /// Redis y RabbitMQ: la observabilidad no puede ser el motivo de que la API no arranque.
-  /// </para>
-  /// <para>
-  /// Se elige OpenTelemetry y no un SDK de proveedor porque el <b>vendor lock-in de la
-  /// observabilidad se paga tarde y caro</b>: cambiar de backend es cambiar un endpoint,
-  /// no reinstrumentar la aplicación.
-  /// </para>
+  /// Sin recolector las trazas siguen existiendo en proceso y alimentan el <c>TraceId</c>
+  /// de los logs. Se elige OpenTelemetry y no un SDK de proveedor para que cambiar de
+  /// backend sea cambiar un endpoint y no reinstrumentar la aplicación.
   /// </remarks>
   public static IServiceCollection AddObservability(
       this IServiceCollection services, IConfiguration configuration)
@@ -36,17 +30,15 @@ public static class ObservabilityExtensions
     var options = configuration.GetSection(ObservabilityOptions.SectionName).Get<ObservabilityOptions>()
                   ?? new ObservabilityOptions();
 
-    // ⚠️ El `.ValidateOnStart()` de arriba NO cubre esto. Se dispara al resolver
-    // `IOptions<ObservabilityOptions>`, y aquí no lo resuelve nadie: se lee el POCO en
-    // crudo para decidir QUÉ se registra. Así que la validación se hace explícitamente,
-    // y sin lanzar: la observabilidad no puede ser el motivo de que la API no arranque.
+    // El `.ValidateOnStart()` de arriba no cubre esto: se dispara al resolver
+    // `IOptions<ObservabilityOptions>` y aquí se lee el POCO en crudo. Se avisa sin lanzar,
+    // porque la observabilidad no puede impedir que la API arranque.
     if (!string.IsNullOrWhiteSpace(options.OtlpEndpoint) && !options.ExportsTraces)
       Console.Error.WriteLine(
           $"[observability] Observability:OtlpEndpoint ('{options.OtlpEndpoint}') is not an " +
           "absolute URI; telemetry will be collected in-process but NOT exported.");
 
-    // Mismo motivo: valores fuera de rango reventaban con excepciones crudas de terceros
-    // ("Must be in the range: [0, 1]") en vez de con un mensaje accionable. Se acota.
+    // Mismo motivo: un valor fuera de rango reventaba con una excepción cruda de terceros.
     var samplingRatio = Math.Clamp(options.SamplingRatio, 0d, 1d);
     var serviceName = string.IsNullOrWhiteSpace(options.ServiceName) ? "apiecommerce" : options.ServiceName;
 
@@ -55,29 +47,22 @@ public static class ObservabilityExtensions
         .WithTracing(tracing =>
         {
           tracing
-              // Muestreo padre-consciente: si el servicio que nos llamó decidió trazar la
-              // petición, se traza; si no, se aplica la proporción. Decidir por nuestra
-              // cuenta partiría las trazas distribuidas por la mitad.
+              // Muestreo padre-consciente: decidir por nuestra cuenta partiría las trazas
+              // distribuidas por la mitad.
               .SetSampler(new ParentBasedSampler(new TraceIdRatioBasedSampler(samplingRatio)))
               .AddAspNetCoreInstrumentation(instrumentation =>
               {
-                // Las sondas son ruido: se ejecutan cada pocos segundos, siempre igual, y
-                // ahogarían cualquier traza que importe.
+                // Las sondas son ruido: corren cada pocos segundos y ahogarían las trazas
+                // que importan.
                 instrumentation.Filter = context =>
                     !context.Request.Path.StartsWithSegments("/health");
 
                 instrumentation.RecordException = true;
               })
               .AddHttpClientInstrumentation()
-              // Las consultas SQL son la mitad de la latencia de esta API.
-              //
-              // ⚠️ El TEXTO de la consulta no se captura, y no hay que hacer nada para
-              // ello: desde la 1.10 dejó de ser una propiedad y está apagado salvo que se
-              // active la bandera experimental
-              // `OTEL_DOTNET_EXPERIMENTAL_SQLCLIENT_ENABLE_TRACE_TEXT_COMMAND`.
-              // **No activarla**: llevaría los valores de los parámetros —correos,
-              // nombres, precios— al backend de trazas, que casi nunca tiene el mismo
-              // nivel de protección que la base de datos.
+              // Las consultas SQL son la mitad de la latencia de esta API. El texto de la
+              // consulta no se captura, y su bandera experimental no debe activarse: los
+              // parámetros llevarían correos, nombres y precios al backend de trazas.
               .AddSqlClientInstrumentation(instrumentation => instrumentation.RecordException = true);
 
           if (options.ExportsTraces)
@@ -88,13 +73,10 @@ public static class ObservabilityExtensions
           metrics
               .AddAspNetCoreInstrumentation()
               .AddHttpClientInstrumentation()
-              // Las cuatro que se miran primero en un incidente: peticiones en curso,
-              // latencia, GC y memoria.
+              // Peticiones en curso, latencia, GC y memoria: lo que se mira primero en un
+              // incidente.
               .AddRuntimeInstrumentation()
-              // La nuestra: cómo se resuelve cada petición con Idempotency-Key. La
-              // dimensión que importa es `outcome=unguaranteed` — si deja de ser cero,
-              // la protección contra el doble cobro está apagada para esa parte del
-              // tráfico aunque todas las respuestas sean 200.
+              // La nuestra: cómo se resuelve cada petición con Idempotency-Key.
               .AddMeter(IdempotencyMetrics.MeterName);
 
           if (options.ExportsTraces)

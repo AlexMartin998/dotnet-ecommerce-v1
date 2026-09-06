@@ -3,42 +3,27 @@ using ApiEcommerce.Features.Accounts.Models;
 namespace ApiEcommerce.Features.Accounts.Repository;
 
 
-/// <summary>
-/// Acceso a los refresh tokens emitidos.
-/// </summary>
+/// <summary>Acceso a los refresh tokens emitidos.</summary>
 /// <remarks>
-/// No hereda de <c>IBaseRepository&lt;T&gt;</c> a propósito: de las cinco operaciones CRUD
-/// aquí no se usa ninguna tal cual. Un refresh token no se "actualiza" ni se "borra": se
-/// <b>gasta</b>, y esa operación tiene que ser atómica. Heredar el CRUD solo traería cinco
-/// métodos que nadie debe llamar.
+/// No hereda de <c>IBaseRepository&lt;T&gt;</c>: un refresh token no se actualiza ni se borra,
+/// se gasta atómicamente, así que el CRUD solo traería métodos que nadie debe llamar.
 /// </remarks>
 public interface IRefreshTokenRepository
 {
   /// <summary>Busca por la huella del token.</summary>
   Task<RefreshToken?> FindByHashAsync(string tokenHash, CancellationToken ct = default);
 
-  /// <summary>
-  /// Marca el token como gastado <b>si nadie lo ha gastado ya</b>. Operación atómica.
-  /// </summary>
+  /// <summary>Marca el token como gastado si nadie lo ha gastado ya. Atómica.</summary>
   /// <remarks>
-  /// <para>
-  /// ⚠️ Es un <c>UPDATE … WHERE RevokedAt IS NULL</c> en <b>una sola sentencia</b>, no un
-  /// leer-y-luego-escribir. Entre comprobar «está vivo» y marcarlo cabe otra petición, y
-  /// entonces las dos rotarían el mismo token y habría dos sesiones válidas donde debía
-  /// haber una. Es la misma razón por la que el stock se descuenta con un UPDATE
-  /// condicional y no comprobando antes.
-  /// </para>
-  /// <para>
-  /// Devolver <c>false</c> significa «llegaste tarde», y es justo la señal que dispara la
-  /// detección de reuso.
-  /// </para>
+  /// Un <c>UPDATE … WHERE RevokedAt IS NULL</c> en una sola sentencia: leer y luego escribir
+  /// dejaría hueco para que dos peticiones rotaran el mismo token. <c>false</c> = llegaste
+  /// tarde, y es la señal que dispara la detección de reuso.
   /// </remarks>
   Task<bool> TryConsumeAsync(int id, CancellationToken ct = default);
 
   /// <summary>Añade un token nuevo. <b>No hace <c>SaveChanges</c></b>.</summary>
   /// <remarks>
-  /// Como <c>IEventOutbox</c>: quien confirma es la transacción de negocio, para que
-  /// revocar el viejo y emitir el nuevo sean una sola cosa.
+  /// Confirma la transacción de negocio, para que revocar el viejo y emitir el nuevo sean uno.
   /// </remarks>
   void Add(RefreshToken token);
 
@@ -48,8 +33,7 @@ public interface IRefreshTokenRepository
 
   /// <summary>Revoca TODAS las sesiones vivas de un usuario, sean de la familia que sean.</summary>
   /// <remarks>
-  /// Es lo que hace que bloquear una cuenta signifique algo: sin esto el usuario sigue
-  /// dentro y puede seguir renovando indefinidamente.
+  /// Es lo que hace que bloquear una cuenta signifique algo: sin ello el usuario sigue renovando.
   /// </remarks>
   /// <returns>Cuántos se revocaron.</returns>
   Task<int> RevokeAllForUserAsync(string userId, CancellationToken ct = default);

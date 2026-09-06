@@ -13,9 +13,8 @@ namespace ApiEcommerce.Tests.Features.Accounts;
 
 
 /// <summary>
-/// Registro y login. Casi todo lo que se prueba aquí es <b>seguridad</b>, no
-/// funcionalidad: el rol que se asigna, el mensaje que se devuelve y lo que NO se
-/// filtra al cliente.
+/// Registro y login. Casi todo lo que se prueba aquí es seguridad: el rol que se asigna,
+/// el mensaje que se devuelve y lo que no se filtra al cliente.
 /// </summary>
 public class AuthServiceTests
 {
@@ -68,9 +67,7 @@ public class AuthServiceTests
 
     var ex = await Assert.ThrowsAsync<ValidationAppException>(() => Sut().RegisterAsync(Register()));
 
-    // 422 y no 400: la FORMA del DTO era válida (eso ya lo filtró DataAnnotations); lo
-    // que falla es la política de Identity. Y llega agrupado por campo, en el mismo
-    // formato que produce ValidationProblem(ModelState).
+    // 422 y no 400: la forma del DTO era válida, lo que falla es la política de Identity.
     Assert.Equal(HttpStatusCode.UnprocessableEntity, ex.Status);
     Assert.True(ex.Errors.ContainsKey(nameof(RegisterUserDto.Password)));
   }
@@ -78,8 +75,7 @@ public class AuthServiceTests
   [Fact]
   public async Task RegisterAsync_AlwaysAssignsTheUserRoleAndNeverAdmin()
   {
-    // ⚠️ EL test de seguridad del registro. El rol NO se lee del body bajo ninguna
-    // circunstancia: si se pudiera, cualquiera se registra como admin.
+    // El rol nunca se lee del body: si se pudiera, cualquiera se registra como admin.
     SetupFreeCredentials();
     _users.Setup(u => u.CreateAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
           .ReturnsAsync(IdentityResult.Success);
@@ -95,8 +91,8 @@ public class AuthServiceTests
   [Fact]
   public async Task RegisterAsync_WhenTheRoleCannotBeAssigned_DeletesTheHalfCreatedUser()
   {
-    // Sin esto quedaría una cuenta creada y sin permisos: puede iniciar sesión y no
-    // puede hacer nada, y su username queda ocupado para siempre.
+    // Si no, queda una cuenta que puede entrar y no puede hacer nada, con el username
+    // ocupado para siempre.
     SetupFreeCredentials();
     _users.Setup(u => u.CreateAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
           .ReturnsAsync(IdentityResult.Success);
@@ -112,7 +108,7 @@ public class AuthServiceTests
   [Fact]
   public async Task RegisterAsync_TrimsTheCredentials()
   {
-    // "ana " y "ana" son la misma persona para todo el mundo menos para un índice único.
+    // "ana " y "ana" son la misma persona para todos menos para un índice único.
     _users.Setup(u => u.FindByNameAsync("ana")).ReturnsAsync((ApplicationUser?)null).Verifiable();
     _users.Setup(u => u.FindByEmailAsync("ana@test.com")).ReturnsAsync((ApplicationUser?)null).Verifiable();
     _users.Setup(u => u.CreateAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>())).ReturnsAsync(IdentityResult.Success);
@@ -144,9 +140,8 @@ public class AuthServiceTests
   [Fact]
   public async Task LoginAsync_WithAWrongPassword_ThrowsTheExactSameMessage()
   {
-    // ⚠️ EL test de seguridad del login, y hay que compararlo con el de arriba: si los
-    // mensajes difieren, el login se convierte en un ORÁCULO para enumerar usuarios
-    // ("este existe, este no"). Por eso los dos tests afirman el mismo string literal.
+    // Si este mensaje difiriera del de "usuario desconocido", el login sería un oráculo
+    // para enumerar cuentas. Por eso los dos tests afirman el mismo literal.
     var user = new ApplicationUser { UserName = "ana" };
     _users.Setup(u => u.FindByNameAsync("ana")).ReturnsAsync(user);
     _signIn.Setup(s => s.CheckPasswordSignInAsync(user, "mala", true)).ReturnsAsync(SignInResult.Failed);
@@ -161,9 +156,8 @@ public class AuthServiceTests
   [Fact]
   public async Task LoginAsync_WhenTheAccountIsLockedOut_Throws403AndNot401()
   {
-    // 403 y no 401: aquí SÍ sabemos quién eres; lo que pasa es que no puedes ahora
-    // mismo. Devolver 401 haría que el cliente reintentara pidiendo credenciales,
-    // gastando intentos y alargando el bloqueo.
+    // 403 y no 401: un 401 haría al cliente reintentar con credenciales, gastando
+    // intentos y alargando el bloqueo.
     var user = new ApplicationUser { UserName = "ana" };
     _users.Setup(u => u.FindByNameAsync("ana")).ReturnsAsync(user);
     _signIn.Setup(s => s.CheckPasswordSignInAsync(user, It.IsAny<string>(), true))
@@ -178,9 +172,8 @@ public class AuthServiceTests
   [Fact]
   public async Task LoginAsync_CountsFailedAttempts()
   {
-    // lockoutOnFailure: true. Sin ese flag Identity NUNCA cuenta fallos y el bloqueo
-    // configurado en AddIdentity no se dispara jamás: la protección existe en la
-    // configuración y no en la práctica.
+    // Sin `lockoutOnFailure: true` Identity no cuenta fallos y el bloqueo configurado no
+    // se dispara nunca: la protección existiría solo en la configuración.
     var user = new ApplicationUser { UserName = "ana" };
     _users.Setup(u => u.FindByNameAsync("ana")).ReturnsAsync(user);
     _signIn.Setup(s => s.CheckPasswordSignInAsync(user, "buena", true)).ReturnsAsync(SignInResult.Success);
@@ -234,12 +227,11 @@ public class AuthServiceTests
     Username = "ana", Email = "ana@test.com", Password = "Passw0rd!", Name = "Ana"
   };
 
-  /// <summary>
-  /// <c>UserManager</c> y <c>SignInManager</c> son clases concretas con constructores
-  /// enormes; Moq las puede simular porque sus métodos son <c>virtual</c>, pero hay que
-  /// pasarles los argumentos posicionales. Es feo y es el precio de que Identity no
-  /// exponga interfaces.
-  /// </summary>
+  /// <summary>Doble de <c>UserManager</c>, que es una clase concreta y no una interfaz.</summary>
+  /// <remarks>
+  /// Moq lo puede simular porque sus métodos son <c>virtual</c>, pero hay que pasarle los
+  /// argumentos posicionales del constructor.
+  /// </remarks>
   private static Mock<UserManager<ApplicationUser>> MockUserManager()
       => new(Mock.Of<IUserStore<ApplicationUser>>(), null!, null!, null!, null!, null!, null!, null!, null!);
 

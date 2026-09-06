@@ -3,17 +3,17 @@ using System.Reflection;
 namespace ApiEcommerce.Shared.Mapping;
 
 
+/// <summary>Registro en DI de AutoMapper.</summary>
 public static class MappingExtensions
 {
   /// <summary>
-  /// AutoMapper: registra todos los <c>Profile</c> de los ensamblados indicados. Crear
+  /// Registra todos los <c>Profile</c> de los ensamblados indicados. Crear
   /// <c>Features/&lt;Contexto&gt;/Mapping/XProfile.cs</c> basta; no hay que registrarlo a mano.
   /// </summary>
   /// <remarks>
-  /// Los ensamblados se reciben por parámetro en vez de resolverse aquí con
-  /// <c>typeof(CategoryProfile).Assembly</c>. Aquello obligaba a <c>Shared/</c> a nombrar
-  /// un tipo de <c>Features/</c>, que es la dirección de dependencia al revés. Quien sí
-  /// puede conocer ambos lados es el <b>composition root</b>, y es quien los pasa.
+  /// Los ensamblados llegan por parámetro para que <c>Shared/</c> no tenga que nombrar un
+  /// tipo de <c>Features/</c>, que sería la dependencia al revés: quien conoce ambos lados
+  /// es el composition root.
   /// </remarks>
   public static IServiceCollection AddObjectMapping(
       this IServiceCollection services, params Assembly[] assemblies)

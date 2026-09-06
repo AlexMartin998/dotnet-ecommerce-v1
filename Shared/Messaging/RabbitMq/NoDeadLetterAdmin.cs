@@ -6,17 +6,9 @@ namespace ApiEcommerce.Shared.Messaging.RabbitMq;
 /// diciendo exactamente eso.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Es un Null Object, como <c>NoCacheService</c> o <c>NoIdempotencyStore</c>, pero con una
-/// diferencia importante: los otros <b>degradan en abierto</b> porque envuelven
-/// optimizaciones con fuente de verdad alternativa. Aquí no hay nada que devolver — «no hay
-/// mensajes muertos» sería <b>mentira</b>, no degradación—, así que falla en cerrado y el
-/// operador se entera. Es la distinción de <c>rules.md</c> §8.
-/// </para>
-/// <para>
-/// Existe para que el controller no tenga que preguntar si hay broker: la decisión se toma
-/// una vez, al construir el grafo de DI, como con el resto.
-/// </para>
+/// Es un Null Object que falla en CERRADO, al revés que <c>NoCacheService</c> o
+/// <c>NoIdempotencyStore</c>: aquí no hay nada que devolver y «no hay mensajes muertos» sería
+/// mentira, no degradación. Existe para que el controller no pregunte si hay broker.
 /// </remarks>
 public sealed class NoDeadLetterAdmin : IDeadLetterAdmin
 {

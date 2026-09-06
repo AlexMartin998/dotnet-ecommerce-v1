@@ -13,8 +13,8 @@ namespace ApiEcommerce.Tests.Shared.Http;
 
 
 /// <summary>
-/// Traducción de excepción a <c>ProblemDetails</c>. Es el único sitio del proyecto que
-/// decide códigos HTTP, así que un fallo aquí se nota en TODOS los endpoints a la vez.
+/// Traducción de excepción a <c>ProblemDetails</c>. Es el único sitio que decide códigos
+/// HTTP, así que un fallo aquí se nota en todos los endpoints a la vez.
 /// </summary>
 public class GlobalExceptionHandlerTests
 {
@@ -49,8 +49,7 @@ public class GlobalExceptionHandlerTests
 
     Assert.Equal(409, context.Response.StatusCode);
     Assert.Equal("conflict", _written!.Extensions["code"]);
-    // Por debajo de 500 el mensaje SÍ viaja: es información útil que el dominio
-    // escribió a propósito para el cliente.
+    // Por debajo de 500 el mensaje viaja: el dominio lo escribió para el cliente.
     Assert.Equal("Category 'Bebidas' already exists.", _written.Detail);
   }
 
@@ -61,8 +60,7 @@ public class GlobalExceptionHandlerTests
 
     await HandleAsync(new ValidationAppException(errors));
 
-    // Mismo formato `errors` que produce ValidationProblem(ModelState): el cliente
-    // recibe siempre la misma forma venga de DataAnnotations o de una regla de negocio.
+    // Mismo formato `errors` que ValidationProblem(ModelState), venga de donde venga.
     Assert.True(_written!.Extensions.ContainsKey("errors"));
   }
 
@@ -75,10 +73,8 @@ public class GlobalExceptionHandlerTests
   [InlineData(547, 409, "fk_violation")]
   public async Task ABareSqlException_IsTranslated(int number, int expectedStatus, string expectedCode)
   {
-    // ⚠️ DESNUDO. Es lo que lanza ExecuteUpdateAsync, que no pasa por SaveChangesAsync:
-    // justamente TryDecrementStockAsync, la sentencia con más contención del sistema.
-    // La versión anterior del handler hacía pattern matching sobre
-    // `DbUpdateException { InnerException: SqlException }` y este caso salía 500.
+    // Desnudo: es lo que lanza ExecuteUpdateAsync, que no pasa por SaveChangesAsync, y es
+    // el camino de TryDecrementStockAsync, la sentencia con más contención.
     var context = await HandleAsync(SqlExceptionFactory.WithNumber(number));
 
     Assert.Equal(expectedStatus, context.Response.StatusCode);
@@ -99,9 +95,8 @@ public class GlobalExceptionHandlerTests
   [Fact]
   public async Task ADeeplyNestedSqlException_IsFoundByWalkingTheChain()
   {
-    // Y con EnableRetryOnFailure agotado llega envuelto DOS veces. Por eso se RECORRE
-    // la cadena de InnerException en vez de mirar una forma concreta de anidamiento:
-    // el anidamiento no es estable y depende de por dónde entró la excepción.
+    // Con EnableRetryOnFailure agotado llega envuelto dos veces: el anidamiento no es
+    // estable, por eso se recorre la cadena en vez de mirar una forma concreta.
     var deep = new InvalidOperationException("reintentos agotados",
         new DbUpdateException("error al guardar", SqlExceptionFactory.WithNumber(2627)));
 
@@ -135,11 +130,8 @@ public class GlobalExceptionHandlerTests
   [Fact]
   public async Task AnInvalidOperationExceptionIsDeliberatelyNotMapped()
   {
-    // ⚠️ El test que protege una decisión CONTRAINTUITIVA, y por eso el que más falta
-    // hace. EF Core usa InvalidOperationException para errores de PROGRAMACIÓN ("the
-    // instance of entity type X cannot be tracked because..."). Mapearla a 409 daba el
-    // código equivocado Y filtraba mensajes internos del ORM al cliente, porque Detail
-    // solo se censura a partir de 500. Que caiga a 500, que es lo que realmente es.
+    // EF Core usa InvalidOperationException para errores de programación: mapearla a 409
+    // daría el código equivocado y filtraría mensajes del ORM, que solo se censuran en 500.
     var context = await HandleAsync(new InvalidOperationException("detalle interno de EF Core"));
 
     Assert.Equal(500, context.Response.StatusCode);
@@ -160,8 +152,7 @@ public class GlobalExceptionHandlerTests
   [Fact]
   public async Task ACancelledRequest_Is499AndNotAnError()
   {
-    // El cliente cerró la conexión. No es culpa del servidor y no debe contar como 5xx
-    // en las métricas ni disparar alertas.
+    // El cliente cerró la conexión: no es un 5xx ni debe disparar alertas.
     var context = await HandleAsync(new OperationCanceledException());
 
     Assert.Equal(499, context.Response.StatusCode);
@@ -170,10 +161,8 @@ public class GlobalExceptionHandlerTests
   [Fact]
   public async Task EveryProblemCarriesTheCorrelationIdAndTheInstance()
   {
-    // Sin un id, un 500 en producción es un ticket sin forma de correlacionarlo con la
-    // línea del log. Y tiene que ser EL MISMO que viaja en la cabecera X-Correlation-Id:
-    // antes era `TraceIdentifier`, así que el cuerpo y la cabecera llevaban dos ids
-    // distintos para la misma petición.
+    // Sin id, un 500 es un ticket que no se puede cruzar con el log. Y tiene que ser el
+    // mismo que viaja en X-Correlation-Id, o cuerpo y cabecera dirían cosas distintas.
     var context = await HandleAsync(new Exception("boom"));
 
     Assert.Equal(context.TraceIdentifier, _written!.Extensions["correlationId"]);
@@ -183,8 +172,7 @@ public class GlobalExceptionHandlerTests
   [Fact]
   public async Task TheProblemUsesTheCorrelationIdChosenByTheMiddleware()
   {
-    // Cuando el middleware ya decidió uno (el del cliente, o el generado), el cuerpo debe
-    // llevar ESE y no el identificador interno del framework.
+    // Si el middleware ya decidió uno, el cuerpo lleva ese y no el id interno del framework.
     var context = new DefaultHttpContext();
     context.Request.Method = "POST";
     context.Request.Path = "/api/v1/product";
@@ -200,12 +188,8 @@ public class GlobalExceptionHandlerTests
 
   // ---- registro en el log --------------------------------------------------
   //
-  // ⭐ Estos dos tests son la red de una decisión de CONFIGURACIÓN, no de código: desde
-  // 2026-09-06 el logger del `ExceptionHandlerMiddleware` del framework está silenciado
-  // en `appsettings.json` (escribía "An unhandled exception has occurred" a nivel Error
-  // TAMBIÉN para los 4xx: medido, 10 rechazos por falta de stock = 10 incidentes falsos
-  // con traza completa). A partir de ahí, **este handler es el ÚNICO que registra las
-  // excepciones**, y que deje de hacerlo no rompería ningún test... salvo estos.
+  // El logger del ExceptionHandlerMiddleware está silenciado en appsettings, así que este
+  // handler es el único que registra excepciones: solo estos dos tests lo protegen.
 
   [Fact]
   public async Task AnUnmappedException_IsLoggedAsAnErrorWithItsStackTrace()
@@ -214,8 +198,7 @@ public class GlobalExceptionHandlerTests
 
     await HandleAsync(new InvalidOperationException("algo se rompió de verdad"), logger.Object);
 
-    // La excepción va COMO EXCEPCIÓN y no interpolada en el mensaje: es lo que hace que
-    // la traza acabe en el log. Sin ella, un 500 sería una línea sin dónde mirar.
+    // La excepción va como excepción y no interpolada: es lo que lleva la traza al log.
     logger.Verify(l => l.Log(
         LogLevel.Error,
         It.IsAny<EventId>(),
@@ -227,9 +210,8 @@ public class GlobalExceptionHandlerTests
   [Fact]
   public async Task ADomainException_IsAWarningAndNotAnError()
   {
-    // Quedarse sin stock es el resultado NORMAL de una compra concurrente. Registrarlo
-    // como Error llena de incidentes falsos justo el log que hay que leer cuando pasa
-    // algo de verdad.
+    // Quedarse sin stock es el resultado normal de una compra concurrente: como Error
+    // llenaría de incidentes falsos el log que hay que leer cuando pasa algo de verdad.
     var logger = new Mock<ILogger<GlobalExceptionHandler>>();
 
     await HandleAsync(new ConflictAppException("Insufficient stock for SKU 'X'."), logger.Object);

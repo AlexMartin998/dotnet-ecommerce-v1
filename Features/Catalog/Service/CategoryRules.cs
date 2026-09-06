@@ -8,9 +8,8 @@ namespace ApiEcommerce.Features.Catalog.Service;
 
 
 /// <summary>
-/// Reglas de negocio de <see cref="Category"/>. Es todo lo que Category tiene de
-/// propio: el CRUD lo pone <c>CrudService</c>.
-/// Se puede instanciar con un <c>ICategoryRepository</c> falso y probar sola.
+/// Reglas de negocio de <see cref="Category"/>: nombre único y no borrar categorías
+/// con productos.
 /// </summary>
 public sealed class CategoryRules(ICategoryRepository repository)
   : IEntityRules<Category, CreateCategoryDto, UpdateCategoryDto>

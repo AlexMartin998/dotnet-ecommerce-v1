@@ -9,13 +9,12 @@ using Microsoft.Extensions.Options;
 namespace ApiEcommerce.Shared.Http.Health;
 
 
+/// <summary>Registro en DI de las sondas de salud.</summary>
 public static class HealthCheckExtensions
 {
   /// <summary>
-  /// Sondas de salud. <c>/health</c> es <b>liveness</b> (¿el proceso responde?) y lo
-  /// sirve <c>HealthController</c>; <c>/health/ready</c> es <b>readiness</b> (¿las
-  /// dependencias están arriba?) y es el que debe mirar un orquestador antes de
-  /// mandarle tráfico.
+  /// Sondas de salud: <c>/health</c> es liveness (lo sirve <c>HealthController</c>) y
+  /// <c>/health/ready</c> es readiness, la que debe mirar un orquestador.
   /// </summary>
   public static IServiceCollection AddHealthProbes(
       this IServiceCollection services, IConfiguration configuration)
@@ -25,37 +24,20 @@ public static class HealthCheckExtensions
 
     var redis = configuration.GetSection(CacheOptions.SectionName).Get<CacheOptions>();
 
-    // Solo se comprueba Redis si está configurado: si no lo está, la app funciona
-    // sin cache y exigirlo en readiness dejaría el servicio fuera de rotación por
-    // una dependencia que ni siquiera usa.
-    // ⚠️ Se le pasa el multiplexer del contenedor, NO la cadena de conexión. Con la cadena,
-    // el health check abría su PROPIA conexión: una tercera, con sus propios timeouts de
-    // fábrica. Además de duplicar conexiones al broker, la sonda podía decir "Healthy"
-    // usando una conexión sana mientras la que usa la aplicación estaba rota — que es
-    // exactamente lo que una sonda no puede hacer. Ahora comprueba **la misma** conexión
-    // que sirve el tráfico.
-    // ⚠️ `Degraded`, NO `Unhealthy` (que es el valor por defecto). Redis es una
-    // OPTIMIZACIÓN y la aplicación degrada en abierto (rules §8): con Redis caído las
-    // lecturas se sirven de la base y las compras funcionan. Marcarlo `Unhealthy` hacía
-    // que `/health/ready` respondiera **503**, y como la caída de Redis la ven TODAS las
-    // réplicas a la vez, el orquestador las sacaba de rotación todas: una dependencia
-    // opcional provocando una caída total. Medido: con Redis muerto,
-    // `GET /api/v1/category` respondía 200 y `/health/ready` respondía 503.
+    // Solo se comprueba Redis si está configurado, y con el multiplexer del contenedor: con
+    // la cadena de conexión la sonda abriría la suya y podría decir "Healthy" mientras la
+    // conexión que usa la aplicación está rota.
     //
-    // `Degraded` responde 200 y sigue apareciendo en el detalle de la sonda, que es
-    // exactamente lo que se quiere: visible para quien mira, invisible para el balanceador.
+    // Degraded y no Unhealthy: Redis es una optimización y la app degrada en abierto, pero
+    // su caída la ven todas las réplicas a la vez, así que un 503 aquí las sacaba de
+    // rotación todas. Degraded responde 200 y sigue visible en el detalle de la sonda.
     if (redis is not null && redis.IsEnabled)
       checks.AddRedis(
           sp => sp.GetRequiredService<IConnectionMultiplexer>(),
           name: "redis", failureStatus: HealthStatus.Degraded, tags: ["ready"]);
 
-    // Eventos que agotaron sus reintentos y quedaron sin publicar. Sin esta sonda, un
-    // broker caído el tiempo suficiente entierra eventos en silencio y el servicio
-    // sigue reportándose sano mientras los datos divergen.
-    //
-    // Degraded y no Unhealthy: la API atiende peticiones perfectamente, lo que hay es
-    // trabajo pendiente que alguien tiene que mirar. Marcarlo Unhealthy sacaría de
-    // rotación un proceso sano.
+    // Sin esta sonda, un broker caído el tiempo suficiente entierra eventos en silencio.
+    // Degraded porque la API atiende bien: lo que hay es trabajo pendiente que mirar.
     checks.AddCheck<OutboxBacklogHealthCheck>(
         "outbox-backlog", failureStatus: HealthStatus.Degraded, tags: ["ready"]);
 
@@ -66,14 +48,14 @@ public static class HealthCheckExtensions
 
 /// <summary>Cuenta los eventos del outbox que se dieron por perdidos.</summary>
 /// <remarks>
-/// El umbral se lee de <see cref="OutboxOptions.MaxPublishAttempts"/>, el MISMO valor
-/// que aplica el publicador. Antes era una <c>const</c> aquí con un comentario pidiendo
-/// mantenerla sincronizada: subir el máximo en el publicador habría dejado esta sonda
-/// contando como perdidos mensajes que aún se estaban reintentando.
+/// El umbral se lee de <see cref="OutboxOptions.MaxPublishAttempts"/>, el mismo valor que
+/// aplica el publicador: con una constante propia, subirlo allí dejaba esta sonda contando
+/// como perdidos mensajes que aún se reintentaban.
 /// </remarks>
 public sealed class OutboxBacklogHealthCheck(
     AppDbContext db, IOptions<OutboxOptions> options) : IHealthCheck
 {
+  /// <inheritdoc />
   public async Task<HealthCheckResult> CheckHealthAsync(
       HealthCheckContext context, CancellationToken cancellationToken = default)
   {

@@ -7,24 +7,18 @@ namespace ApiEcommerce.Shared.Http;
 
 
 /// <summary>
-/// Genera <b>un documento de Swagger por versión de API descubierta</b>, en vez de
-/// escribir un <c>SwaggerDoc("v1")</c> a mano por cada versión.
+/// Genera un documento de Swagger por versión de API descubierta, en vez de un
+/// <c>SwaggerDoc</c> escrito a mano por cada versión.
 /// </summary>
 /// <remarks>
-/// <para>
-/// El patrón es <c>IConfigureOptions&lt;SwaggerGenOptions&gt;</c>: DI construye esta clase
-/// con el <see cref="IApiVersionDescriptionProvider"/> ya poblado por
-/// <c>AddApiExplorer</c>, así que añadir una <c>v3</c> es poner <c>[ApiVersion("3.0")]</c>
-/// en un controller — <b>cero cambios en <c>Program.cs</c></b>.
-/// </para>
-/// <para>
-/// Aquí también vive la definición de seguridad Bearer, que es lo que pinta el botón
-/// <b>Authorize</b> de la UI de Swagger.
-/// </para>
+/// Al ser un <c>IConfigureOptions&lt;SwaggerGenOptions&gt;</c>, DI lo construye con el
+/// <see cref="IApiVersionDescriptionProvider"/> ya poblado: añadir una <c>v3</c> es poner
+/// el atributo en un controller, sin tocar <c>Program.cs</c>.
 /// </remarks>
 public sealed class ConfigureSwaggerOptions(IApiVersionDescriptionProvider provider)
   : IConfigureOptions<SwaggerGenOptions>
 {
+  /// <summary>Declara un documento por versión y la seguridad Bearer del botón Authorize.</summary>
   public void Configure(SwaggerGenOptions options)
   {
     foreach (var description in provider.ApiVersionDescriptions)
@@ -74,8 +68,8 @@ public sealed class ConfigureSwaggerOptions(IApiVersionDescriptionProvider provi
                   + "controller → service → repository, reglas de negocio compuestas y errores RFC 7807."
     };
 
-    // Marcado real de deprecación: sale del atributo [ApiVersion("x", Deprecated = true)],
-    // que además hace que la respuesta lleve la cabecera `api-deprecated-versions`.
+    // Sale del atributo [ApiVersion("x", Deprecated = true)], que además emite la cabecera
+    // `api-deprecated-versions`.
     if (description.IsDeprecated)
       info.Description += " ⚠️ Esta versión está deprecada.";
 

@@ -22,22 +22,12 @@ public sealed class RedisDownFactory : ApiFactory
 
 
 /// <summary>
-/// Degradación: cache e idempotencia son <b>optimizaciones</b>, no dependencias duras.
+/// Degradación: cache e idempotencia son optimizaciones, no dependencias duras.
 /// </summary>
 /// <remarks>
-/// <para>
-/// ⚠️ Y la decisión de degradar tiene que ser <b>la misma en todas las implementaciones</b>.
-/// Que <c>RedisCacheService</c> fallara en abierto y <c>RedisIdempotencyStore</c> en
-/// cerrado hacía que un corte de Redis devolviera <b>500 por una compra ya cobrada</b>.
-/// Estos tests fijan que ambas fallan en abierto.
-/// </para>
-/// <para>
-/// ⚠️ Ojo con lo que significa hoy «degradar» en la idempotencia: lo que se pierde con
-/// Redis caído es el <b>atajo</b>, no la garantía. La marca de que un comando ya se
-/// ejecutó vive en <c>ExecutedCommands</c>, en la misma transacción que el efecto, así
-/// que sigue en pie sin Redis. Los tests de abajo lo fijan — antes eran imposibles de
-/// escribir, porque el almacén ERA Redis.
-/// </para>
+/// Todas las implementaciones tienen que fallar en abierto: mezclarlo devolvería un 500
+/// por una compra ya cobrada. Con Redis caído se pierde el atajo, no la garantía, que
+/// vive en <c>ExecutedCommands</c> dentro de la transacción del efecto.
 /// </remarks>
 [Collection(IntegrationCollection.Name)]
 public class DegradationTests : IClassFixture<RedisDownFactory>
@@ -49,8 +39,7 @@ public class DegradationTests : IClassFixture<RedisDownFactory>
   [Fact]
   public async Task WithRedisDownTheCatalogStillReads()
   {
-    // El decorador de cache no puede convertir un fallo de infraestructura en un 500:
-    // si Redis no responde, se sirve de la base y ya está.
+    // El decorador de cache no puede convertir un fallo de infraestructura en un 500.
     using var client = _factory.Anonymous();
 
     Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/v1/category")).StatusCode);
@@ -71,9 +60,8 @@ public class DegradationTests : IClassFixture<RedisDownFactory>
   [Fact]
   public async Task WithRedisDownAPurchaseWithAnIdempotencyKeyStillSucceeds()
   {
-    // ⚠️ EL test del P0. Sin idempotencia disponible, la compra se ejecuta igual: se
-    // pierde la protección contra el doble submit, que es una optimización, pero NO se
-    // devuelve 500 por una operación que la base ya confirmó.
+    // Sin idempotencia disponible la compra se ejecuta igual: no se puede devolver un 500
+    // por una operación que la base ya confirmó.
     using var admin = await _factory.AsAdminAsync();
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 5);
 
@@ -93,10 +81,8 @@ public class DegradationTests : IClassFixture<RedisDownFactory>
   [Fact]
   public async Task WithRedisDownTheGuaranteeStillHoldsAndTheRetryDoesNotBuyTwice()
   {
-    // ⭐ El test que justifica todo el rediseño. Con el almacén en Redis esto NO se podía
-    // cumplir: sin Redis no había idempotencia, punto. Ahora la marca se escribe en la
-    // misma transacción que el descuento de stock, así que "el almacén no está" y "la
-    // compra no puede ocurrir" son el mismo evento y la pregunta desaparece.
+    // La marca se escribe en la misma transacción que el descuento de stock, así que la
+    // garantía no depende de Redis: sin base no hay compra, y con base hay marca.
     using var admin = await _factory.AsAdminAsync();
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
 
@@ -112,18 +98,16 @@ public class DegradationTests : IClassFixture<RedisDownFactory>
     // Lo que importa: 10 - 3, no 10 - 6.
     Assert.Equal(7, await IdempotencyTests.StockOf(admin, sku));
 
-    // Y el reintento se anuncia como replay aunque el atajo de Redis no exista: la
-    // cabecera sale de un hecho que reporta el servicio, no del filtro.
+    // La cabecera de replay sale de lo que reporta el servicio, no del atajo de Redis.
     Assert.Equal("true", second.Headers.GetValues(IdempotentAttribute.ReplayedHeader).Single());
   }
 
   [Fact]
   public async Task WithRedisDownConcurrentRequestsWithTheSameKeyStillBuyOnce()
   {
-    // Sin el atajo no hay ni reserva ni 409: quien arbitra es la clave primaria de
-    // ExecutedCommands. El que pierde se bloquea en la clave hasta que el otro confirma,
-    // choca, su transacción entera se deshace —incluido el stock— y devuelve el
-    // resultado del ganador. Por eso aquí NO se admite Conflict: todas son 200.
+    // Sin el atajo arbitra la clave primaria de ExecutedCommands: el perdedor choca, su
+    // transacción se deshace entera y devuelve el resultado del ganador. De ahí que no
+    // haya ningún 409 aquí.
     using var admin = await _factory.AsAdminAsync();
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 20);
 
@@ -145,8 +129,8 @@ public class DegradationTests : IClassFixture<RedisDownFactory>
   [Fact]
   public async Task WithRedisDownReusingTheKeyWithADifferentBodyIsStill422()
   {
-    // La comprobación de la huella también bajó a la transacción: es una excepción de
-    // dominio (IdempotencyConflictAppException), no un resultado del filtro HTTP.
+    // La huella se comprueba en la transacción y lo señala una excepción de dominio, así
+    // que el 422 no depende del filtro HTTP.
     using var admin = await _factory.AsAdminAsync();
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
 
@@ -180,9 +164,8 @@ public class DegradationTests : IClassFixture<RedisDownFactory>
   [Fact]
   public async Task WithoutABrokerThePurchaseCompletesAndTheEventWaitsInTheOutbox()
   {
-    // El host de tests corre SIN broker a propósito (RabbitMq:ConnectionString vacío).
-    // Escribir el evento es parte de la transacción de negocio y no puede depender de
-    // que haya broker: la compra se completa y el evento se acumula en OutboxMessages.
+    // Escribir el evento es parte de la transacción de negocio y no puede depender de que
+    // haya broker: la compra se completa y el evento espera en OutboxMessages.
     using var admin = await _factory.AsAdminAsync();
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 5);
 

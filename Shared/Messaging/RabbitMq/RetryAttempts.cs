@@ -7,28 +7,9 @@ namespace ApiEcommerce.Shared.Messaging.RabbitMq;
 /// El contador de intentos de un mensaje, en una cabecera <b>nuestra</b>.
 /// </summary>
 /// <remarks>
-/// <para>
-/// ⚠️ <b>Nuestro y no <c>x-death</c>, a propósito.</b> Leerlo del broker tenía dos
-/// problemas, y los dos eran reales:
-/// </para>
-/// <para>
-/// 1) <b>Un replay desde la DLQ no reseteaba el presupuesto.</b> <c>x-death</c> sobrevive
-/// al paso por la DLQ, así que un mensaje que un operador reencolaba volvía con el
-/// contador ya agotado y moría en la primera entrega: la herramienta que existe para
-/// recuperar mensajes no los recuperaba. Con una cabecera nuestra, el procedimiento de
-/// replay es <b>borrar esta cabecera</b> — una, con nombre conocido.
-/// </para>
-/// <para>
-/// 2) <b>El parseo era frágil.</b> <c>x-death</c> es una lista de diccionarios cuyos
-/// valores de texto viajan como <c>byte[]</c>: compararlos con un <c>string</c> sin
-/// convertir devuelve <c>false</c> en silencio (ya pasó). Y había que filtrar por el
-/// NOMBRE de la cola de reintento, que ahora lleva el TTL dentro para poder cambiarlo sin
-/// un 406 — o sea que el contador se habría reseteado solo al cambiar el plazo.
-/// </para>
-/// <para>
-/// Es una función pura y vive fuera del consumidor para poder probarla sin broker. Es la
-/// misma razón por la que el efecto y la unidad transaccional también salieron de ahí.
-/// </para>
+/// Nuestra y no <c>x-death</c>: esa sobrevive al paso por la DLQ, así que un replay volvía con el
+/// presupuesto ya gastado, y su parseo es frágil (valores <c>byte[]</c> y filtrado por el nombre
+/// de la cola de reintento, que lleva el TTL dentro). Es pura, y se prueba sin broker.
 /// </remarks>
 public static class RetryAttempts
 {
@@ -37,10 +18,8 @@ public static class RetryAttempts
 
   /// <summary>Intentos ya gastados por este mensaje.</summary>
   /// <remarks>
-  /// Acepta los tres formatos en los que puede llegar el valor: el <c>int</c> que
-  /// escribimos nosotros, y el texto —crudo o como <c>byte[]</c>— de alguien que la haya
-  /// puesto a mano desde la UI del broker. Un valor ilegible cuenta como cero: preferible
-  /// un reintento de más que descartar un mensaje por no saber leer una cabecera.
+  /// Acepta los formatos en que puede llegar el valor, incluido el texto de quien la ponga a mano
+  /// desde la UI del broker. Un valor ilegible cuenta como cero: mejor un reintento de más.
   /// </remarks>
   /// <param name="headers">Cabeceras del mensaje entrante, o <c>null</c>.</param>
   public static int Read(IDictionary<string, object?>? headers)
@@ -56,8 +35,7 @@ public static class RetryAttempts
       _ => 0
     };
 
-    // Un valor negativo solo puede venir de alguien tocándolo a mano, y daría un
-    // presupuesto infinito de reintentos.
+    // Un negativo solo puede venir de una edición manual, y daría reintentos infinitos.
     return attempts < 0 ? 0 : attempts;
   }
 
@@ -65,8 +43,7 @@ public static class RetryAttempts
   /// Copia las cabeceras del mensaje y deja el contador en <paramref name="attempts"/>.
   /// </summary>
   /// <remarks>
-  /// Copia y no muta: el diccionario de entrada es del mensaje que estamos consumiendo, y
-  /// reutilizarlo tal cual acopla lo que publicamos a lo que recibimos.
+  /// Copia y no muta: el diccionario de entrada es del mensaje que estamos consumiendo.
   /// </remarks>
   /// <param name="headers">Cabeceras del mensaje entrante, o <c>null</c>.</param>
   /// <param name="attempts">Intentos gastados, contando el que acaba de fallar.</param>

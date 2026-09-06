@@ -5,9 +5,11 @@ using ApiEcommerce.Features.Catalog.Models;
 namespace ApiEcommerce.Features.Catalog.Mapping;
 
 
+/// <summary>Mapeos entre <c>Product</c> y sus DTOs.</summary>
 public class ProductProfile : Profile
 {
 
+  /// <summary>Registra los mapeos de lectura, creación y PATCH.</summary>
   public ProductProfile()
   {
     // lectura: CategoryName viaja plano (la navegación puede venir sin cargar)
@@ -26,16 +28,11 @@ public class ProductProfile : Profile
         .ForMember(d => d.CreatedAt, o => o.Ignore())
         .ForMember(d => d.UpdatedAt, o => o.Ignore());
 
-    // PATCH parcial, mapeado SOBRE la entidad rastreada.
+    // PATCH parcial sobre la entidad rastreada: omitir el campo o enviarlo null significa
+    // "no tocar", y para vaciar Description/ImageUrl hay que enviar "".
     //
-    // `s.X ?? d.X` en vez de `.ForAllMembers(o => o.Condition(...))`: la Condition
-    // recibe el valor YA convertido al tipo del destino, así que un `int?` nulo
-    // llegaba como 0 y el PATCH machacaba CategoryId/Stock/Price con ceros
-    // (CategoryId = 0 reventaba la FK y salía un 500). Esto es explícito y no
-    // depende de la semántica interna de AutoMapper.
-    //
-    // Semántica: omitir el campo (o enviarlo null) significa "no tocar".
-    // Para vaciar Description/ImageUrl hay que enviar "", no null.
+    // `s.X ?? d.X` en vez de ForAllMembers(Condition(...)): la Condition recibe el valor
+    // ya convertido al destino, así que un `int?` nulo llega como 0 y machaca el campo.
     CreateMap<UpdateProductDto, Product>()
         .ForMember(d => d.Id, o => o.Ignore())
         .ForMember(d => d.RowVersion, o => o.Ignore())   // lo gestiona SQL Server
@@ -49,8 +46,7 @@ public class ProductProfile : Profile
         .ForMember(d => d.SKU, o => o.MapFrom((s, d) => s.SKU ?? d.SKU))
         .ForMember(d => d.Stock, o => o.MapFrom((s, d) => s.Stock ?? d.Stock))
         .ForMember(d => d.CategoryId, o => o.MapFrom((s, d) => s.CategoryId ?? d.CategoryId));
-    // Nota: UpdateProductDto.RowVersion NO se mapea a la entidad. Lo gestiona SQL Server;
-    // el valor que manda el cliente sirve solo para COMPARAR (ver ProductRules).
+    // El If-Match del cliente no se mapea a la entidad: solo sirve para comparar.
   }
 
 }

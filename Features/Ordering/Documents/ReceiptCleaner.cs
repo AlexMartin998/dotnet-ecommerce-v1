@@ -4,13 +4,10 @@ using Microsoft.Extensions.Options;
 namespace ApiEcommerce.Features.Ordering.Documents;
 
 
-/// <summary>
-/// El temporizador del recolector de comprobantes huérfanos. Nada más.
-/// </summary>
+/// <summary>El temporizador del recolector de comprobantes huérfanos. Nada más.</summary>
 /// <remarks>
-/// Todo lo que decide qué se borra vive en <see cref="IOrphanReceiptCollector"/>, fuera de
-/// aquí, para que se pueda probar sin esperar horas. Esta clase solo aporta el reloj y la
-/// disciplina de no tumbar el proceso.
+/// Qué se borra lo decide <see cref="IOrphanReceiptCollector"/>, fuera de aquí, para poder
+/// probarlo sin esperar horas.
 /// </remarks>
 public sealed class ReceiptCleaner(
     IServiceScopeFactory scopeFactory,
@@ -29,8 +26,7 @@ public sealed class ReceiptCleaner(
 
     var interval = TimeSpan.FromHours(_options.CleanupIntervalHours);
 
-    // Un respiro antes de la primera pasada: el arranque ya tiene bastante —migraciones,
-    // seeding, la primera conexión al broker— sin que además alguien recorra el disco.
+    // Un respiro antes de la primera pasada: el arranque ya tiene bastante sin recorrer el disco.
     try { await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken); }
     catch (OperationCanceledException) { return; }
 
@@ -38,8 +34,7 @@ public sealed class ReceiptCleaner(
     {
       try
       {
-        // Scope propio por pasada: este job es un singleton y el recolector es Scoped
-        // (depende del repositorio, que depende del DbContext).
+        // Scope propio por pasada: el job es singleton y el recolector es Scoped.
         using var scope = scopeFactory.CreateScope();
 
         await scope.ServiceProvider
@@ -52,10 +47,8 @@ public sealed class ReceiptCleaner(
       }
       catch (Exception ex)
       {
-        // SIN filtro que excluya OperationCanceledException: una OCE que NO venga del
-        // stoppingToken escaparía de ExecuteAsync, y desde .NET 6 el default es
-        // BackgroundServiceExceptionBehavior.StopHost — un fallo recogiendo basura
-        // tumbaría la API entera.
+        // Sin filtro que excluya OperationCanceledException: una que no venga del stoppingToken
+        // escaparía, y BackgroundServiceExceptionBehavior.StopHost tumbaría la API entera.
         logger.LogError(ex, "Orphan document collection failed; retrying next cycle");
       }
 

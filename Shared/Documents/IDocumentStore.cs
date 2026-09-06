@@ -2,38 +2,20 @@ namespace ApiEcommerce.Shared.Documents;
 
 
 /// <summary>
-/// Almacén de documentos <b>privados</b> (comprobantes, facturas): se guardan, se leen y
-/// se borran por una <b>clave opaca</b>, nunca por una ruta.
+/// Almacén de documentos privados (comprobantes, facturas): se guardan, se leen y se
+/// borran por una clave opaca, nunca por una ruta.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Es el puerto que permite que hoy sea el sistema de ficheros y mañana S3, R2, MinIO o
-/// Cloudinary <b>sin tocar ni el dominio, ni el consumidor, ni el controller</b>: cambia
-/// la implementación que se registra en el composition root y nada más.
-/// </para>
-/// <para>
-/// ⚠️ <b>No es <see cref="Storage.IFileStorage"/>, y no debe fusionarse con él.</b> Aquel
-/// guarda imágenes de producto en <c>wwwroot/</c> para que <c>UseStaticFiles</c> las sirva
-/// a cualquiera: son públicas y esa es su gracia. Estas no. Un comprobante lleva el nombre
-/// del cliente, su dirección y lo que pagó; ponerlo bajo <c>wwwroot/</c> lo deja al alcance
-/// de quien adivine la ruta, sin pasar por autenticación. Dos necesidades opuestas no
-/// caben detrás de la misma abstracción por mucho que las dos "guarden ficheros".
-/// </para>
-/// <para>
-/// <b>La clave es OPACA</b>. Quien llama la guarda y la devuelve, y no puede construirla,
-/// interpretarla ni convertirla en una ruta. Eso es lo que hace que persistirla en base de
-/// datos siga siendo válido después de migrar de infraestructura: si ahí hubiera
-/// <c>/app/documents/2026/09/x.pdf</c>, el día del cambio habría que reescribir todas las
-/// filas.
-/// </para>
+/// No es <see cref="Storage.IFileStorage"/> ni debe fusionarse con él: aquel sirve
+/// imágenes públicas desde <c>wwwroot/</c> y un comprobante lleva datos del cliente. La
+/// clave es opaca para que persistirla siga valiendo tras migrar de infraestructura.
 /// </remarks>
 public interface IDocumentStore
 {
   /// <summary>Guarda un documento y devuelve la clave con la que recuperarlo.</summary>
   /// <remarks>
-  /// La clave la genera el almacén, e incluye una parte <b>aleatoria</b>: no se puede
-  /// deducir de la orden ni del usuario. Aunque el acceso ya esté protegido, una clave
-  /// adivinable convierte cualquier despiste futuro en una fuga.
+  /// La clave la genera el almacén e incluye una parte aleatoria: una clave adivinable
+  /// convierte cualquier despiste futuro en una fuga.
   /// </remarks>
   /// <param name="content">Contenido y metadatos del documento.</param>
   /// <param name="ct">Token de cancelación.</param>
@@ -41,9 +23,8 @@ public interface IDocumentStore
 
   /// <summary>Abre un documento por su clave, o <c>null</c> si no existe.</summary>
   /// <remarks>
-  /// Devuelve <c>null</c> y <b>no lanza</b> cuando no está: que un documento haya
-  /// desaparecido del almacén es una condición que quien llama tiene que poder tratar
-  /// —el comprobante puede estar todavía generándose— y no un fallo del sistema.
+  /// Devuelve <c>null</c> y no lanza: que el documento no esté todavía (se está generando)
+  /// es una condición que quien llama debe poder tratar, no un fallo del sistema.
   /// </remarks>
   /// <param name="key">La clave devuelta por <see cref="SaveAsync"/>.</param>
   /// <param name="ct">Token de cancelación.</param>
@@ -53,25 +34,12 @@ public interface IDocumentStore
   Task DeleteAsync(string key, CancellationToken ct = default);
 
   /// <summary>
-  /// Enumera los documentos escritos <b>antes</b> de un instante dado.
+  /// Enumera los documentos escritos antes de un instante dado, para poder recoger la basura.
   /// </summary>
   /// <remarks>
-  /// <para>
-  /// Existe para que alguien pueda recoger la basura: el documento se escribe <b>dentro</b>
-  /// de la transacción que lo referencia, así que un commit fallido deja un fichero que
-  /// ninguna fila apunta. Sin poder enumerar, esos huérfanos no se pueden encontrar nunca.
-  /// </para>
-  /// <para>
-  /// ⚠️ El filtro por fecha es parte del contrato y <b>no una comodidad</b>: entre que el
-  /// fichero existe y existe la fila que lo apunta hay una ventana, así que quien recoja
-  /// basura tiene que poder decir «solo lo viejo». Ver
-  /// <c>DocumentStorageOptions.OrphanGraceHours</c>.
-  /// </para>
-  /// <para>
-  /// Devuelve un flujo y no una lista: todo almacén sabe hacer esto (S3 <c>ListObjects</c>,
-  /// R2, MinIO, Cloudinary), pero todos pagan por página, y materializar un bucket entero
-  /// en memoria para borrar tres ficheros no es una opción.
-  /// </para>
+  /// El filtro por fecha es parte del contrato: entre el fichero y la fila que lo apunta
+  /// hay una ventana (ver <c>DocumentStorageOptions.OrphanGraceHours</c>). Devuelve un
+  /// flujo porque todo almacén pagina y materializar un bucket entero no es una opción.
   /// </remarks>
   /// <param name="writtenBefore">Solo documentos escritos antes de este instante.</param>
   /// <param name="ct">Token de cancelación.</param>
@@ -94,27 +62,18 @@ public readonly record struct DocumentReference(string Key, long SizeBytes);
 
 /// <summary>Contenido de un documento, con lo que hace falta para servirlo por HTTP.</summary>
 /// <remarks>
-/// Lleva <see cref="Stream"/> y no <c>byte[]</c> a propósito: un comprobante son unas
-/// decenas de KB, pero la misma interfaz servirá mañana para adjuntos grandes, y meter el
-/// fichero entero en memoria por cada descarga es la clase de decisión que solo duele
-/// cuando ya hay tráfico. Quien lo recibe es responsable de liberarlo.
+/// Lleva <see cref="Stream"/> y no <c>byte[]</c> pensando en adjuntos grandes: meter el
+/// fichero entero en memoria por cada descarga solo duele cuando ya hay tráfico.
 /// </remarks>
-/// <param name="Stream">El contenido. <b>Hay que liberarlo</b>.</param>
+/// <param name="Stream">El contenido. Hay que liberarlo.</param>
 /// <param name="ContentType">Tipo MIME (<c>application/pdf</c>).</param>
 /// <param name="FileName">
-/// Nombre sugerido para la descarga (<c>ORD-2026-000012.pdf</c>). Es de presentación: el
-/// almacén no lo usa para localizar nada.
-/// <para>
-/// ⚠️ Al <b>abrir</b>, el almacén solo puede devolver lo que sabe —el nombre derivado de
-/// la clave—, y eso no es un nombre presentable: quien descarga acaba con
-/// <c>cdfdcf87….pdf</c> en su carpeta. Cómo se llama el documento de cara al usuario es
-/// conocimiento del dominio, así que quien lo sirve lo reemplaza (<c>content with
-/// { FileName = … }</c>). Guardarlo en el almacén para poder devolverlo sería meter
-/// presentación en la infraestructura, y obligaría a cada proveedor futuro a tener dónde
-/// ponerlo.
-/// </para>
+/// Nombre sugerido para la descarga (<c>ORD-2026-000012.pdf</c>). Es de presentación: al
+/// abrir, el almacén solo puede derivarlo de la clave, así que quien lo sirve lo reemplaza
+/// (<c>content with { FileName = … }</c>).
 /// </param>
 public sealed record DocumentContent(Stream Stream, string ContentType, string FileName) : IAsyncDisposable
 {
+  /// <summary>Libera el <see cref="Stream"/>.</summary>
   public ValueTask DisposeAsync() => Stream.DisposeAsync();
 }

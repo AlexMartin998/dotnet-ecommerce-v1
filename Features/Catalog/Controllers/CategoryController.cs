@@ -10,19 +10,14 @@ using ApiEcommerce.Features.Catalog.Service;
 namespace ApiEcommerce.Features.Catalog.Controllers;
 
 
+/// <summary>Endpoints de categorías: CRUD y listados.</summary>
 [ApiController]
 [ApiVersion("1.0")]
 [Route("api/v{version:apiVersion}/[controller]")] // api/v1/category
 [Produces("application/json")]
-// Cerrado por defecto: sin ningún atributo, una acción de este controller exige
-// estar autenticado. Los GET públicos se abren con [AllowAnonymous] y las
-// escrituras se restringen con [Authorize(Roles = ...)] una a una.
-//
-// OJO con la semántica de ASP.NET Core: varios [Authorize] se COMBINAN (AND), no se
-// sobreescriben. Poner [Authorize(Roles = "admin")] en la clase y [Authorize] en una
-// acción NO relaja nada: la acción seguiría exigiendo el rol admin. El único atributo
-// que gana sobre la clase es [AllowAnonymous]. Por eso la clase lleva el requisito
-// más DÉBIL (estar autenticado) y cada acción añade el suyo.
+// Cerrado por defecto. Varios [Authorize] se combinan (AND) y solo [AllowAnonymous]
+// gana sobre la clase, así que aquí va el requisito más débil (estar autenticado) y
+// cada acción añade el suyo.
 [Authorize]
 public class CategoryController : ControllerBase
 {
@@ -33,8 +28,7 @@ public class CategoryController : ControllerBase
         _service = service;
     }
 
-    // Sin try/catch: las excepciones de dominio que lance el servicio las traduce
-    // GlobalExceptionHandler a ProblemDetails (ver AGENTS/docs/04-error-handling.md).
+    // Sin try/catch: GlobalExceptionHandler traduce las excepciones de dominio a ProblemDetails.
 
     [AllowAnonymous]
     [HttpGet(Name = "GetCategories")]

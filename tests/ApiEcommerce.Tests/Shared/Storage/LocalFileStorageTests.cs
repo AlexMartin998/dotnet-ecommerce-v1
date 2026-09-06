@@ -9,8 +9,8 @@ namespace ApiEcommerce.Tests.Shared.Storage;
 
 
 /// <summary>
-/// Subida de imágenes. Cada test de aquí corresponde a una vía de ataque real, no a
-/// una comprobación de formulario.
+/// Subida de imágenes. Cada test corresponde a una vía de ataque, no a una comprobación
+/// de formulario.
 /// </summary>
 /// <remarks>
 /// Escribe en una carpeta temporal propia y la borra al terminar: el disco es la única
@@ -52,7 +52,7 @@ public sealed class LocalFileStorageTests : IDisposable
   }
 
   [Theory]
-  [InlineData("script.svg")]     // SVG lleva JavaScript y se sirve desde el MISMO origen que la API: XSS almacenado
+  [InlineData("script.svg")]     // SVG lleva JavaScript y se sirve desde nuestro origen: XSS almacenado
   [InlineData("pagina.html")]
   [InlineData("shell.php")]
   [InlineData("sin-extension")]
@@ -68,9 +68,8 @@ public sealed class LocalFileStorageTests : IDisposable
   [Fact]
   public async Task SaveProductImageAsync_WhenTheContentIsNotTheDeclaredImage_ThrowsBadRequest()
   {
-    // ⚠️ El test que de verdad importa: extensión .png y Content-Type image/png, pero
-    // los bytes son texto. Extensión y Content-Type los pone el CLIENTE y se pueden
-    // mentir los dos; la firma del archivo, no.
+    // Extensión y Content-Type los pone el cliente y puede mentir en los dos; la firma
+    // del archivo, no.
     var text = System.Text.Encoding.UTF8.GetBytes("esto no es una imagen, es texto plano");
 
     var ex = await Assert.ThrowsAsync<BadOperationAppException>(
@@ -82,8 +81,7 @@ public sealed class LocalFileStorageTests : IDisposable
   [Fact]
   public async Task SaveProductImageAsync_WithAFileTooShortToHaveASignature_ThrowsBadRequest()
   {
-    // La cabecera se lee de 12 bytes: un archivo más corto no se puede verificar, así
-    // que se rechaza. Aceptarlo "porque es pequeño" sería el hueco por el que se cuela todo.
+    // La firma se lee de 12 bytes: lo más corto no se puede verificar, así que se rechaza.
     await Assert.ThrowsAsync<BadOperationAppException>(
         () => Sut().SaveProductImageAsync(Upload([0x89, 0x50, 0x4E, 0x47], "foto.png")));
   }
@@ -93,8 +91,8 @@ public sealed class LocalFileStorageTests : IDisposable
   [Fact]
   public async Task SaveProductImageAsync_GeneratesTheNameOnTheServer()
   {
-    // ⚠️ El nombre del cliente NO se usa, ni siquiera "solo la parte del nombre": es la
-    // puerta de entrada al path traversal. Solo se le lee la extensión.
+    // Del nombre que manda el cliente solo se lee la extensión: lo demás es la puerta de
+    // entrada al path traversal.
     var path = await Sut().SaveProductImageAsync(Upload(Png(64), "../../../etc/passwd.png"));
 
     Assert.StartsWith("/ProductsImages/", path);
@@ -110,9 +108,8 @@ public sealed class LocalFileStorageTests : IDisposable
   [Fact]
   public async Task SaveProductImageAsync_ReturnsARelativePathAndNeverAnAbsoluteUrl()
   {
-    // Persistir "{Request.Scheme}://{Request.Host}/..." (lo que hacía el curso) guarda
-    // una cabecera que controla el cliente, y queda rota al cambiar de dominio o al
-    // meter un proxy delante.
+    // Persistir una URL absoluta guardaría una cabecera que controla el cliente, y se
+    // rompería al cambiar de dominio o al poner un proxy delante.
     var path = await Sut().SaveProductImageAsync(Upload(Png(64), "foto.PNG"));
 
     Assert.StartsWith("/", path);
@@ -151,8 +148,7 @@ public sealed class LocalFileStorageTests : IDisposable
   [InlineData("/OtraCarpeta/foto.png")]              // fuera de la carpeta gestionada
   public async Task DeleteAsync_IgnoresWhatIsNotItsOwn(string? path)
   {
-    // No-op silencioso, y sobre todo: no lanza. Un DELETE de producto no puede fallar
-    // porque su ImageUrl fuera una URL externa.
+    // No lanza: un DELETE de producto no puede fallar porque su ImageUrl fuera externa.
     await Sut().DeleteAsync(path);
   }
 

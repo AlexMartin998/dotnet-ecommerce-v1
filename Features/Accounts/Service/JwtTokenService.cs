@@ -10,26 +10,17 @@ using ApiEcommerce.Features.Accounts.Models;
 namespace ApiEcommerce.Features.Accounts.Service;
 
 
-/// <summary>
-/// Firma JWTs con HMAC-SHA256 a partir de <see cref="JwtOptions"/>.
-/// </summary>
+/// <summary>Firma JWTs con HMAC-SHA256 a partir de <see cref="JwtOptions"/>.</summary>
 /// <remarks>
-/// <para>
-/// Se registra como <b>Singleton</b>: no toca la base de datos ni guarda estado por
-/// request, y la clave de firma se materializa una sola vez en el constructor en vez
-/// de en cada login.
-/// </para>
-/// <para>
-/// <c>IOptions&lt;JwtOptions&gt;</c> y no <c>IConfiguration</c>: la configuración ya viene
-/// validada (<c>ValidateOnStart</c>) y tipada, así que aquí no hay ni un
-/// <c>configuration["Jwt:SecretKey"]</c> que pueda ser <c>null</c>.
-/// </para>
+/// Singleton: sin estado por request, y la clave de firma se materializa una sola vez en el
+/// constructor en vez de en cada login.
 /// </remarks>
 public sealed class JwtTokenService : IJwtTokenService
 {
   private readonly JwtOptions _options;
   private readonly SigningCredentials _credentials;
 
+  /// <summary>Materializa la clave de firma una sola vez.</summary>
   public JwtTokenService(IOptions<JwtOptions> options)
   {
     _options = options.Value;
@@ -38,6 +29,7 @@ public sealed class JwtTokenService : IJwtTokenService
     _credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
   }
 
+  /// <inheritdoc/>
   public (string Token, DateTime ExpiresAt) CreateToken(ApplicationUser user, IEnumerable<string> roles)
   {
     ArgumentNullException.ThrowIfNull(user);
@@ -51,12 +43,10 @@ public sealed class JwtTokenService : IJwtTokenService
       new(JwtRegisteredClaimNames.UniqueName, user.UserName ?? string.Empty),
       new(JwtRegisteredClaimNames.Email, user.Email ?? string.Empty),
 
-      // jti: identificador único del token. Es lo que permitiría revocarlo
-      // (denylist en Redis) sin invalidar todos los tokens del usuario.
+      // jti: identifica el token para poder revocarlo sin invalidar los demás del usuario.
       new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
 
-      // Duplicados en el formato "clásico" de .NET porque es el que leen
-      // [Authorize(Roles = ...)] y User.Identity.Name sin más configuración.
+      // Duplicados en el formato clásico de .NET, que es el que leen [Authorize] y User.Identity.
       new(ClaimTypes.NameIdentifier, user.Id),
       new(ClaimTypes.Name, user.UserName ?? string.Empty)
     };
@@ -68,9 +58,7 @@ public sealed class JwtTokenService : IJwtTokenService
         issuer: _options.Issuer,
         audience: _options.Audience,
         claims: claims,
-        // NotBefore/Expires del JWT van SIEMPRE en UTC: el estándar (RFC 7519)
-        // define `exp` como epoch UTC. Es la única excepción al DateTime.Now local
-        // del resto del proyecto.
+        // En UTC porque la RFC 7519 define `exp` como epoch UTC: única excepción al reloj local.
         notBefore: DateTime.UtcNow,
         expires: expiresAt,
         signingCredentials: _credentials);

@@ -7,18 +7,9 @@ namespace ApiEcommerce.Shared.Idempotency;
 /// Traduce la cabecera <c>Idempotency-Key</c> a una <see cref="CommandIntent"/>.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Esta es la costura entre el protocolo y el dominio, y por eso vive en un helper de
-/// HTTP y no en el servicio: el servicio habla de <b>intenciones</b>, no de cabeceras.
-/// Un job que reprocesa una cola construye la suya con el <c>MessageId</c> y no pasa por
-/// aquí.
-/// </para>
-/// <para>
-/// Lo usa el <b>controller</b>, que es un adaptador de entrada y sí puede leer
-/// <c>HttpContext</c>. El <c>[Idempotent]</c> lee la misma cabecera para su atajo en
-/// Redis; que ambos la lean no es duplicación, son dos niveles distintos con el mismo
-/// dato de entrada.
-/// </para>
+/// Es la costura entre protocolo y dominio, por eso vive en un helper de HTTP y lo usa el
+/// controller: el servicio habla de intenciones, no de cabeceras. Que <c>[Idempotent]</c>
+/// lea la misma cabecera no es duplicación, son dos niveles con el mismo dato de entrada.
 /// </remarks>
 public static class IdempotencyHttpExtensions
 {
@@ -27,17 +18,8 @@ public static class IdempotencyHttpExtensions
   /// <see cref="CommandIntent.None"/> si no declaró ninguna.
   /// </summary>
   /// <remarks>
-  /// <para>
-  /// Sin cabecera no hay intención: la idempotencia la pide el cliente, que es quien sabe
-  /// si está reintentando. Y esa ausencia es además <b>la vía de escape estándar</b>: es
-  /// lo que documenta Adyen para cuando un cliente prefiere seguir sin garantía. La
-  /// decisión de renunciar es suya y explícita, no una degradación silenciosa nuestra.
-  /// </para>
-  /// <para>
-  /// ⚠️ La clave se acota al <b>usuario</b>. Sin eso, dos clientes que casualmente
-  /// generen el mismo GUID se pisarían — y peor, uno recibiría la respuesta del otro,
-  /// que es una fuga de datos entre cuentas. Sin usuario identificado no hay intención.
-  /// </para>
+  /// La clave se acota al usuario: sin eso, dos clientes que generaran el mismo GUID se
+  /// pisarían y uno recibiría la respuesta del otro. Sin usuario no hay intención.
   /// </remarks>
   /// <param name="context">La petición en curso.</param>
   /// <param name="operation">Nombre de la operación, en el lenguaje del dominio.</param>

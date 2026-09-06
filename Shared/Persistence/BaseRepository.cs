@@ -9,28 +9,22 @@ namespace ApiEcommerce.Shared.Persistence;
 /// Implementación genérica del CRUD sobre <c>DbSet&lt;T&gt;</c>.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Esta es la <b>única</b> herencia que el proyecto usa para reutilizar código, y es
-/// deliberada: la base es mecanismo puro (acceso a datos, sin ninguna regla de
-/// negocio) y las subclases solo <b>agregan</b> consultas de dominio, nunca cambian
-/// el CRUD. Por eso los métodos <b>no son <c>virtual</c></b>: nadie puede alterar en
-/// silencio la semántica documentada en <see cref="IBaseRepository{T}"/>.
-/// La política (reglas de negocio) se compone en la capa de servicio; ver
-/// <c>AGENTS/docs/03-service.md</c>.
-/// </para>
-/// <para>
-/// No hay unit of work: cada escritura llama a <c>SaveChangesAsync()</c>. Para
-/// atomicidad entre varios repositorios se usa <c>[Transactional]</c> en la acción.
-/// </para>
+/// Única herencia del proyecto para reutilizar código: la base es mecanismo puro y las
+/// subclases solo agregan consultas de dominio, por eso los métodos no son <c>virtual</c>.
+/// No hay unit of work: cada escritura llama a <c>SaveChangesAsync()</c>.
 /// </remarks>
 public class BaseRepository<T> : IBaseRepository<T> where T : class, IEntity
 {
+  /// <summary>Contexto de EF Core del request.</summary>
   protected readonly AppDbContext _db;
+
+  /// <summary>Conjunto de la entidad <typeparamref name="T"/>.</summary>
   protected readonly DbSet<T> _dbSet;
 
   /// <summary>Cacheado: <c>typeof</c> por llamada sería desperdicio en un método caliente.</summary>
   private static readonly bool IsAuditable = typeof(IAuditable).IsAssignableFrom(typeof(T));
 
+  /// <summary>Crea el repositorio sobre el contexto del request.</summary>
   public BaseRepository(AppDbContext db)
   {
     _db = db;
@@ -48,24 +42,9 @@ public class BaseRepository<T> : IBaseRepository<T> where T : class, IEntity
   /// Orden por defecto de los listados: lo más nuevo primero.
   /// </summary>
   /// <remarks>
-  /// <para>
-  /// Usa <c>EF.Property</c> en vez de un cast a <see cref="IAuditable"/> porque un
-  /// cast dentro del árbol de expresión no es traducible a SQL.
-  /// </para>
-  /// <para>
-  /// ⚠️ <b>El desempate por <c>Id</c> no es cosmético: sin él, paginar está roto.</b>
-  /// <c>CreatedAt</c> no es único —lo estampa <c>DateTime.Now</c>, y varias filas creadas
-  /// en el mismo tick lo comparten; el seeding crea cinco categorías así—. Con un orden
-  /// no total, SQL Server puede devolver las filas empatadas en distinto orden en cada
-  /// consulta, y como cada página es un <c>OFFSET/FETCH</c> <b>independiente</b>, una fila
-  /// puede salir en dos páginas y otra en ninguna. La clave primaria da el orden total que
-  /// lo hace determinista.
-  /// </para>
-  /// <para>
-  /// Lo tenían escrito a mano los repositorios que paginan de verdad
-  /// (<c>ProductRepository</c>, <c>OrderRepository</c>) y faltaba justo aquí, en el camino
-  /// genérico que sirve <c>GET /api/v1/category/paged</c>.
-  /// </para>
+  /// Usa <c>EF.Property</c> porque un cast a <see cref="IAuditable"/> dentro del árbol de
+  /// expresión no es traducible a SQL. El desempate por <c>Id</c> da el orden total sin el
+  /// cual paginar está roto: <c>CreatedAt</c> no es único.
   /// </remarks>
   protected IQueryable<T> ApplyDefaultOrder(IQueryable<T> query)
       => IsAuditable
@@ -73,19 +52,21 @@ public class BaseRepository<T> : IBaseRepository<T> where T : class, IEntity
                  .ThenByDescending(e => EF.Property<int>(e, nameof(IEntity.Id)))
           : query.OrderByDescending(e => EF.Property<int>(e, nameof(IEntity.Id)));
 
+  /// <inheritdoc />
   public async Task<T?> GetByIdAsync(int id, CancellationToken ct = default)
       => await _dbSet.FindAsync([id], ct);
 
+  /// <inheritdoc />
   public async Task<IEnumerable<T>> GetAllAsync(CancellationToken ct = default)
       => await ApplyDefaultOrder(Query()).ToListAsync(ct);
 
+  /// <inheritdoc />
   public async Task<PagedResult<T>> GetPagedAsync(int page, int pageSize, CancellationToken ct = default)
   {
     var ordered = ApplyDefaultOrder(Query());
 
-    // El COUNT va primero y sobre la misma consulta base: así el total corresponde
-    // al mismo filtro que la página (aquí no hay filtro, pero la forma se mantiene
-    // para cuando lo haya).
+    // El COUNT va sobre la misma consulta base, para que el total corresponda al mismo
+    // filtro que la página.
     var total = await ordered.CountAsync(ct);
 
     var items = await ordered
@@ -96,6 +77,7 @@ public class BaseRepository<T> : IBaseRepository<T> where T : class, IEntity
     return new PagedResult<T>(items, page, pageSize, total);
   }
 
+  /// <inheritdoc />
   public async Task<T> AddAsync(T entity, CancellationToken ct = default)
   {
     await _dbSet.AddAsync(entity, ct);
@@ -103,11 +85,11 @@ public class BaseRepository<T> : IBaseRepository<T> where T : class, IEntity
     return entity;
   }
 
+  /// <inheritdoc />
   public async Task<T> UpdateAsync(T entity, CancellationToken ct = default)
   {
-    // Si la entidad ya viene rastreada (el caso normal: GetByIdAsync + Map encima),
-    // llamar a Update() marcaría TODAS las columnas como modificadas y generaría un
-    // UPDATE de la fila entera. Solo se adjunta cuando viene desconectada.
+    // Con la entidad ya rastreada, Update() marcaría todas las columnas como modificadas:
+    // solo se adjunta cuando viene desconectada.
     if (_db.Entry(entity).State == EntityState.Detached)
       _dbSet.Update(entity);
 
@@ -115,6 +97,7 @@ public class BaseRepository<T> : IBaseRepository<T> where T : class, IEntity
     return entity;
   }
 
+  /// <inheritdoc />
   public async Task DeleteAsync(int id, CancellationToken ct = default)
   {
     var entity = await GetByIdAsync(id, ct);
@@ -124,14 +107,16 @@ public class BaseRepository<T> : IBaseRepository<T> where T : class, IEntity
     await _db.SaveChangesAsync(ct);
   }
 
-  // AnyAsync() es un `SELECT 1`: no materializa ni rastrea la entidad,
-  // a diferencia del FindAsync() que se usaba antes.
+  /// <inheritdoc />
+  /// <remarks><c>AnyAsync()</c> es un <c>SELECT 1</c>: no materializa ni rastrea la entidad.</remarks>
   public async Task<bool> ExistsAsync(int id, CancellationToken ct = default)
       => await _dbSet.AnyAsync(e => EF.Property<int>(e, nameof(IEntity.Id)) == id, ct);
 
+  /// <inheritdoc />
   public async Task SaveChangesAsync(CancellationToken ct = default)
       => await _db.SaveChangesAsync(ct);
 
+  /// <inheritdoc />
   public async Task<bool> ExistsByFieldAsync(
       string fieldName, string value, int? excludeId = null, CancellationToken ct = default)
   {

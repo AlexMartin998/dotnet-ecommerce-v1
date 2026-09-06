@@ -11,20 +11,11 @@ using Moq;
 namespace ApiEcommerce.Tests.Integration;
 
 
-/// <summary>
-/// El recolector de comprobantes huérfanos.
-/// </summary>
+/// <summary>El recolector de comprobantes huérfanos.</summary>
 /// <remarks>
-/// <para>
-/// ⚠️ <b>Este componente BORRA FICHEROS</b>, así que los tests que de verdad importan no son
-/// los del camino feliz: son los dos que comprueban que <b>no</b> borra. Se pueden escribir
-/// porque el efecto vive fuera del <c>BackgroundService</c> —la lección de
-/// <c>planning/18</c>—; contra un job con un temporizador de horas dentro no habría forma.
-/// </para>
-/// <para>
-/// Usa el almacén y la base <b>reales</b> del host de tests: es un componente cuyo trabajo
-/// entero es la interacción entre los dos, y con ambos falsos no probaría nada.
-/// </para>
+/// Este componente borra ficheros, así que los tests que importan son los que comprueban
+/// que no borra. Usa el almacén y la base reales, porque su trabajo entero es la
+/// interacción entre los dos.
 /// </remarks>
 [Collection(IntegrationCollection.Name)]
 public class OrphanReceiptCollectorTests(ApiFactory factory)
@@ -36,9 +27,8 @@ public class OrphanReceiptCollectorTests(ApiFactory factory)
 
   /// <summary>Un recolector con la gracia que pida el test.</summary>
   /// <remarks>
-  /// La gracia se inyecta en vez de tocar la del host porque es <b>la</b> variable de este
-  /// componente: los dos casos que hay que distinguir son «viejo y sin dueño» y «recién
-  /// escrito», y solo cambia ese número.
+  /// La gracia es la variable del componente: distingue «viejo y sin dueño» de «recién
+  /// escrito», así que se inyecta en vez de tocar la del host.
   /// </remarks>
   private OrphanReceiptCollector Collector(int graceHours, IOrderRepository? orders = null)
   {
@@ -54,8 +44,7 @@ public class OrphanReceiptCollectorTests(ApiFactory factory)
   /// <summary>Envejece un fichero para que caiga del lado viejo del corte.</summary>
   private string Age(string key, TimeSpan by)
   {
-    // La clave es lo único que el test sabe del documento, igual que el resto del sistema:
-    // la ruta se compone con la raíz configurada y nada más.
+    // La clave es lo único que se sabe del documento: la ruta sale de la raíz configurada.
     var root = factory.Services.GetRequiredService<IOptions<DocumentStorageOptions>>().Value.RootPath;
     var path = Path.Combine(root, key.Replace('/', Path.DirectorySeparatorChar));
 
@@ -81,8 +70,8 @@ public class OrphanReceiptCollectorTests(ApiFactory factory)
   [Fact]
   public async Task ATruncatedFileNeedsNoSpecialCase()
   {
-    // Una escritura que falló a mitad deja un PDF incompleto. Como `SaveAsync` nunca
-    // devolvió clave, nadie lo referencia: cae por la misma regla que cualquier huérfano.
+    // Un PDF truncado no tiene clave devuelta, así que nadie lo referencia: cae por la
+    // misma regla que cualquier huérfano y no necesita caso aparte.
     var root = factory.Services.GetRequiredService<IOptions<DocumentStorageOptions>>().Value.RootPath;
     var folder = Path.Combine(root, "2020", "01");
     Directory.CreateDirectory(folder);
@@ -101,8 +90,7 @@ public class OrphanReceiptCollectorTests(ApiFactory factory)
   [Fact]
   public async Task NeverCollectsADocumentAnOrderPointsAt()
   {
-    // ⭐ Borrar de más es perder el comprobante de un cliente. Este es el test que hay que
-    // tener aunque no se tenga ningún otro.
+    // Borrar de más es perder el comprobante de un cliente.
     using var admin = await factory.AsAdminAsync();
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 5);
 
@@ -123,9 +111,8 @@ public class OrphanReceiptCollectorTests(ApiFactory factory)
   [Fact]
   public async Task NeverCollectsAFileThatWasJustWritten()
   {
-    // ⭐ ⚠️ EL caso peligroso. El PDF se escribe DENTRO de la transacción, así que existe un
-    // rato antes que la fila que lo apunta: sin periodo de gracia, el recolector borraría
-    // comprobantes buenos a mitad de vuelo, y eso no se recupera.
+    // El PDF existe un rato antes que la fila que lo apunta: sin periodo de gracia, el
+    // recolector borraría comprobantes buenos a mitad de vuelo.
     var saved = await Documents.SaveAsync(Pdf());   // recién escrito, sin dueño todavía
 
     var deleted = await Collector(graceHours: 24).CollectAsync();
@@ -139,8 +126,8 @@ public class OrphanReceiptCollectorTests(ApiFactory factory)
   [Fact]
   public async Task WhenTheDatabaseCannotAnswerNothingIsDeleted()
   {
-    // Ante la duda, no se borra: si no se puede saber quién referencia qué, saltarse el
-    // lote deja basura una vuelta más; borrarlo pierde documentos para siempre.
+    // Ante la duda no se borra: saltarse el lote deja basura una vuelta, borrarlo pierde
+    // documentos para siempre.
     var saved = await Documents.SaveAsync(Pdf());
     Age(saved.Key, TimeSpan.FromHours(48));
 

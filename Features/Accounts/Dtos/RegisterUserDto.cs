@@ -20,9 +20,7 @@ public class RegisterUserDto
   [MaxLength(100, ErrorMessage = "Name can't be longer than 100 characters")]
   public string? Name { get; set; }
 
-  // La política de fuerza real (mayúscula, dígito, longitud) la aplica Identity en
-  // AddIdentity(options.Password...). Aquí solo se corta lo obviamente inválido
-  // antes de llegar al servicio.
+  // La política de fuerza real la aplica Identity; aquí solo se corta lo obviamente inválido.
   [Required(ErrorMessage = "Password is required")]
   [MinLength(8, ErrorMessage = "Password can't be shorter than 8 characters")]
   [MaxLength(100, ErrorMessage = "Password can't be longer than 100 characters")]

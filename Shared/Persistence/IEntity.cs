@@ -3,24 +3,28 @@ namespace ApiEcommerce.Shared.Persistence;
 
 
 /// <summary>
-/// Marca una entidad con clave primaria entera.
-/// Permite que los genéricos (<c>IBaseRepository&lt;T&gt;</c>, <c>ICrudService&lt;...&gt;</c>)
-/// lean el <c>Id</c> sin recurrir a reflexión y restrinjan sus parámetros de tipo.
-/// Equivale al <c>&lt;ID&gt;</c> de <c>JpaRepository&lt;T, ID&gt;</c> de Spring Data.
+/// Marca una entidad con clave primaria entera, para que los genéricos
+/// (<c>IBaseRepository&lt;T&gt;</c>, <c>ICrudService&lt;...&gt;</c>) lean el <c>Id</c> sin
+/// reflexión y restrinjan sus parámetros de tipo.
 /// </summary>
 public interface IEntity
 {
+  /// <summary>Clave primaria.</summary>
   int Id { get; }
 }
 
 
 /// <summary>
-/// Entidad con marcas de tiempo. <see cref="Data.AppDbContext"/> las estampa
-/// automáticamente al guardar (equivalente a <c>@CreatedDate</c> / <c>@LastModifiedDate</c>
-/// de Spring Data Auditing), así que <b>no se asignan a mano</b> en repositorios ni servicios.
+/// Entidad con marcas de tiempo, que <see cref="Data.AppDbContext"/> estampa al guardar.
 /// </summary>
+/// <remarks>
+/// No se asignan a mano en repositorios ni servicios.
+/// </remarks>
 public interface IAuditable : IEntity
 {
+  /// <summary>Fecha de creación.</summary>
   DateTime CreatedAt { get; set; }
+
+  /// <summary>Fecha de la última modificación, o <c>null</c> si nunca se modificó.</summary>
   DateTime? UpdatedAt { get; set; }
 }

@@ -18,20 +18,9 @@ public class OrderLineDto
 
 /// <summary>Lo que manda el cliente para cerrar una compra.</summary>
 /// <remarks>
-/// <para>
-/// ⚠️ <b>No lleva precios ni totales.</b> Los pone el servidor a partir del catálogo: un
-/// precio que viaja en el cuerpo es un precio que el cliente elige. El email tampoco: sale
-/// del claim del token.
-/// </para>
-/// <para>
-/// ⚠️ <b>`CustomerName` SÍ lo elige el cliente, y es una decisión, no un descuido.</b> Se
-/// imprime tal cual en el comprobante, así que cualquiera puede emitirse uno a nombre de
-/// otra persona. No hay impacto cruzado —solo lo descarga quien compró— pero significa que
-/// <b>este documento no vale como prueba de identidad de nadie</b>: es un recibo de compra,
-/// no una factura. Es un dato de envío («¿a nombre de quién va el paquete?»), que es
-/// legítimamente del comprador. El día que esto emita facturas fiscales, el nombre tiene
-/// que salir del perfil verificado del usuario y no del cuerpo.
-/// </para>
+/// No lleva precios ni totales: los pone el servidor desde el catálogo, y el email sale del
+/// token. <c>CustomerName</c> sí es del cliente porque es un dato de envío, y por eso el
+/// comprobante no vale como prueba de identidad.
 /// </remarks>
 public class PlaceOrderDto
 {
@@ -85,14 +74,10 @@ public class OrderDto
 
   public DateTime PlacedAt { get; set; }
 
-  /// <summary>
-  /// <c>pending</c>, <c>available</c> o <c>failed</c>.
-  /// </summary>
+  /// <summary>Si el comprobante ya se puede descargar: <c>pending</c>, <c>available</c> o <c>failed</c>.</summary>
   /// <remarks>
-  /// ⚠️ Se expone el ESTADO y no la clave del documento. La clave es un detalle del
-  /// almacén: publicarla ataría el contrato de la API a la infraestructura de hoy, y el
-  /// día que sea S3 el cliente estaría leyendo una clave que ya no significa nada.
-  /// El cliente mira esto para saber si ya puede descargar.
+  /// Se expone el estado y no la clave del documento, que es un detalle del almacén y
+  /// ataría el contrato de la API a la infraestructura de hoy.
   /// </remarks>
   public string ReceiptStatus { get; set; } = string.Empty;
 

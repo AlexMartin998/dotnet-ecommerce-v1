@@ -7,21 +7,14 @@ namespace ApiEcommerce.Shared.Db;
 
 
 
+/// <summary>
+/// Envuelve la acción en una transacción de EF Core. Para una unidad de trabajo con
+/// reintento, usa <see cref="ITransactionRunner"/> desde el servicio.
+/// </summary>
 /// <remarks>
-/// <para>
-/// <b>Limitación importante.</b> Con <c>EnableRetryOnFailure</c> activo, EF obliga a
-/// meter la transacción dentro de <c>strategy.ExecuteAsync</c>, y esa estrategia
-/// <b>reejecuta el delegado</b> ante un fallo transitorio. Pero
-/// <c>ActionExecutionDelegate</c> <b>no es reentrante</b>: invocarlo dos veces vuelve
-/// a ejecutar la acción sobre el mismo <c>DbContext</c>, con doble efecto o con un
-/// commit vacío según el estado interno de MVC. Por eso hay una guarda que convierte
-/// esa situación en un error ruidoso en vez de en corrupción silenciosa.
-/// </para>
-/// <para>
-/// <b>Para una unidad de trabajo transaccional de verdad, usa
-/// <see cref="ITransactionRunner"/> desde el servicio</b>, que sí es replayable.
-/// Este atributo se queda para acciones simples que no necesitan reintento.
-/// </para>
+/// <c>ActionExecutionDelegate</c> no es reentrante, así que este filtro no puede
+/// reejecutarse cuando la estrategia reintenta: una guarda convierte esa situación en un
+/// error ruidoso en vez de en doble efecto o commit vacío.
 /// </remarks>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
 public sealed class TransactionalAttribute : Attribute, IAsyncActionFilter, IOrderedFilter
@@ -29,6 +22,9 @@ public sealed class TransactionalAttribute : Attribute, IAsyncActionFilter, IOrd
   /// <summary>Por DENTRO de <c>[Idempotent]</c> (Order -100): la respuesta se memoriza tras el commit.</summary>
   public int Order => 0;
 
+  /// <summary>Abre la transacción, ejecuta la acción y confirma si no hubo excepción.</summary>
+  /// <param name="context">Contexto de la acción.</param>
+  /// <param name="next">Continuación de la cadena de filtros.</param>
   public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
   {
     var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
@@ -39,9 +35,8 @@ public sealed class TransactionalAttribute : Attribute, IAsyncActionFilter, IOrd
 
     await strategy.ExecuteAsync(async () =>
     {
-      // Guarda de reentrada: si la estrategia reintenta, `next()` ya se consumió y
-      // volver a invocarlo reejecutaría la acción. Fallar aquí, ruidosamente, es
-      // infinitamente mejor que descontar stock dos veces en silencio.
+      // Guarda de reentrada: `next()` ya se consumió, y volver a invocarlo reejecutaría
+      // la acción. Fallar ruidosamente es mejor que descontar stock dos veces en silencio.
       if (invoked)
         throw new InvalidOperationException(
             "[Transactional] no puede reintentarse: ActionExecutionDelegate no es reentrante. " +
@@ -49,10 +44,8 @@ public sealed class TransactionalAttribute : Attribute, IAsyncActionFilter, IOrd
 
       invoked = true;
 
-      // `await using` ya hace rollback al disponerse si no se hizo commit, así que no
-      // hace falta un RollbackAsync explícito. Además evita el bug clásico de este
-      // patrón: si el rollback lanza dentro de un catch, sustituye a la excepción
-      // original y el cliente ve el fallo del rollback en vez de la causa real.
+      // `await using` ya hace rollback al disponerse, y así un rollback que lance no
+      // sustituye a la excepción original.
       await using var tx = await db.Database.BeginTransactionAsync(ct);
 
       var executed = await next(); // ejecuta la acción

@@ -5,14 +5,10 @@ using ApiEcommerce.Shared.Idempotency;
 namespace ApiEcommerce.Tests.Integration;
 
 
-/// <summary>
-/// Los tres bugs de carrera que este proyecto sufrió de verdad, convertidos en tests.
-/// </summary>
+/// <summary>Las carreras que el proyecto tiene que soportar, con peticiones reales.</summary>
 /// <remarks>
-/// ⚠️ <b>Con <c>Task.WhenAll</c> de peticiones reales, nunca en secuencia.</b> Es la
-/// única forma de que valgan: en secuencia estos mismos escenarios pasaban también con
-/// la implementación defectuosa, y por eso el bug del stock sobrevivió tanto tiempo. Un
-/// test de concurrencia secuencial es un test que da falsa tranquilidad.
+/// Siempre con <c>Task.WhenAll</c> y nunca en secuencia: en secuencia estos escenarios
+/// pasan también con la implementación defectuosa.
 /// </remarks>
 [Collection(IntegrationCollection.Name)]
 public class ConcurrencyTests(ApiFactory factory)
@@ -20,12 +16,8 @@ public class ConcurrencyTests(ApiFactory factory)
   [Fact]
   public async Task FifteenSimultaneousPurchasesOverStockTenNeverOversell()
   {
-    // La medición original: 10×200, 5×409 y stock 0.
-    //
-    // Antes se implementó con RowVersion + reintentos y se MIDIÓ que no servía: no
-    // sobrevendía, pero rechazaba compras válidas (5×200 + 5×409 sobre stock 10) al
-    // agotar los reintentos. La concurrencia optimista sirve para EDITAR una entidad,
-    // no para un contador con contención. Hoy es un UPDATE condicional atómico.
+    // Es un UPDATE condicional atómico y no concurrencia optimista: con RowVersion y
+    // reintentos no sobrevende, pero rechaza compras válidas al agotar los reintentos.
     using var admin = await factory.AsAdminAsync();
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
 
@@ -44,10 +36,8 @@ public class ConcurrencyTests(ApiFactory factory)
   [Fact]
   public async Task EightSimultaneousCreatesOfTheSameNameLeaveExactlyOneRow()
   {
-    // La regla aplicativa (CategoryRules.NameExistsAsync) comprueba antes de escribir,
-    // pero entre esa comprobación y el INSERT cabe otra petición: los ocho pasaban la
-    // validación. Quien de verdad garantiza la unicidad es el ÍNDICE ÚNICO en la base,
-    // y el handler traduce ese choque a 409. La regla solo da el mensaje bonito.
+    // Entre la comprobación de la regla y el INSERT cabe otra petición: quien garantiza
+    // la unicidad es el índice único, y la regla solo da el mensaje bonito.
     using var admin = await factory.AsAdminAsync();
     var name = VersioningAndHealthTests.Unique("Race");
 
@@ -57,7 +47,7 @@ public class ConcurrencyTests(ApiFactory factory)
     Assert.Equal(1, responses.Count(r => r.StatusCode == HttpStatusCode.Created));
     Assert.Equal(7, responses.Count(r => r.StatusCode == HttpStatusCode.Conflict));
 
-    // Y ni un 500: el SqlException 2601/2627 tiene que llegar traducido.
+    // Ni un 500: el SqlException 2601/2627 tiene que llegar traducido.
     Assert.DoesNotContain(responses, r => (int)r.StatusCode >= 500);
 
     var listing = await admin.GetFromJsonAsync<System.Text.Json.JsonElement>(
@@ -69,8 +59,7 @@ public class ConcurrencyTests(ApiFactory factory)
   [Fact]
   public async Task SixConcurrentPurchasesWithTheSameKeyBuyOnlyOnce()
   {
-    // Doble submit real: el usuario pulsa el botón seis veces antes de que responda la
-    // primera. La reserva atómica (SET NX en Redis) es lo que lo corta.
+    // Doble submit: el usuario pulsa seis veces antes de que responda la primera.
     using var admin = await factory.AsAdminAsync();
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
 
@@ -87,9 +76,8 @@ public class ConcurrencyTests(ApiFactory factory)
       return user.SendAsync(request);
     }));
 
-    // Las que llegan mientras la primera sigue en curso reciben 409
-    // `idempotency_in_progress`; las que llegan después reproducen la respuesta con 200.
-    // Lo que NO puede pasar es que se compre más de una vez.
+    // Las que llegan en curso reciben 409 y las posteriores reproducen la respuesta con
+    // 200; lo que no puede pasar es que se compre más de una vez.
     Assert.All(responses, r => Assert.True(
         r.StatusCode is HttpStatusCode.OK or HttpStatusCode.Conflict,
         $"esperaba 200 o 409, llegó {(int)r.StatusCode}"));

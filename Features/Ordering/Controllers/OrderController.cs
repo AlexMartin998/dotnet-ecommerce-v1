@@ -15,9 +15,7 @@ namespace ApiEcommerce.Features.Ordering.Controllers;
 [ApiVersion("1.0")]
 [Route("api/v{version:apiVersion}/[controller]")]   // api/v1/order
 [Produces("application/json")]
-// Ninguna acción es pública: una orden es de alguien. Y el [Authorize] de clase es el
-// requisito DÉBIL (estar autenticado) porque varios [Authorize] se combinan (AND) y solo
-// [AllowAnonymous] gana — poner aquí un rol lo exigiría también en las acciones.
+// El [Authorize] de clase lleva el requisito débil: varios [Authorize] se combinan (AND).
 [Authorize]
 public class OrderController : ControllerBase
 {
@@ -30,17 +28,13 @@ public class OrderController : ControllerBase
 
     /// <summary>Cierra una compra y crea la orden.</summary>
     /// <remarks>
-    /// La respuesta <b>no espera al comprobante</b>: la orden vuelve con
+    /// La respuesta no espera al comprobante: la orden vuelve con
     /// <c>receiptStatus: "pending"</c> y el PDF se genera aparte.
     /// </remarks>
     [HttpPost(Name = "PlaceOrder")]
-    // Corta la petición ANTES de leerla entera. Sin esto, el único tope es el de Kestrel
-    // (30 MB): un carrito de 300.000 líneas se enlaza y se aloja completo en memoria para
-    // acabar en un 400 por el [MaxLength(50)]. Validar después de haber recibido no protege.
+    // Corta la petición antes de leerla entera; validar después de recibir no protege.
     [RequestSizeLimit(64 * 1024)]
-    // ATAJO, no la garantía: responde un reintento sin tocar la base. Quien impide de
-    // verdad la doble compra es OrderService, que escribe la marca del comando en la MISMA
-    // transacción que la orden y el descuento de stock.
+    // Atajo, no la garantía: quien impide la doble compra es OrderService.
     [Idempotent]
     [ProducesResponseType(StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -53,8 +47,7 @@ public class OrderController : ControllerBase
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
-        // El controller traduce protocolo a dominio: la cabecera del cliente se convierte
-        // aquí en una intención, y el servicio ya no sabe que existe HTTP.
+        // El controller traduce protocolo a dominio: la cabecera se vuelve una intención.
         var intent = HttpContext.CommandIntentFor("ordering.place-order");
 
         // SKU inexistente o sin stock -> 409 ; clave reusada con otro cuerpo -> 422
@@ -64,9 +57,7 @@ public class OrderController : ControllerBase
         if (outcome.WasReplayed)
             Response.Headers[IdempotentAttribute.ReplayedHeader] = "true";
 
-        // 201 CON cuerpo, a diferencia de POST /category: el cliente necesita el número de
-        // orden y los totales para pintar la confirmación, y obligarle a un GET más
-        // después de pagar es la peor petición extra posible.
+        // 201 con cuerpo: el cliente necesita número y totales para pintar la confirmación.
         return CreatedAtRoute(
             "GetOrder",
             new { version = HttpContext.ApiVersionValue(), id = outcome.Result.Id },
@@ -98,41 +89,26 @@ public class OrderController : ControllerBase
 
     /// <summary>Descarga el comprobante en PDF.</summary>
     /// <remarks>
-    /// <para>
-    /// ⚠️ <b>El PDF se sirve por aquí y no como estático</b>, y hacen falta las tres
-    /// barreras: el fichero vive <b>fuera de <c>wwwroot/</c></b> (no hay URL pública que
-    /// adivinar), su clave es aleatoria (no se deduce de la orden ni del usuario) y esta
-    /// acción comprueba <b>de quién es la orden</b>. Con solo las dos primeras, cualquier
-    /// filtración de una clave sería una descarga; con solo la tercera,
-    /// <c>UseStaticFiles</c> lo serviría sin pasar por autenticación.
-    /// </para>
-    /// <para>
-    /// Devuelve un <c>Stream</c> y no un <c>byte[]</c>: MVC lo copia a la respuesta a
-    /// trozos y libera el fichero al terminar, así que una descarga no se lleva el
-    /// documento entero a memoria.
-    /// </para>
+    /// El PDF se sirve por aquí y no como estático, con tres barreras: vive fuera de
+    /// <c>wwwroot/</c>, su clave es aleatoria y esta acción comprueba de quién es la orden.
+    /// Devuelve un <c>Stream</c> para no cargar el documento entero en memoria.
     /// </remarks>
     [HttpGet("{id:int}/receipt", Name = "GetOrderReceipt")]
     [Produces("application/pdf")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    // 409 y no 404: el comprobante EXISTIRÁ, solo que todavía no. Un 404 le diría al
-    // cliente que deje de pedirlo.
+    // 409 y no 404: el comprobante existirá, y un 404 diría al cliente que deje de pedirlo.
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> GetOrderReceipt(int id, CancellationToken ct)
     {
         var receipt = await _service.GetReceiptAsync(id, User.GetRequiredUserId(), ct);
 
-        // El documento lleva nombre, dirección e importe. Las caches COMPARTIDAS ya quedan
-        // fuera por la cabecera `Authorization` (RFC 9111 §3.5), pero el disco del
-        // navegador no: sin esto, el PDF se queda cacheado en un equipo que puede ser
-        // compartido, y sigue ahí después de cerrar sesión.
+        // El documento lleva datos personales: `Authorization` ya descarta las caches
+        // compartidas, pero no el disco del navegador, que conserva el PDF tras cerrar sesión.
         Response.Headers.CacheControl = "no-store, no-cache, must-revalidate, private";
 
-        // `enableRangeProcessing` no se activa: son unas decenas de KB y las peticiones
-        // por rango obligarían al almacén a soportar lecturas parciales, que es justo la
-        // clase de detalle que un S3 y un disco resuelven distinto.
+        // Sin `enableRangeProcessing`: obligaría al almacén a soportar lecturas parciales.
         return File(receipt.Stream, receipt.ContentType, receipt.FileName);
     }
 }

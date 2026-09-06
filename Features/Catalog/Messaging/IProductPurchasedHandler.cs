@@ -4,25 +4,17 @@ namespace ApiEcommerce.Features.Catalog.Messaging;
 
 
 /// <summary>
-/// Qué se hace cuando se compra un producto. El <b>efecto</b>, separado del transporte.
+/// Qué se hace cuando se compra un producto: el efecto, separado del transporte.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Estaba dentro del consumidor como un método privado, y eso tenía un coste concreto:
-/// no había forma de hacerlo fallar, así que el arreglo del P0 —marca y efecto en la
-/// misma transacción— se quedó <b>sin un test que lo cubriera</b>. Un efecto inyectable
-/// permite escribir el único test que de verdad importa: el del efecto que revienta.
-/// </para>
-/// <para>
-/// Y de paso deja al consumidor siendo lo que debe ser: fontanería AMQP (ack, reintentos,
-/// DLQ) que no sabe qué significa el mensaje que transporta.
-/// </para>
+/// Es una interfaz aparte y no un método del consumidor para poder sustituirla por una
+/// que falle y cubrir con un test que la marca y el efecto se deshacen juntos.
 /// </remarks>
 public interface IProductPurchasedHandler
 {
   /// <summary>
-  /// Reacciona a la compra. <b>Corre dentro de la transacción del inbox</b>, así que si
-  /// lanza, la marca de «procesado» se deshace con él y el mensaje se reintenta.
+  /// Reacciona a la compra. Corre dentro de la transacción del inbox: si lanza, la marca
+  /// de procesado se deshace con él y el mensaje se reintenta.
   /// </summary>
   /// <param name="event">El evento ya deserializado.</param>
   /// <param name="ct">Token de cancelación.</param>
@@ -30,12 +22,10 @@ public interface IProductPurchasedHandler
 }
 
 
-/// <summary>Avisa de stock bajo.</summary>
+/// <summary>Avisa de stock bajo tras una compra.</summary>
 /// <remarks>
-/// En un sistema real esto notificaría a compras, escribiría una proyección de lectura o
-/// llamaría a un webhook. ⚠️ Si algún día hace una llamada de red, deja de ser
-/// transaccional: lo que corre dentro de la transacción del inbox tiene que poder
-/// deshacerse con ella. Un efecto externo se emite como <b>otro</b> evento del outbox.
+/// No debe hacer llamadas de red: lo que corre dentro de la transacción del inbox tiene
+/// que poder deshacerse con ella. Un efecto externo se emite como otro evento del outbox.
 /// </remarks>
 public sealed class LowStockNotifier(ILogger<LowStockNotifier> logger) : IProductPurchasedHandler
 {

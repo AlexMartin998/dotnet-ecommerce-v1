@@ -8,19 +8,21 @@ namespace ApiEcommerce.Shared.Persistence;
 /// <c>JpaRepository&lt;T, Integer&gt;</c> de Spring Data.
 /// </summary>
 /// <remarks>
-/// <b>El repositorio nunca lanza excepciones de negocio.</b> Un id inexistente
-/// devuelve <c>null</c>/<c>false</c> y un listado sin resultados devuelve una
-/// colección vacía; quien decide que "no encontrado" es un 404 es el servicio.
+/// El repositorio nunca lanza excepciones de negocio: un id inexistente devuelve
+/// <c>null</c>/<c>false</c> y un listado vacío devuelve colección vacía. Quien decide que
+/// «no encontrado» es un 404 es el servicio.
 /// </remarks>
 /// <typeparam name="T">Entidad EF Core con clave primaria entera.</typeparam>
 public interface IBaseRepository<T> where T : class, IEntity
 {
 
   /// <summary>
-  /// Devuelve la entidad <b>rastreada</b> por el change tracker, o <c>null</c>.
-  /// Es deliberado que rastree: el update del servicio hace
-  /// <c>_mapper.Map(dto, existing)</c> sobre esta misma instancia.
+  /// Devuelve la entidad rastreada por el change tracker, o <c>null</c>.
   /// </summary>
+  /// <remarks>
+  /// Rastrea a propósito: el update del servicio hace <c>_mapper.Map(dto, existing)</c>
+  /// sobre esta misma instancia.
+  /// </remarks>
   Task<T?> GetByIdAsync(int id, CancellationToken ct = default);
 
   /// <summary>Listado completo sin rastrear, ordenado por <c>CreatedAt</c> descendente (o por <c>Id</c> si la entidad no es <see cref="IAuditable"/>).</summary>
@@ -36,31 +38,36 @@ public interface IBaseRepository<T> where T : class, IEntity
   /// <param name="ct">Token de cancelación.</param>
   Task<PagedResult<T>> GetPagedAsync(int page, int pageSize, CancellationToken ct = default);
 
+  /// <summary>Inserta la entidad y guarda.</summary>
   Task<T> AddAsync(T entity, CancellationToken ct = default);
 
+  /// <summary>Guarda los cambios de la entidad, adjuntándola si viene desconectada.</summary>
   Task<T> UpdateAsync(T entity, CancellationToken ct = default);
 
   /// <summary>Borra por id. Si no existe es un no-op silencioso, no un throw.</summary>
   Task DeleteAsync(int id, CancellationToken ct = default);
 
+  /// <summary>¿Existe una entidad con este id?</summary>
   Task<bool> ExistsAsync(int id, CancellationToken ct = default);
 
   /// <summary>
   /// Confirma los cambios pendientes del contexto.
   /// </summary>
   /// <remarks>
-  /// Normalmente no hace falta: cada escritura del repositorio ya guarda. Existe para
-  /// el caso en que el servicio añade algo al contexto que <b>debe</b> confirmarse en
-  /// la misma transacción (hoy, la fila del outbox junto al descuento de stock).
+  /// Normalmente no hace falta, porque cada escritura ya guarda. Existe para cuando el
+  /// servicio añade algo que debe confirmarse en la misma transacción (hoy, la fila del
+  /// outbox junto al descuento de stock).
   /// </remarks>
   Task SaveChangesAsync(CancellationToken ct = default);
 
   /// <summary>
-  /// Comprobación de unicidad genérica sobre un campo <c>string</c>, resuelta por
-  /// reflexión sobre el modelo de EF. Útil cuando la entidad no tiene un método
-  /// dedicado; <b>si lo tiene (p. ej. <c>NameExistsAsync</c>), se usa el dedicado</b>:
-  /// es más rápido y no depende de un string mágico.
+  /// Comprobación de unicidad genérica sobre un campo <c>string</c>, resuelta contra el
+  /// modelo de EF.
   /// </summary>
+  /// <remarks>
+  /// Si la entidad tiene un método dedicado (<c>NameExistsAsync</c>), se usa ese: es más
+  /// rápido y no depende de un string mágico.
+  /// </remarks>
   /// <param name="fieldName">Nombre de la propiedad. Si no existe o no es <c>string</c>, devuelve <c>false</c>.</param>
   /// <param name="value">Valor a buscar; la comparación es case-insensitive y traducible a SQL.</param>
   /// <param name="excludeId">Id a excluir de la búsqueda (para validar unicidad en un update).</param>

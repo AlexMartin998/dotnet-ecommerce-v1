@@ -7,20 +7,10 @@ using ApiEcommerce.Features.Accounts.Models;
 namespace ApiEcommerce.Features.Accounts.Service;
 
 
-/// <summary>
-/// Registro y login sobre ASP.NET Core Identity.
-/// </summary>
+/// <summary>Registro, login, perfil y cambio de contraseña sobre ASP.NET Core Identity.</summary>
 /// <remarks>
-/// <para>
-/// <b>Aquí no se hashea nada a mano.</b> <c>UserManager.CreateAsync(user, password)</c>
-/// aplica PBKDF2 con salt por usuario y el conteo de iteraciones vigente; cualquier
-/// <c>SHA256(password)</c> casero que se vea en un tutorial es una vulnerabilidad.
-/// </para>
-/// <para>
-/// Mapa mental desde Spring Security: <c>UserManager</c> ≈ <c>UserDetailsService</c> +
-/// <c>PasswordEncoder</c>, <c>SignInManager</c> ≈ <c>AuthenticationManager</c>,
-/// <c>RoleManager</c> ≈ la gestión de <c>GrantedAuthority</c>.
-/// </para>
+/// Aquí no se hashea nada a mano: <c>UserManager.CreateAsync</c> aplica PBKDF2 con salt por
+/// usuario y el conteo de iteraciones vigente.
 /// </remarks>
 public sealed class AuthService(
     UserManager<ApplicationUser> userManager,
@@ -52,8 +42,7 @@ public sealed class AuthService(
 
     var created = await userManager.CreateAsync(user, dto.Password);
 
-    // 422: la forma del DTO era válida (eso ya lo filtró DataAnnotations), pero la
-    // política de contraseñas de Identity no se cumple. Se devuelve campo a campo.
+    // 422 y no 400: el DTO era válido, lo que no se cumple es la política de contraseñas.
     if (!created.Succeeded)
       throw new ValidationAppException(ToFieldErrors(created));
 
@@ -61,8 +50,7 @@ public sealed class AuthService(
 
     if (!addedToRole.Succeeded)
     {
-      // Si el rol no se pudo asignar, el usuario quedaría creado pero sin permisos:
-      // se deshace la creación para no dejar una cuenta a medias.
+      // Sin rol la cuenta quedaría a medias: se deshace la creación.
       await userManager.DeleteAsync(user);
       throw new ValidationAppException(ToFieldErrors(addedToRole));
     }
@@ -79,16 +67,14 @@ public sealed class AuthService(
     var username = dto.Username.Trim();
     var user = await userManager.FindByNameAsync(username);
 
-    // Mismo mensaje para "no existe" y "contraseña incorrecta": decir cuál de las dos
-    // falló convierte el login en un oráculo para enumerar usuarios.
+    // Mismo mensaje que para contraseña incorrecta: distinguirlos permite enumerar usuarios.
     if (user is null)
     {
       logger.LogWarning("Failed login attempt for unknown username {Username}", username);
       throw new UnauthorizedAppException("Invalid username or password.");
     }
 
-    // lockoutOnFailure: true activa el bloqueo por intentos fallidos que se configura
-    // en AddIdentity(options.Lockout...). Sin este flag, Identity nunca cuenta fallos.
+    // Sin lockoutOnFailure: true, Identity nunca cuenta los fallos y el bloqueo no se activa.
     var result = await signInManager.CheckPasswordSignInAsync(user, dto.Password, lockoutOnFailure: true);
 
     if (result.IsLockedOut)
@@ -129,12 +115,8 @@ public sealed class AuthService(
       return;
     }
 
-    // Se distingue "la actual no es correcta" de "la nueva no cumple la política": son dos
-    // errores muy distintos para quien está delante, y devolver siempre lo mismo obliga a
-    // adivinar cuál de las dos casillas hay que corregir.
-    //
-    // ⚠️ No es un oráculo: para llegar aquí ya hay que estar autenticado como ESE usuario,
-    // así que no revela nada que quien pregunta no supiera.
+    // Se distingue "la actual no es correcta" de "la nueva no cumple la política": no es un
+    // oráculo, porque para llegar aquí ya hay que estar autenticado como ese usuario.
     if (result.Errors.Any(e => e.Code == "PasswordMismatch"))
       throw new UnauthorizedAppException("The current password is not correct.");
 
@@ -163,8 +145,7 @@ public sealed class AuthService(
       => ToDto(user, await userManager.GetRolesAsync(user));
 
   /// <summary>
-  /// Proyección a mano en vez de AutoMapper: los roles no son una propiedad de
-  /// <see cref="ApplicationUser"/> sino una consulta aparte, así que un Profile
+  /// Proyección a mano y no AutoMapper: los roles son una consulta aparte, y un Profile
   /// tendría que inyectar el <c>UserManager</c> para resolverlos.
   /// </summary>
   private static UserDto ToDto(ApplicationUser user, IEnumerable<string> roles) => new()
@@ -178,9 +159,8 @@ public sealed class AuthService(
   };
 
   /// <summary>
-  /// Agrupa los <c>IdentityError</c> por código en el mismo formato
-  /// <c>{ campo: [mensajes] }</c> que produce <c>ValidationProblem(ModelState)</c>,
-  /// para que el cliente reciba siempre la misma forma de error.
+  /// Agrupa los <c>IdentityError</c> en el formato <c>{ campo: [mensajes] }</c> de
+  /// <c>ValidationProblem(ModelState)</c>, para que el cliente vea siempre la misma forma.
   /// </summary>
   private static Dictionary<string, string[]> ToFieldErrors(IdentityResult result)
       => result.Errors

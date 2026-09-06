@@ -24,6 +24,11 @@ que es lo que ningún documento regenerado reproduce. `00` y `06` están al día
 | [`04-error-handling.md`](04-error-handling.md) | necesites devolver un error (400/401/403/404/409/500) |
 | [`05-convenciones.md`](05-convenciones.md) | dudes de naming, estilo, DTOs, DI o migraciones |
 | [`06-estado-y-roadmap.md`](06-estado-y-roadmap.md) | vayas a empezar a trabajar: qué está hecho y qué sigue |
+| [`07-decisiones-en-el-codigo.md`](07-decisiones-en-el-codigo.md) | **vayas a tocar un archivo**: busca su ruta y mira qué no debes romper sin querer |
+
+El `07` es la contrapartida de haber limpiado los comentarios: el código se quedó con el
+porqué en una línea y el desarrollo —la medición, la alternativa descartada, el bug que lo
+motivó— vive ahí, indexado por ruta de archivo. El contrato de estilo está en `rules.md` §1.1.
 
 Lo que **no** tiene todavía documento propio aquí y hoy es la mitad de `Shared/`
 —mensajería (outbox/inbox/RabbitMQ), idempotencia transaccional, documentos privados,

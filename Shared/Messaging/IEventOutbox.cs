@@ -4,21 +4,18 @@ namespace ApiEcommerce.Shared.Messaging;
 
 
 /// <summary>
-/// Encola un evento de dominio para publicarlo. La escritura ocurre en la misma
-/// transacción que el cambio de negocio; la publicación al broker la hace después
-/// <c>OutboxPublisher</c>.
+/// Encola un evento de dominio en la misma transacción que el cambio de negocio; la
+/// publicación al broker la hace después <c>OutboxPublisher</c>.
 /// </summary>
 /// <remarks>
-/// El servicio de negocio depende de <b>esto</b> y no de RabbitMQ. Cambiar a Kafka o
-/// a Azure Service Bus no toca <c>ProductService</c>: solo la implementación de
-/// <see cref="IEventPublisher"/>.
+/// El servicio de negocio depende de esto y no de RabbitMQ: cambiar de transporte solo toca
+/// la implementación de <see cref="IEventPublisher"/>.
 /// </remarks>
 public interface IEventOutbox
 {
   /// <summary>
-  /// Añade el evento al outbox. <b>No hace <c>SaveChanges</c></b> a propósito: quien
-  /// manda es la transacción de negocio, y el evento debe confirmarse con ella o no
-  /// confirmarse en absoluto.
+  /// Añade el evento al outbox. No hace <c>SaveChanges</c>: manda la transacción de negocio,
+  /// y el evento se confirma con ella o no se confirma.
   /// </summary>
   Task EnqueueAsync<TEvent>(TEvent domainEvent, CancellationToken ct = default)
       where TEvent : IDomainEvent;
@@ -29,8 +26,8 @@ public interface IEventOutbox
 public interface IEventPublisher
 {
   /// <summary>
-  /// Publica un mensaje ya serializado. Debe esperar confirmación del broker
-  /// (publisher confirms): sin ella, "publicado" solo significa "escrito en un socket".
+  /// Publica un mensaje ya serializado, esperando confirmación del broker: sin publisher
+  /// confirms, "publicado" solo significa "escrito en un socket".
   /// </summary>
   Task PublishAsync(Guid messageId, string eventType, string payload, CancellationToken ct = default);
 }

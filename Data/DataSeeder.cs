@@ -12,25 +12,13 @@ namespace ApiEcommerce.Data;
 /// Siembra roles, el usuario administrador y (opcionalmente) datos de demostración.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Se ejecuta desde <c>Program.cs</c> dentro de un <b>scope propio</b>: el contenedor
-/// raíz no puede resolver servicios <c>Scoped</c> como <c>AppDbContext</c> o
-/// <c>UserManager</c>, y hacerlo lanza en el arranque.
-/// </para>
-/// <para>
-/// <b>Roles y usuarios se crean con <c>RoleManager</c>/<c>UserManager</c>, nunca con
-/// <c>INSERT</c> directo.</b> Un insert a mano se salta el <c>SecurityStamp</c> y el
-/// <c>ConcurrencyStamp</c>, y sin <c>SecurityStamp</c> el lockout y la invalidación de
-/// credenciales de Identity dejan de funcionar — un fallo que no se ve hasta que hace
-/// falta.
-/// </para>
-/// <para>
-/// Es <b>idempotente</b>: cada bloque comprueba antes de insertar, así que arrancar
-/// dos veces no duplica nada.
-/// </para>
+/// Roles y usuarios se crean con <c>RoleManager</c>/<c>UserManager</c> y nunca con
+/// <c>INSERT</c>: un insert a mano se salta el <c>SecurityStamp</c> y deja sin efecto el
+/// lockout y la invalidación de credenciales de Identity.
 /// </remarks>
 public static class DataSeeder
 {
+  /// <summary>Siembra lo que falte; es idempotente, cada bloque comprueba antes de insertar.</summary>
   public static async Task SeedAsync(IServiceProvider services, CancellationToken ct = default)
   {
     var options = services.GetRequiredService<IOptions<SeedOptions>>().Value;
@@ -125,9 +113,7 @@ public static class DataSeeder
 
     db.Categories.AddRange(categories);
 
-    // SaveChanges ANTES de crear los productos: es lo que asigna los Id reales.
-    // El seeder de referencia hacía Categories.Find(1) sobre categorías todavía no
-    // persistidas y solo funcionaba por accidente, si el IDENTITY empezaba en 1.
+    // SaveChanges antes de crear los productos: es lo que asigna los Id reales.
     await db.SaveChangesAsync(ct);
 
     var electronica = categories[0].Id;

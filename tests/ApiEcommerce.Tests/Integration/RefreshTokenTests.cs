@@ -6,14 +6,10 @@ using Microsoft.AspNetCore.Hosting;
 namespace ApiEcommerce.Tests.Integration;
 
 
-/// <summary>
-/// Host con la ventana de gracia del reuso puesta a <b>1 segundo</b>.
-/// </summary>
+/// <summary>Host con la ventana de gracia del reuso puesta a 1 segundo.</summary>
 /// <remarks>
-/// Los 15 s por defecto son lo correcto en producción —un cliente legítimo lanza varios
-/// refrescos a la vez y no puede parecer un ladrón por eso— pero harían que el test de
-/// detección de robo tardara 15 s. Que el plazo sea configuración es lo que permite
-/// probarlo; con una constante, este test no existiría.
+/// Los 15 s por defecto son los correctos en producción, pero harían que el test de
+/// detección de robo tardase 15 s. Que el plazo sea configuración es lo que lo permite.
 /// </remarks>
 public sealed class ShortReuseGraceFactory : ApiFactory
 {
@@ -28,16 +24,9 @@ public sealed class ShortReuseGraceFactory : ApiFactory
 /// Sesiones revocables: rotación, detección de reuso y logout.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Lo que se prueba aquí no es "el endpoint responde 200", es que <b>una sesión se pueda
-/// cortar</b>. Antes de esto un access token robado valía 60 minutos y no había forma de
-/// invalidarlo, ni siquiera cambiando la contraseña.
-/// </para>
-/// <para>
-/// Contra la base y Redis reales: la garantía es una fila con su índice único y la
-/// denylist es una clave con TTL. Con dobles en memoria no se estaría probando ninguna
-/// de las dos.
-/// </para>
+/// Lo que se prueba es que una sesión se pueda cortar. Contra la base y Redis reales: la
+/// garantía es una fila con índice único y la denylist una clave con TTL, y con dobles en
+/// memoria no se probaría ninguna de las dos.
 /// </remarks>
 [Collection(IntegrationCollection.Name)]
 public class RefreshTokenTests(ApiFactory factory)
@@ -45,10 +34,8 @@ public class RefreshTokenTests(ApiFactory factory)
   [Fact]
   public async Task LoginPutsTheRefreshTokenInAnHttpOnlyCookieAndNotInTheBody()
   {
-    // El access token va en el cuerpo porque dura 15 minutos y no se renueva solo. El
-    // refresh es el que hay que proteger de un XSS, y por eso viaja en una cookie que el
-    // JavaScript de la página NO puede leer. Si además fuera en el cuerpo, la cookie no
-    // serviría de nada.
+    // El refresh es el que hay que proteger de un XSS: si además viajara en el cuerpo, la
+    // cookie HttpOnly no serviría de nada.
     using var client = factory.Anonymous();
 
     var response = await client.PostAsJsonAsync("/api/v1/auth/login",
@@ -58,8 +45,7 @@ public class RefreshTokenTests(ApiFactory factory)
 
     var setCookie = Assert.Single(response.Headers.GetValues("Set-Cookie"));
 
-    // ⚠️ Sin distinguir mayúsculas: Kestrel las emite en minúscula (`httponly`), y una
-    // comprobación sensible a mayúsculas da un falso negativo. Ya pasó al verificarlo.
+    // Sin distinguir mayúsculas: Kestrel emite `httponly` en minúscula.
     Assert.Contains("httponly", setCookie, StringComparison.OrdinalIgnoreCase);
     Assert.Contains("samesite=strict", setCookie, StringComparison.OrdinalIgnoreCase);
 
@@ -100,8 +86,7 @@ public class RefreshTokenTests(ApiFactory factory)
   [Fact]
   public async Task LogoutTwiceIsHarmless()
   {
-    // Cerrar sesión con una cookie ya revocada, o sin cookie, tiene que ser inofensivo:
-    // un error dejaría al usuario sin saber si ha salido o no.
+    // Un error al cerrar sesión dejaría al usuario sin saber si ha salido o no.
     using var client = factory.Anonymous();
     await LoginAsync(client);
 
@@ -115,9 +100,8 @@ public class RefreshTokenTests(ApiFactory factory)
   [Fact]
   public async Task LogoutAlsoKillsTheAccessTokenTheClientAlreadyHas()
   {
-    // La OPTIMIZACIÓN, no la garantía: el `jti` entra en una denylist con TTL igual a lo
-    // que le quedaba de vida. Sin Redis esto no pasa y el token sobrevive hasta expirar
-    // —como mucho 15 minutos— pero la sesión se corta igual, que es lo que importa.
+    // Es la optimización, no la garantía: sin Redis el access token sobrevive hasta
+    // expirar, pero la sesión se corta igual.
     using var client = factory.Anonymous();
 
     var login = await LoginAsync(client);
@@ -135,9 +119,8 @@ public class RefreshTokenTests(ApiFactory factory)
   [Fact]
   public async Task TwoRefreshesInARowFromTheLegitimateClientDoNotKillTheSession()
   {
-    // ⚠️ El caso que hace inutilizable una detección de reuso sin ventana de gracia: el
-    // cliente reusa un token recién gastado porque tenía dos peticiones en vuelo. Se
-    // rechaza (ese token está gastado) pero la sesión NO se cae.
+    // Un cliente legítimo con dos peticiones en vuelo reusa un token recién gastado: se
+    // rechaza, pero sin ventana de gracia le tumbaría la sesión entera.
     using var client = factory.Anonymous();
 
     var login = await LoginAsync(client);
@@ -158,8 +141,8 @@ public class RefreshTokenTests(ApiFactory factory)
   [Fact]
   public async Task ChangingThePasswordRevokesEveryOtherSession()
   {
-    // ⚠️ Es la expectativa de cualquiera que cambia su contraseña porque sospecha: si las
-    // sesiones abiertas siguieran vivas, cambiarla no habría echado a nadie.
+    // Quien cambia la contraseña porque sospecha espera echar a los demás; si las sesiones
+    // abiertas siguieran vivas, no habría echado a nadie.
     using var admin = await factory.AsNewUserAsync();
 
     // Otra sesión del mismo usuario, en "otro dispositivo".
@@ -187,9 +170,7 @@ public class RefreshTokenTests(ApiFactory factory)
   [Fact]
   public async Task TheCurrentPasswordIsRequiredToChangeIt()
   {
-    // Un access token demuestra que ALGUIEN entró hace un rato, no que quien está delante
-    // ahora sea el dueño. Sin esta comprobación, un minuto frente a una sesión abierta
-    // basta para quedarse con la cuenta.
+    // Sin esto, un minuto frente a una sesión abierta basta para quedarse con la cuenta.
     using var user = await factory.AsNewUserAsync();
 
     var response = await user.PostAsJsonAsync("/api/v1/auth/password",
@@ -225,10 +206,8 @@ public class RefreshTokenReuseTests(ShortReuseGraceFactory factory) : IClassFixt
   [Fact]
   public async Task ReusingASpentTokenRevokesTheWholeFamily()
   {
-    // La rotación sola no detecta nada: lo que delata al ladrón es REUSAR un token ya
-    // gastado, porque el legítimo ya lo cambió por otro. Y la respuesta es dura a
-    // propósito: con dos copias circulando no se sabe cuál es la del dueño, así que cae
-    // la sesión entera.
+    // Lo que delata al ladrón es reusar un token ya gastado. La respuesta cae sobre toda
+    // la familia a propósito: con dos copias circulando no se sabe cuál es la del dueño.
     using var victim = factory.Anonymous();
 
     var login = await RefreshTokenTests.LoginAsync(victim);

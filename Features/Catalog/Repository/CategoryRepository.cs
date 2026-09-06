@@ -7,7 +7,7 @@ namespace ApiEcommerce.Features.Catalog.Repository;
 
 
 
-// primary constructor - DI
+/// <summary>Consultas de categoría que el CRUD genérico no cubre.</summary>
 public class CategoryRepository(AppDbContext db) : BaseRepository<Category>(db), ICategoryRepository
 {
   public async Task<bool> NameExistsAsync(string name, int? excludeId = null, CancellationToken ct = default)

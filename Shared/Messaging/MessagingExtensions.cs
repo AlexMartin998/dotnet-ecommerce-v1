@@ -3,16 +3,13 @@ using ApiEcommerce.Shared.Messaging.RabbitMq;
 namespace ApiEcommerce.Shared.Messaging;
 
 
+/// <summary>Registro de la mensajería: outbox, inbox y, si hay broker, RabbitMQ.</summary>
 public static class MessagingExtensions
 {
-  /// <summary>
-  /// Outbox + RabbitMQ (publicador y consumidor).
-  /// </summary>
+  /// <summary>Registra el outbox y, si hay broker configurado, el transporte RabbitMQ.</summary>
   /// <remarks>
-  /// <b>El outbox se registra siempre, el broker solo si está configurado.</b> Esa
-  /// asimetría es deliberada: escribir el evento es parte de la transacción de
-  /// negocio y no puede depender de que haya broker. Sin RabbitMQ, las compras se
-  /// completan igual y los eventos se acumulan en la tabla hasta que vuelva.
+  /// El outbox, el inbox y la purga se registran siempre: son garantías sobre la base de datos
+  /// y no pueden depender de que haya broker. Sin RabbitMQ, los eventos se acumulan en la tabla.
   /// </remarks>
   public static IServiceCollection AddMessaging(
       this IServiceCollection services, IConfiguration configuration)
@@ -28,18 +25,13 @@ public static class MessagingExtensions
         .ValidateDataAnnotations()
         .ValidateOnStart();   // configuración inválida = no arranca, no falla en la primera petición
 
-    // Scoped: comparte el AppDbContext del request, que es justo lo que hace que el
-    // evento se confirme en la misma transacción que el cambio de negocio.
+    // Scoped: comparte el AppDbContext del request, y con él la transacción de negocio.
     services.AddScoped<IEventOutbox, EventOutbox>();
 
-    // El inbox también SIEMPRE, y por el mismo motivo que el outbox: procesar un mensaje
-    // exactamente una vez es una garantía sobre la base de datos, no sobre el broker.
-    // Registrarlo dentro del `if` de RabbitMQ ataría una pieza transaccional a que haya
-    // transporte — y además dejaría sus tests dependiendo de que hubiera broker.
+    // El inbox también siempre: procesar una sola vez es una garantía sobre la base de datos.
     services.AddScoped<IMessageInbox, MessageInbox>();
 
-    // La purga tampoco depende del broker: las tablas crecen aunque no haya nadie
-    // publicando, y con RabbitMQ apagado crecen MÁS. Va fuera del `if` de abajo.
+    // La purga tampoco depende del broker: con RabbitMQ apagado, las tablas crecen más.
     services.AddHostedService<OutboxCleaner>();
 
     var options = configuration.GetSection(RabbitMqOptions.SectionName).Get<RabbitMqOptions>()
@@ -47,11 +39,8 @@ public static class MessagingExtensions
 
     if (!options.IsEnabled)
     {
-      // ⚠️ Se registra el Null Object y con el MISMO lifetime que el real. Sin esta rama,
-      // el controller de dead-letters no se podría construir sin broker y saldría un 500
-      // de DI en vez del 503 que describe lo que pasa. Y ojo: este Null Object falla en
-      // CERRADO, al revés que los de cache o idempotencia — "no hay mensajes muertos"
-      // sería mentira, no degradación (rules.md §8).
+      // Null Object con el MISMO lifetime que el real: sin él, el controller de dead-letters
+      // no se podría construir y saldría un 500 de DI en vez del 503 que describe lo que pasa.
       services.AddSingleton<IDeadLetterAdmin, NoDeadLetterAdmin>();
 
       return services;
@@ -68,33 +57,13 @@ public static class MessagingExtensions
 
 
   /// <summary>
-  /// Registra un consumidor de eventos <b>con su cola</b>, y solo si hay broker
-  /// configurado.
+  /// Registra un consumidor de eventos con su cola, y solo si hay broker configurado.
   /// </summary>
   /// <remarks>
-  /// <para>
-  /// Es la costura para que cada slice registre SUS consumidores sin que
-  /// <c>Shared/Messaging</c> tenga que conocerlos: aquí vive el mecanismo (la conexión,
-  /// el outbox, el publicador) y en <c>Features/&lt;Contexto&gt;/</c> vive quién reacciona
-  /// a qué. Si <c>ProductPurchasedConsumer</c> se registrara aquí, <c>Shared</c>
-  /// dependería de <c>Features</c> y la dirección declarada
-  /// <b>Web → Features → Shared</b> se invertiría.
-  /// </para>
-  /// <para>
-  /// <b>La suscripción la trae el slice</b>, y por el mismo motivo: el nombre de la cola
-  /// dice a qué reacciona ese contexto, así que es suyo. La suscripción se registra dos
-  /// veces a propósito — como <see cref="EventSubscription"/> para que
-  /// <see cref="RabbitMq.RabbitMqConnection"/> declare su topología sin conocer al
-  /// consumidor, y como <see cref="EventSubscriptionOf{TConsumer}"/> para que el consumidor
-  /// pida <b>la suya</b> sin poder recibir la de otro.
-  /// </para>
-  /// <para>
-  /// La condición de "hay broker" se evalúa en ESTE método y no en cada slice: es la
-  /// misma decisión para todos, y duplicarla es garantizar que algún día un slice la
-  /// comprueba distinto. ⚠️ Y por eso la suscripción se registra <b>dentro</b> del
-  /// <c>if</c>: sin broker no hay topología que declarar, y dejarla registrada haría que
-  /// una réplica sin mensajería declarara colas que nadie consume.
-  /// </para>
+  /// La suscripción la trae el slice, para que <c>Shared</c> no conozca a sus consumidores y no
+  /// se invierta la dirección Web → Features → Shared. Se registra dos veces: como
+  /// <see cref="EventSubscription"/> para la topología y como <see cref="EventSubscriptionOf{TConsumer}"/>
+  /// para que cada consumidor pida la suya.
   /// </remarks>
   /// <typeparam name="TConsumer">El <c>BackgroundService</c> que consume.</typeparam>
   /// <param name="services">Contenedor.</param>

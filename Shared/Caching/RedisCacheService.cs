@@ -10,17 +10,9 @@ namespace ApiEcommerce.Shared.Caching;
 /// (Redis), serializando a JSON.
 /// </summary>
 /// <remarks>
-/// <para>
-/// <b>La cache falla en abierto.</b> Si Redis está caído, un <c>GetOrSetAsync</c> no
-/// tumba el request: se loguea y se sirve el valor real desde la base. Una cache que
-/// derriba la API cuando se cae convierte una optimización en un punto único de fallo.
-/// </para>
-/// <para>
-/// Se registra como <b>Singleton</b>: no guarda estado por request y sus tres
-/// dependencias (<c>IDistributedCache</c>, <c>IOptions</c>, <c>ILogger</c>) ya lo son.
-/// Un scoped puede depender de un singleton sin problema, así que el decorador
-/// <c>CachedCategoryService</c> lo inyecta sin riesgo.
-/// </para>
+/// Falla en abierto: con Redis caído se loguea y se sirve el valor real desde la base, para
+/// que una optimización no sea un punto único de fallo. Singleton, porque no guarda estado
+/// por request y sus tres dependencias ya lo son.
 /// </remarks>
 public sealed class RedisCacheService(
     IDistributedCache cache,
@@ -31,6 +23,7 @@ public sealed class RedisCacheService(
 
   private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
+  /// <inheritdoc />
   public async Task<T> GetOrSetAsync<T>(
       string key, Func<CancellationToken, Task<T>> factory,
       TimeSpan? ttl = null, CancellationToken ct = default)
@@ -77,6 +70,7 @@ public sealed class RedisCacheService(
     return fresh;
   }
 
+  /// <inheritdoc />
   public async Task RemoveAsync(CancellationToken ct = default, params string[] keys)
   {
     foreach (var key in keys)
@@ -88,8 +82,8 @@ public sealed class RedisCacheService(
       }
       catch (Exception ex) when (ex is not OperationCanceledException)
       {
-        // Una invalidación perdida sirve datos viejos como mucho hasta el TTL.
-        // Preferible a devolver un 500 en un POST que sí guardó bien.
+        // Una invalidación perdida sirve datos viejos como mucho hasta el TTL: preferible
+        // a devolver un 500 en un POST que sí guardó bien.
         logger.LogWarning(ex, "Cache eviction failed for {Key}", key);
       }
     }

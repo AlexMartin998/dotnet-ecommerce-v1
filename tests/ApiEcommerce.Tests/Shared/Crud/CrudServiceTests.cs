@@ -11,8 +11,8 @@ namespace ApiEcommerce.Tests.Shared.Crud;
 
 
 /// <summary>
-/// Invariantes del CRUD compartido. Son las que <c>CrudService</c> es <c>sealed</c>
-/// para proteger, así que son exactamente las que hay que fijar con tests.
+/// Invariantes del CRUD compartido: las que <c>CrudService</c> es <c>sealed</c> para
+/// proteger.
 /// </summary>
 public class CrudServiceTests
 {
@@ -30,14 +30,13 @@ public class CrudServiceTests
   [Fact]
   public async Task GetByIdAsync_WhenTheRepositoryReturnsNull_ThrowsNotFound()
   {
-    // El repositorio devuelve null (no lanza); quien decide que eso es un 404 es el
-    // servicio. Ese reparto es la regla de capas, y este test es su red.
+    // El repositorio devuelve null y es el servicio quien decide que eso es un 404.
     _repository.Setup(r => r.GetByIdAsync(9, It.IsAny<CancellationToken>())).ReturnsAsync((Category?)null);
 
     var ex = await Assert.ThrowsAsync<NotFoundAppException>(() => Sut().GetByIdAsync(9));
 
-    // El mensaje usa EntityName, no typeof(TEntity).Name: renombrar la clase C# no
-    // debe cambiar el contrato de la API.
+    // Usa EntityName y no typeof(TEntity).Name: renombrar la clase C# no puede cambiar
+    // el contrato de la API.
     Assert.Equal("Category with key '9' was not found.", ex.Message);
   }
 
@@ -75,8 +74,7 @@ public class CrudServiceTests
     var id = await Sut().CreateAsync(new CreateCategoryDto { Name = "Bebidas" });
 
     Assert.Equal(["rules", "repository"], order);
-    // El id sale de IEntity, sin reflexión: es lo que el controller necesita para el
-    // CreatedAtRoute.
+    // El id sale de IEntity, sin reflexión: el controller lo necesita para CreatedAtRoute.
     Assert.Equal(42, id);
   }
 
@@ -95,9 +93,8 @@ public class CrudServiceTests
   [Fact]
   public async Task UpdateAsync_EvaluatesTheRulesBeforeMapping()
   {
-    // ⚠️ El orden es la razón de ser de la firma: la regla recibe `existing` y debe
-    // verlo con el estado PREVIO. Si el mapeo corriera antes, una regla del tipo
-    // "no se puede bajar el precio más de un 50%" compararía el valor nuevo consigo mismo.
+    // La regla recibe `existing` y tiene que verlo con el estado previo: si el mapeo
+    // corriera antes, una regla sobre el valor anterior lo compararía consigo mismo.
     var order = new List<string>();
     var existing = new Category { Id = 7, Name = "Bebidas" };
 
@@ -117,8 +114,7 @@ public class CrudServiceTests
   [Fact]
   public async Task UpdateAsync_MapsOntoTheTrackedInstance()
   {
-    // No se construye una entidad nueva: se mapea SOBRE la que devolvió el repositorio,
-    // que es la que rastrea el change tracker. Mapear a una instancia nueva dejaría en
+    // Se mapea sobre la instancia que rastrea el change tracker: una nueva dejaría en
     // 0/null todo lo que el PATCH no trae.
     var existing = new Category { Id = 7, Name = "Bebidas" };
     _repository.Setup(r => r.GetByIdAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
@@ -157,8 +153,7 @@ public class CrudServiceTests
   [Fact]
   public async Task GetPagedAsync_KeepsTheMetadataOfTheRepositoryPage()
   {
-    // El servicio mapea los items pero NO recalcula los metadatos: el total viene del
-    // COUNT que hizo la base.
+    // El servicio mapea los items pero no recalcula los metadatos: el total lo dio la base.
     _repository.Setup(r => r.GetPagedAsync(2, 10, It.IsAny<CancellationToken>()))
                .ReturnsAsync(new PagedResult<Category>([], 2, 10, 137));
     _mapper.Setup(m => m.Map<IEnumerable<CategoryDto>>(It.IsAny<IEnumerable<Category>>())).Returns([]);

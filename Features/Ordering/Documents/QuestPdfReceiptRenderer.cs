@@ -8,47 +8,11 @@ using QuestPDF.Infrastructure;
 namespace ApiEcommerce.Features.Ordering.Documents;
 
 
-/// <summary>
-/// Dibuja el comprobante con QuestPDF.
-/// </summary>
+/// <summary>Dibuja el comprobante con QuestPDF.</summary>
 /// <remarks>
-/// <para>
-/// <b>Por qué QuestPDF</b>, comprobado antes de meterlo (2026-09-06):
-/// </para>
-/// <list type="bullet">
-/// <item>
-/// <b>Licencia</b>: Community es gratuita —también para uso comercial— con ingresos brutos
-/// anuales <b>por debajo de 1.000.000 USD</b>, y da 90 días de transición si se superan.
-/// Se mira primero por lo que pasó con AutoMapper 15, que empezó exigiendo licencia
-/// comercial con el proyecto ya montado. ⚠️ Es un umbral, no un "gratis para siempre":
-/// está anotado en <c>planning/20</c> como decisión del owner el día que aplique.
-/// </item>
-/// <item>
-/// <b>API de composición en C#</b>, no HTML→PDF. Sin navegador headless que instalar, sin
-/// proceso externo que se quede colgado, y el maquetado se comprueba en compilación.
-/// </item>
-/// <item>
-/// Pensado para alta transaccionalidad: los documentos se generan en memoria y no hay
-/// estado compartido entre generaciones.
-/// </item>
-/// </list>
-/// <para>
-/// ⚠️ <b>Dos trampas de ejecución</b>, y las dos fallan tarde y feo:
-/// </para>
-/// <list type="number">
-/// <item>
-/// <c>QuestPDF.Settings.License</c> hay que declararla o <b>lanza al GENERAR</b>, no al
-/// arrancar. Sin cuidarlo, la API arrancaría sana y los comprobantes fallarían uno a uno
-/// dentro del consumidor. Se declara en el arranque y además se comprueba allí mismo
-/// (ver <c>AddReceiptRendering</c>).
-/// </item>
-/// <item>
-/// En Linux dibuja con SkiaSharp, que necesita <b><c>libfontconfig1</c></b> y alguna
-/// fuente instalada. La imagen <c>mcr.microsoft.com/dotnet/aspnet</c> no las trae: sin
-/// añadirlas al <c>Dockerfile</c>, esto revienta solo dentro del contenedor —en local
-/// funciona— que es la peor forma de descubrirlo. Ya están puestas ahí, con el porqué.
-/// </item>
-/// </list>
+/// Dos trampas que fallan en ejecución y no al arrancar: <c>QuestPDF.Settings.License</c> se
+/// declara en <c>AddReceiptRendering</c>, y en Linux SkiaSharp necesita <c>libfontconfig1</c>
+/// y fuentes instaladas (están en el <c>Dockerfile</c>).
 /// </remarks>
 public sealed class QuestPdfReceiptRenderer : IReceiptRenderer
 {
@@ -56,9 +20,8 @@ public sealed class QuestPdfReceiptRenderer : IReceiptRenderer
 
   /// <summary>Cultura fija para el documento.</summary>
   /// <remarks>
-  /// ⚠️ <b>Invariante y no la del servidor.</b> Con la cultura ambiente, el mismo
-  /// comprobante saldría con coma o con punto decimal según la máquina que lo generara, y
-  /// dos réplicas producirían documentos distintos para la misma orden.
+  /// Invariante y no la del servidor: con la cultura ambiente, dos réplicas producirían
+  /// separadores decimales distintos para la misma orden.
   /// </remarks>
   private static readonly CultureInfo Culture = CultureInfo.InvariantCulture;
 
@@ -76,18 +39,14 @@ public sealed class QuestPdfReceiptRenderer : IReceiptRenderer
       {
         page.Size(PageSizes.A4);
         page.Margin(2, Unit.Centimetre);
-        // ⚠️ SIN FontFamily explícita. QuestPDF EMBEBE su fuente por defecto (Lato) en el
-        // paquete, así que el documento sale idéntico en local y dentro de la imagen.
-        // Pedir Calibri —que no existe en Linux— deja el resultado a merced de la
-        // sustitución de fuentes de cada máquina: dos réplicas, dos comprobantes distintos
-        // para la misma orden, y ningún error que lo avise.
+        // Sin FontFamily explícita: QuestPDF embebe Lato, y pedir una fuente del sistema
+        // dejaría el documento a merced de la sustitución de cada máquina.
         page.DefaultTextStyle(text => text.FontSize(10));
 
         page.Header().Element(container => Header(container, order));
         page.Content().Element(container => Content(container, order));
 
-        // El pie va en TODAS las páginas: un comprobante de varias hojas sin número de
-        // página es imposible de comprobar que está completo.
+        // El pie va en todas las páginas: sin numerarlas no se sabe si el comprobante está completo.
         page.Footer().AlignCenter().Text(text =>
         {
           text.DefaultTextStyle(style => style.FontSize(8).FontColor(Colors.Grey.Medium));
@@ -99,8 +58,7 @@ public sealed class QuestPdfReceiptRenderer : IReceiptRenderer
       });
     }).GeneratePdf(stream);
 
-    // Al principio: quien lo recibe lo copia al almacén, y un stream en la última posición
-    // guardaría un fichero de cero bytes sin ningún error.
+    // Quien lo recibe lo copia al almacén: sin rebobinar guardaría cero bytes y sin error.
     stream.Position = 0;
 
     return Task.FromResult<Stream>(stream);
@@ -170,9 +128,7 @@ public sealed class QuestPdfReceiptRenderer : IReceiptRenderer
           columns.ConstantColumn(80);   // total
         });
 
-        // ⚠️ `Header` y no una primera fila cualquiera: QuestPDF la repite en cada página.
-        // Con un pedido largo, las páginas siguientes serían columnas de números sin
-        // saber a qué corresponden.
+        // `Header` y no una fila normal: QuestPDF la repite en cada página del pedido.
         table.Header(header =>
         {
           header.Cell().Element(HeaderCell).Text("ITEM");
@@ -206,8 +162,7 @@ public sealed class QuestPdfReceiptRenderer : IReceiptRenderer
       {
         Line(column, "Subtotal", order.Subtotal);
 
-        // Solo se imprimen si existen: una fila "Descuento 0,00" en cada comprobante es
-        // ruido que además invita a preguntar por qué no hay descuento.
+        // Solo se imprimen si existen: una fila "Descuento 0,00" es ruido.
         if (order.Discount != 0m) Line(column, "Descuento", -order.Discount);
         if (order.Tax != 0m) Line(column, "Impuestos", order.Tax);
         if (order.Shipping != 0m) Line(column, "Envío", order.Shipping);

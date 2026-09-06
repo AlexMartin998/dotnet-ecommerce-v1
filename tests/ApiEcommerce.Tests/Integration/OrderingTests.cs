@@ -16,15 +16,9 @@ namespace ApiEcommerce.Tests.Integration;
 /// Órdenes y su comprobante, contra la API entera.
 /// </summary>
 /// <remarks>
-/// <para>
-/// ⚠️ <b>El host de tests corre SIN broker</b> (<c>RabbitMq:ConnectionString</c> vacío), así
-/// que <c>OrderPlacedConsumer</c> no está registrado y nadie drena el outbox. Eso no es una
-/// limitación aquí: es lo que permite probar las dos mitades por separado y de forma
-/// determinista — la compra deja el comprobante <c>pending</c>, y la generación se dispara
-/// llamando al <b>efecto</b> (<see cref="IReceiptGenerator"/>) igual que haría el
-/// consumidor. Que el evento llegue por AMQP lo cubre <c>MessageInboxTests</c> y la
-/// verificación manual contra un RabbitMQ real.
-/// </para>
+/// El host de tests corre sin broker, así que nadie drena el outbox: la compra deja el
+/// comprobante <c>pending</c> y la generación se dispara llamando al efecto
+/// (<see cref="IReceiptGenerator"/>), que es la mitad determinista.
 /// </remarks>
 [Collection(IntegrationCollection.Name)]
 public class OrderingTests(ApiFactory factory)
@@ -68,8 +62,7 @@ public class OrderingTests(ApiFactory factory)
   [Fact]
   public async Task RepeatedLinesAreMergedIntoOne()
   {
-    // Sin agrupar, el mismo SKU dos veces produce dos líneas idénticas en el comprobante:
-    // cuadra en total, pero el documento queda raro y el cliente llama preguntando.
+    // Sin agrupar, el mismo SKU dos veces deja dos líneas idénticas en el comprobante.
     using var admin = await factory.AsAdminAsync();
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
 
@@ -294,15 +287,8 @@ public class OrderingTests(ApiFactory factory)
   [Fact]
   public async Task AFailingReceiptLeavesNoMarkAndNoKey()
   {
-    // ⭐ **La propiedad central de `planning/20` §20.6**, y la que no cubría nadie: los
-    // demás tests llaman al generador directamente, así que probaban el efecto pero no que
-    // el efecto y la marca de «mensaje procesado» se confirmen JUNTOS. Aquí se monta el
-    // camino real —`IMessageInbox.ProcessOnceAsync(id, tipo, efecto)`— con un efecto que
-    // revienta, y se comprueba lo que importa: ni marca, ni clave. O sea que la reentrega
-    // vuelve a intentarlo de verdad.
-    //
-    // Se puede escribir sin broker porque el efecto vive fuera del BackgroundService. Es
-    // literalmente la lección de `planning/18`, aplicada de entrada.
+    // Si la marca sobreviviera a un efecto fallido, la reentrega daría el mensaje por
+    // procesado y el comprobante no se generaría nunca.
     using var admin = await factory.AsAdminAsync();
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
 
@@ -358,10 +344,8 @@ public class OrderingTests(ApiFactory factory)
   [Fact]
   public async Task AReceiptThatWillNeverExistIsNotReportedAsNotReady()
   {
-    // ⚠️ `receipt_not_ready` significa «vuelve en un momento». Devolverlo para un
-    // comprobante que agotó sus reintentos y murió en la DLQ deja al cliente haciendo
-    // polling **eterno** sobre algo que no va a existir. Lo destapó una revisión: el estado
-    // `Failed` existía, estaba migrado, y no lo escribía nadie.
+    // `receipt_not_ready` significa «vuelve en un momento»: devolverlo para un comprobante
+    // que murió en la DLQ deja al cliente haciendo polling eterno sobre algo inexistente.
     using var admin = await factory.AsAdminAsync();
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
 
@@ -408,7 +392,7 @@ public class OrderingTests(ApiFactory factory)
   [Fact]
   public async Task AnAbsurdPageNumberIs200WithAnEmptyPageAndNotA500()
   {
-    // ⚠️ `(Page - 1) * PageSize` desbordaba a negativo y SQL Server respondía con un 500.
+    // `(Page - 1) * PageSize` puede desbordar a negativo, y SQL Server responde con un 500.
     using var user = await factory.AsNewUserAsync();
 
     var response = await user.GetAsync("/api/v1/order/paged?page=2147483647&pageSize=100");

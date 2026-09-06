@@ -16,11 +16,10 @@ public enum OrderStatus
 }
 
 
-/// <summary>Estado del comprobante en PDF, que se genera <b>aparte</b> de la compra.</summary>
+/// <summary>Estado del comprobante en PDF, que se genera aparte de la compra.</summary>
 /// <remarks>
-/// Existe porque la generación es asíncrona: entre que la orden se crea y el PDF está
-/// disponible pasa un rato, y el cliente necesita saber en cuál de los dos momentos está.
-/// Sin este campo, "no hay comprobante" y "el comprobante falló" serían indistinguibles.
+/// La generación es asíncrona; sin este campo, "todavía no hay comprobante" y "el
+/// comprobante falló" serían indistinguibles para el cliente.
 /// </remarks>
 public enum ReceiptStatus
 {
@@ -30,33 +29,18 @@ public enum ReceiptStatus
 }
 
 
-/// <summary>
-/// Una compra registrada: qué se compró, a cuánto y a quién se envía.
-/// </summary>
+/// <summary>Una compra registrada: qué se compró, a cuánto y a quién se envía.</summary>
 /// <remarks>
-/// <para>
-/// ⚠️ <b>Los datos del producto y del cliente se COPIAN, no se referencian.</b> El precio,
-/// el nombre y el SKU quedan congelados en el momento de comprar. Si mañana sube el precio
-/// o se renombra el producto, el comprobante de ayer tiene que seguir diciendo lo que se
-/// cobró de verdad — un documento que cambia cuando cambia el catálogo no sirve como
-/// comprobante de nada.
-/// </para>
-/// <para>
-/// Contexto acotado propio (<c>Ordering</c>) y no dentro de <c>Catalog</c>: tiene su propio
-/// lenguaje —orden, línea, comprobante, envío— y sus propias invariantes. Que hoy solo
-/// compre productos del catálogo no lo convierte en parte de él.
-/// </para>
+/// Los datos del producto y del cliente se copian, no se referencian: el comprobante debe
+/// seguir diciendo lo que se cobró aunque el catálogo cambie después.
 /// </remarks>
 public class Order : IAuditable
 {
   public int Id { get; set; }
 
-  /// <summary>
-  /// Número legible (<c>ORD-2026-000012</c>). Es lo que cita el cliente al escribir.
-  /// </summary>
+  /// <summary>Número legible (<c>ORD-2026-000012</c>). Es lo que cita el cliente.</summary>
   /// <remarks>
-  /// Columna real y con índice único, no una propiedad calculada: la gente busca por este
-  /// número, y calcularlo en memoria obligaría a traer la tabla entera para encontrar uno.
+  /// Columna real con índice único, no una propiedad calculada: se busca por él.
   /// </remarks>
   [Required]
   [MaxLength(32)]
@@ -74,8 +58,7 @@ public class Order : IAuditable
   public string Currency { get; set; } = "USD";
 
   // ---- totales, desglosados como en el comprobante ------------------------
-  // Se guardan CALCULADOS y no se recalculan al leer: el desglose es parte del documento
-  // y tiene que poder reproducirse aunque cambien los impuestos o las tarifas de envío.
+  // Se guardan calculados: el desglose impreso debe reproducirse aunque cambien impuestos o envío.
 
   public decimal Subtotal { get; set; }
   public decimal Discount { get; set; }
@@ -84,8 +67,7 @@ public class Order : IAuditable
   public decimal Total { get; set; }
 
   // ---- copia de los datos del cliente -------------------------------------
-  // También congelados: si el usuario cambia su email mañana, el comprobante emitido hoy
-  // debe seguir mostrando al que se le envió.
+  // Congelados: el comprobante emitido hoy sigue mostrando el email al que se envió.
 
   [Required]
   [MaxLength(200)]
@@ -106,14 +88,10 @@ public class Order : IAuditable
 
   public ReceiptStatus ReceiptStatus { get; set; } = ReceiptStatus.Pending;
 
-  /// <summary>
-  /// Clave <b>opaca</b> del documento en el almacén. <c>null</c> mientras no exista.
-  /// </summary>
+  /// <summary>Clave opaca del documento en el almacén. <c>null</c> mientras no exista.</summary>
   /// <remarks>
-  /// ⚠️ Aquí NO va una ruta del disco. Guardar <c>/app/documents/2026/09/x.pdf</c> ataría
-  /// la base a la infraestructura de hoy: el día que los comprobantes vivan en S3 habría
-  /// que reescribir todas las filas. Lo que hay es una clave que solo entiende
-  /// <c>IDocumentStore</c>, y por eso cambiar de almacén no toca la base.
+  /// No es una ruta de disco: solo la entiende <c>IDocumentStore</c>, así que cambiar de
+  /// almacén no obliga a reescribir las filas.
   /// </remarks>
   [MaxLength(256)]
   public string? ReceiptDocumentKey { get; set; }
@@ -137,13 +115,10 @@ public class OrderItem : IEntity
 
   public Order? Order { get; set; }
 
-  /// <summary>
-  /// Referencia al producto, <b>solo informativa</b>.
-  /// </summary>
+  /// <summary>Referencia al producto, solo informativa.</summary>
   /// <remarks>
-  /// Sin clave foránea a propósito: si un producto se borra, la orden y su comprobante
-  /// tienen que sobrevivir. Una FK obligaría a elegir entre impedir el borrado o borrar
-  /// la historia de compras, y las dos son peores.
+  /// Sin clave foránea a propósito: la orden y su comprobante sobreviven al borrado del
+  /// producto.
   /// </remarks>
   public int ProductId { get; set; }
 
@@ -159,13 +134,10 @@ public class OrderItem : IEntity
 
   public int Quantity { get; set; }
 
-  /// <summary>
-  /// <c>UnitPrice × Quantity</c>, guardado.
-  /// </summary>
+  /// <summary><c>UnitPrice × Quantity</c>, guardado.</summary>
   /// <remarks>
-  /// Redundante a propósito: es lo que se imprimió. Recalcularlo al leer parece más
-  /// limpio hasta el día que cambia la forma de redondear y todos los comprobantes
-  /// antiguos empiezan a cuadrar mal por un céntimo.
+  /// Redundante a propósito: es lo que se imprimió, y recalcularlo al leer lo haría
+  /// depender del redondeo de hoy.
   /// </remarks>
   public decimal LineTotal { get; set; }
 }

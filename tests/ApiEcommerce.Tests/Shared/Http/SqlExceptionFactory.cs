@@ -4,21 +4,11 @@ using Microsoft.Data.SqlClient;
 namespace ApiEcommerce.Tests.Shared.Http;
 
 
-/// <summary>
-/// Fabrica un <see cref="SqlException"/> con un número de error concreto.
-/// </summary>
+/// <summary>Fabrica un <see cref="SqlException"/> con un número de error concreto.</summary>
 /// <remarks>
-/// <para>
-/// <c>SqlException</c> no tiene constructor público —solo la crea el driver— así que
-/// hay que llegar por reflexión al <c>CreateException</c> interno. Es feo y es
-/// <b>frágil ante un cambio de versión de Microsoft.Data.SqlClient</b>, pero la
-/// alternativa es no poder probar el mapeo 2601/2627/1205/547 sin levantar SQL Server,
-/// y ese mapeo ya se rompió una vez en este proyecto.
-/// </para>
-/// <para>
-/// Si algún día esto falla al actualizar el paquete, el fallo es <b>del helper</b>, no
-/// del handler: se arregla aquí y los tests siguen valiendo.
-/// </para>
+/// <c>SqlException</c> solo la crea el driver, así que se llega por reflexión al
+/// <c>CreateException</c> interno. Es frágil ante un cambio de versión del paquete, pero
+/// la alternativa es no probar el mapeo 2601/2627/1205/547 sin levantar SQL Server.
 /// </remarks>
 internal static class SqlExceptionFactory
 {
