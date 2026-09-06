@@ -25,6 +25,15 @@ public interface IAuthService
   /// <exception cref="Exceptions.UnauthorizedAppException">Credenciales inválidas o cuenta bloqueada.</exception>
   Task<AuthResponseDto> LoginAsync(LoginUserDto dto, CancellationToken ct = default);
 
+  /// <summary>Cambia la contraseña del propio usuario.</summary>
+  /// <remarks>
+  /// Exige la contraseña ACTUAL aunque ya esté autenticado: un access token demuestra que
+  /// alguien entró hace un rato, no que quien está delante ahora sea el dueño.
+  /// </remarks>
+  /// <exception cref="Exceptions.UnauthorizedAppException">La contraseña actual no es correcta.</exception>
+  /// <exception cref="Exceptions.ValidationAppException">La nueva no cumple la política de Identity.</exception>
+  Task ChangePasswordAsync(string userId, ChangePasswordDto dto, CancellationToken ct = default);
+
   /// <summary>Perfil del usuario cuyo id viaja en el token (<c>GET /auth/me</c>).</summary>
   /// <exception cref="Exceptions.NotFoundAppException">El id del token ya no existe en la base.</exception>
   Task<UserDto> GetProfileAsync(string userId, CancellationToken ct = default);

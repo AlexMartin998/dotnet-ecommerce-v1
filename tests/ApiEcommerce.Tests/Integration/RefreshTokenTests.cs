@@ -155,6 +155,49 @@ public class RefreshTokenTests(ApiFactory factory)
     Assert.Equal(HttpStatusCode.OK, (await client.PostAsync("/api/v1/auth/refresh", null)).StatusCode);
   }
 
+  [Fact]
+  public async Task ChangingThePasswordRevokesEveryOtherSession()
+  {
+    // ⚠️ Es la expectativa de cualquiera que cambia su contraseña porque sospecha: si las
+    // sesiones abiertas siguieran vivas, cambiarla no habría echado a nadie.
+    using var admin = await factory.AsNewUserAsync();
+
+    // Otra sesión del mismo usuario, en "otro dispositivo".
+    var me = await admin.GetFromJsonAsync<JsonElement>("/api/v1/auth/me");
+    var username = me.GetProperty("username").GetString();
+
+    using var otherDevice = factory.Anonymous();
+    var login = await otherDevice.PostAsJsonAsync("/api/v1/auth/login",
+        new { username, password = "Passw0rd!2026" });
+    login.EnsureSuccessStatusCode();
+
+    Assert.Equal(HttpStatusCode.OK,
+        (await otherDevice.PostAsync("/api/v1/auth/refresh", null)).StatusCode);
+
+    var changed = await admin.PostAsJsonAsync("/api/v1/auth/password",
+        new { currentPassword = "Passw0rd!2026", newPassword = "OtraPassw0rd!2026" });
+
+    Assert.Equal(HttpStatusCode.NoContent, changed.StatusCode);
+
+    // El otro dispositivo se queda fuera.
+    Assert.Equal(HttpStatusCode.Unauthorized,
+        (await otherDevice.PostAsync("/api/v1/auth/refresh", null)).StatusCode);
+  }
+
+  [Fact]
+  public async Task TheCurrentPasswordIsRequiredToChangeIt()
+  {
+    // Un access token demuestra que ALGUIEN entró hace un rato, no que quien está delante
+    // ahora sea el dueño. Sin esta comprobación, un minuto frente a una sesión abierta
+    // basta para quedarse con la cuenta.
+    using var user = await factory.AsNewUserAsync();
+
+    var response = await user.PostAsJsonAsync("/api/v1/auth/password",
+        new { currentPassword = "la-que-no-es", newPassword = "OtraPassw0rd!2026" });
+
+    Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+  }
+
   // ---- helpers ------------------------------------------------------------
 
   internal static async Task<HttpResponseMessage> LoginAsync(HttpClient client)

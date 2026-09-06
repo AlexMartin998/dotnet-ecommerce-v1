@@ -131,6 +131,58 @@ public class AuthController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>Cambia la contraseña del propio usuario y corta el resto de sesiones.</summary>
+    /// <remarks>
+    /// ⚠️ Cambiar la contraseña <b>revoca todas las sesiones</b>, y esa es la expectativa de
+    /// cualquiera que la cambia porque sospecha que se la han robado: si las sesiones
+    /// abiertas siguieran vivas, cambiarla no habría echado a nadie.
+    /// Se abre una sesión nueva para ESTE dispositivo, para no expulsar también a quien
+    /// acaba de hacerlo bien.
+    /// </remarks>
+    [Authorize]
+    [HttpPost("password", Name = "ChangePassword")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status422UnprocessableEntity)]
+    public async Task<IActionResult> ChangePassword(
+        [FromBody] ChangePasswordDto dto, CancellationToken ct)
+    {
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        var userId = User.GetRequiredUserId();
+
+        // contraseña actual incorrecta -> 401 ; la nueva no cumple la política -> 422
+        await _service.ChangePasswordAsync(userId, dto, ct);
+
+        await _sessions.RevokeAllSessionsAsync(userId, ct);
+        await OpenSessionAsync(userId, ct);
+
+        return NoContent();
+    }
+
+    /// <summary>Cierra la sesión en TODOS los dispositivos.</summary>
+    [Authorize]
+    [HttpPost("logout-all", Name = "LogoutEverywhere")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> LogoutEverywhere(CancellationToken ct)
+    {
+        var userId = User.GetRequiredUserId();
+
+        await _sessions.RevokeAllSessionsAsync(userId, ct);
+
+        // El access token de ESTE dispositivo sí se puede matar en el acto; los de los
+        // demás no —la denylist va por `jti` y no sabemos cuáles son— y sobreviven como
+        // mucho lo que les quede, sin poder renovarse.
+        await _sessions.LogoutAsync(null, User.GetTokenId(), User.GetTokenExpiry(), ct);
+
+        _cookie.Clear(Response);
+
+        return NoContent();
+    }
+
     // ---- helpers -----------------------------------------------------------
 
     /// <summary>Emite el refresh token de una sesión nueva y lo deja en la cookie.</summary>
