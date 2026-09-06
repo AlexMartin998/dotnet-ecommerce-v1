@@ -1,4 +1,4 @@
-# 11 — Proyecto de tests `ApiEcommerce.Tests`  ❌ **SIGUIENTE**
+# 11 — Proyecto de tests `ApiEcommerce.Tests`  🟡 **EN CURSO** (fases 1 y 2 hechas)
 
 > **Por qué es el siguiente y no es opcional**: casi todos los bugs que encontró la revisión
 > multiagente (`progress.md` §2) compilaban limpio y pasaban el smoke test manual. Solo
@@ -9,28 +9,45 @@
 debería poder convertirse en un test. Empezar por los que ya se verificaron a mano, para
 que dejen de depender de que alguien se acuerde de correr `curl`.
 
+> **Estado 2026-09-06**: fases 1 y 2 completas, **105 tests en verde**. Dos desvíos del
+> plan, ambos deliberados:
+> - El proyecto va en **`tests/ApiEcommerce.Tests`** (dentro del repo) y no en
+>   `../ApiEcommerce.Tests`: la raíz del repo *es* la carpeta del proyecto, así que fuera
+>   quedaría fuera de git. Obliga a excluir `tests/**` en el `.csproj` de la API.
+> - **Sin FluentAssertions**: desde la v8 exige licencia comercial, y ya tenemos ese
+>   problema abierto con AutoMapper. `Assert` de xunit basta.
+> - Los paquetes de integración (`Mvc.Testing`, `Testcontainers.*`) se añadirán al empezar
+>   la fase 3; hoy no hacen falta y serían peso muerto.
+
 ## Fase 1 — Andamiaje
-- [ ] `dotnet new xunit -o ../ApiEcommerce.Tests` + `dotnet add reference`
-- [ ] `dotnet sln add`; paquetes: `Moq`, `Microsoft.AspNetCore.Mvc.Testing`, `Testcontainers.MsSql`, `Testcontainers.Redis`
-- [ ] Estructura **espejo del slicing**: `Features/Catalog/`, `Features/Accounts/`, `Shared/`
-- [ ] Patrón AAA; un test por escenario del `.feature`, con el mismo nombre
+- [x] `dotnet new xunit -o ../ApiEcommerce.Tests` + `dotnet add reference`
+- [x] `dotnet sln add`; paquetes: `Moq`, `Microsoft.AspNetCore.Mvc.Testing`, `Testcontainers.MsSql`, `Testcontainers.Redis`
+- [x] Estructura **espejo del slicing**: `Features/Catalog/`, `Features/Accounts/`, `Shared/`
+- [x] Patrón AAA; un test por escenario del `.feature`, con el mismo nombre
 
 ## Fase 2 — Unitarios (sin base, sin Redis) — **empezar aquí**
 Es donde vive la lógica y donde la composición abarató el testeo: las reglas se instancian
 con un mock en una línea.
-- [ ] `CategoryRules` / `ProductRules` con `IXRepository` mockeado: un test por excepción de dominio
-- [ ] `CrudService` con `IBaseRepository<T>` + `IMapper` mockeados:
+- [x] `CategoryRules` / `ProductRules` con `IXRepository` mockeado: un test por excepción de dominio
+- [x] `CrudService` con `IBaseRepository<T>` + `IMapper` mockeados:
       404 en `GetByIdAsync`, reglas invocadas **antes** de escribir, update sobre la entidad rastreada
-- [ ] `AuthService` con `UserManager`/`SignInManager` mockeados:
+- [x] `AuthService` con `UserManager`/`SignInManager` mockeados:
       409 duplicado · 422 password débil · **401 con el MISMO mensaje** para usuario
       inexistente y contraseña mala · 403 lockout · **el registro nunca asigna `admin`**
-- [ ] `LocalFileStorage`: extensión no permitida, magic bytes que no casan, tamaño excedido,
+- [x] `LocalFileStorage`: extensión no permitida, magic bytes que no casan, tamaño excedido,
       y que el nombre lo genere el servidor
-- [ ] `CachedCategoryService` con `ICacheService` falso: invalidación **después** de la
+- [x] `CachedCategoryService` con `ICacheService` falso: invalidación **después** de la
       escritura, y **no** invalidar si el servicio interno lanza
-- [ ] `PagedResult`: `TotalPages` con 0 elementos, `HasNext`/`HasPrevious` en los bordes
-- [ ] `GlobalExceptionHandler`: que encuentre el `SqlException` **desnudo** y el anidado
-- [ ] Perfiles de AutoMapper: `AssertConfigurationIsValid()` + PATCH parcial que no pisa campos
+- [x] `PagedResult`: `TotalPages` con 0 elementos, `HasNext`/`HasPrevious` en los bordes
+- [x] `GlobalExceptionHandler`: que encuentre el `SqlException` **desnudo** y el anidado
+- [x] Perfiles de AutoMapper: `AssertConfigurationIsValid()` + PATCH parcial que no pisa campos
+
+### Verificado por mutación (2026-09-06)
+Un test que pasa contra el código roto no vale nada. Se reintrodujeron **dos bugs reales
+ya corregidos** y la suite los cazó:
+- quitar el `MapFrom` explícito de `CategoryId` → caen los 2 tests del PATCH parcial;
+- volver `FindSqlException` a mirar solo el `InnerException` directo → caen los 2 del
+  `SqlException` desnudo y el anidado en profundidad.
 
 ## Fase 3 — Integración (`WebApplicationFactory` + Testcontainers)
 - [ ] SQL Server y Redis reales y efímeros por corrida

@@ -22,7 +22,7 @@
 | 08 | Idempotencia de peticiones | ✅ | [`features/08`](features/08_idempotencia.feature) · [`planning/08`](planning/08_idempotencia.md) | `63269ac` |
 | 09 | Eventos de dominio (outbox + RabbitMQ) | ✅ | [`features/09`](features/09_eventos-de-dominio.feature) · [`planning/09`](planning/09_eventos-de-dominio.md) | `63269ac` + fix |
 | 10 | Límites, salud y despliegue | ✅ | [`features/10`](features/10_limites-y-salud.feature) · [`planning/10`](planning/10_limites-y-salud.md) | `63269ac` |
-| 11 | **Tests** | ❌ **siguiente** | [`planning/11`](planning/11_proyecto-de-tests.md) | — |
+| 11 | **Tests** | 🟡 fases 1–2 (105 tests) | [`planning/11`](planning/11_proyecto-de-tests.md) | `14c9e76` + |
 | 12 | Deuda de la revisión 2026-08-30 | ❌ | [`planning/12`](planning/12_deuda-revision-multiagente.md) | — |
 | 13 | Refresh tokens y revocación | ❌ | [`planning/13`](planning/13_refresh-tokens.md) | — |
 | 14 | Administración de usuarios | ❌ | [`planning/14`](planning/14_admin-usuarios.md) | — |
@@ -34,6 +34,28 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 ---
 
 ## 2. Bitácora
+
+### 2026-09-06 — Paso 11: fases 1 y 2 completas, 105 tests
+
+Primer proyecto de tests del repo. Cubre toda la lógica que no necesita base ni Redis:
+reglas de dominio de Category y Product, `CrudService`, `AuthService`, `LocalFileStorage`,
+`CachedCategoryService`, `PagedResult`, los perfiles de AutoMapper y
+`GlobalExceptionHandler`.
+
+Decisiones que se apartan del plan, todas deliberadas y anotadas en `planning/11`:
+`tests/` dentro del repo (la raíz del repo *es* el proyecto), TFM `net9.0` a mano (la
+plantilla del SDK 10 solo ofrece `net10.0`), y **sin FluentAssertions** — desde la v8 exige
+licencia comercial y ya arrastramos ese problema con AutoMapper.
+
+⚠️ **`ApiEcommerce.csproj` excluye `tests/**`** igual que `AGENTS/**`: sin eso el glob
+implícito del SDK Web compila el proyecto de tests dentro de la API, metiendo xunit y Moq
+en la imagen de producción y creando una referencia circular con su propio
+`ProjectReference`.
+
+**Verificado por mutación**, que es la única forma de saber si un test sirve: se
+reintrodujeron dos bugs reales ya corregidos —quitar el `MapFrom` explícito de `CategoryId`
+y volver `FindSqlException` a mirar solo el `InnerException` directo— y la suite cazó
+exactamente los cuatro tests que debía, ni uno más.
 
 ### 2026-09-06 — El evento de dominio vuelve a su slice (pregunta del owner)
 
@@ -210,6 +232,7 @@ Medido contra SQL Server y Redis **reales**:
 | Broker caído 45 s (**después del fix**) | `Attempts=0`; al volver el broker, publicado y consumido |
 | Republicación de los 14 enterrados | 29 procesados, 0 pendientes, `/health/ready` → `Healthy` |
 | Arranque sobre el runtime **9.0.19** | sin `DOTNET_ROLL_FORWARD`; verificado en `/proc/<pid>/maps` |
+| **105 tests unitarios** | verdes; y en rojo al reintroducir dos bugs reales (prueba de mutación) |
 
 **No verificado**: el `Dockerfile` construido y `docker-compose.prod.yml` levantado — no hay
 Docker en el dev container, los ejecuta el owner en el host.
@@ -218,10 +241,11 @@ Docker en el dev container, los ejecuta el owner en el host.
 
 ## 4. Pendientes, en orden
 
-1. **Tests** ([`planning/11`](planning/11_proyecto-de-tests.md)) — el siguiente y no es
-   opcional: casi todos los bugs de la revisión solo aparecen con concurrencia, fallo de
-   dependencia o el entorno de producción. Los `.feature` de `features/` **son** la
-   especificación.
+1. **Tests** ([`planning/11`](planning/11_proyecto-de-tests.md)) — fases 1 y 2 hechas
+   (105 unitarios). **Falta lo que más vale**: fase 3 (integración con
+   `WebApplicationFactory` + Testcontainers), fase 4 (concurrencia con `Task.WhenAll`),
+   fase 5 (degradación y arranque) y fase 6 (CI). Los bugs que ha dado este proyecto
+   aparecen justo ahí, no en los unitarios.
 2. **Deuda de la revisión** ([`planning/12`](planning/12_deuda-revision-multiagente.md)) —
    reintentos del consumidor sin contador real, outbox sin claim para multi-réplica, purga
    de tablas, `ETag`/`If-Match`, hash del cuerpo en la clave de idempotencia.

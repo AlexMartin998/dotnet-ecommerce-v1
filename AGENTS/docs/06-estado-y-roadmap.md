@@ -86,20 +86,31 @@ pisa los campos que no vienen.
 
 ### Paso 7 — Proyecto de tests `ApiEcommerce.Tests`
 
-Sigue siendo el siguiente paso, y ahora hay más superficie que merece cobertura.
+**Unitarios hechos** (2026-09-06, 105 tests): reglas de dominio, `CrudService`,
+`AuthService`, `LocalFileStorage`, `CachedCategoryService`, `PagedResult`, los
+perfiles de AutoMapper y `GlobalExceptionHandler`. Viven en `tests/ApiEcommerce.Tests`
+(dentro del repo, con `tests/**` excluido del `.csproj` de la API) y usan xunit +
+Moq, **sin FluentAssertions** — desde la v8 exige licencia comercial.
 
-1. `dotnet new xunit -o ../ApiEcommerce.Tests` + referencia al proyecto.
-2. `CategoryRules` / `ProductRules` con un `IXRepository` mockeado (Moq): un test
-   por excepción de dominio. **Empezar por aquí**.
-3. `CrudService` con `IBaseRepository<T>` + `IMapper` mockeados.
-4. `AuthService` con `UserManager`/`SignInManager` mockeados: 409 por duplicado,
-   422 por password débil, 401 con el **mismo** mensaje para usuario inexistente y
-   password incorrecta, 403 por lockout, y que el registro **nunca** asigne `admin`.
-5. `LocalFileStorage`: que rechace extensión no permitida, magic bytes que no
-   casan, y tamaño por encima del límite.
-6. `CachedCategoryService` con un `ICacheService` falso: que la invalidación
-   ocurra **después** de la escritura y **no** ocurra si el servicio interno lanza.
-7. Perfiles de AutoMapper: `AssertConfigurationIsValid()` + test del PATCH parcial.
+**Lo que falta, y es lo que más vale**, porque es donde han aparecido todos los
+bugs reales de este proyecto:
+
+1. **Integración** con `WebApplicationFactory` + Testcontainers (SQL Server y Redis
+   efímeros): la matriz de autorización, el versionado, la paginación y la
+   idempotencia de punta a punta.
+2. **Concurrencia** con `Task.WhenAll` de peticiones reales — ⚠️ **secuencialmente
+   pasaban también con la implementación defectuosa**: 15 compras sobre stock 10,
+   8 POST simultáneos de la misma categoría, 6 compras con la misma
+   `Idempotency-Key`.
+3. **Degradación y arranque**: con Redis caído, con el broker caído, en
+   `Production` con `Seed:Enabled=false`, y sin `Jwt:SecretKey` (debe **fallar**).
+4. **CI**: hoy no existe pipeline; nada corre `dotnet build` ni `dotnet test`
+   antes de un merge.
+
+⚠️ **Un test que pasa contra el código roto no vale nada.** La suite unitaria se
+validó por mutación: reintroducidos dos bugs reales ya corregidos (el `MapFrom`
+explícito de `CategoryId` y el `FindSqlException` que solo miraba un nivel), cayeron
+exactamente los tests que debían. Conviene repetir el ejercicio con cada bloque nuevo.
 
 ### Paso 8 — Deuda conocida de la revisión de 2026-08-30 (no cerrada)
 
