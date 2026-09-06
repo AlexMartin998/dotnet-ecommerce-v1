@@ -52,10 +52,31 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     // Índice filtrado: el publicador solo consulta los pendientes, y en una tabla
     // que crece sin parar un índice sobre TODAS las filas sería cada vez más caro.
     // Aquí solo se indexa lo que de verdad se busca.
+    // La secuencia la asigna SQL Server, no la aplicación: es el único árbitro de orden
+    // que no depende del reloj de cada réplica.
     modelBuilder.Entity<OutboxMessage>()
-        .HasIndex(m => m.OccurredAt)
+        .Property(m => m.Sequence)
+        .ValueGeneratedOnAdd()
+        .UseIdentityColumn();
+
+    // Índice FILTRADO por el que consulta el publicador. Va por Sequence, que es el orden
+    // real de drenaje; indexar OccurredAt ordenaba por un valor que ya no manda.
+    // El filtro es lo que lo mantiene pequeño: la tabla crece sin parar, pero las filas
+    // pendientes son siempre unas pocas.
+    modelBuilder.Entity<OutboxMessage>()
+        .HasIndex(m => m.Sequence)
         .HasFilter("[ProcessedAt] IS NULL")
         .HasDatabaseName("IX_OutboxMessages_Pending");
+
+    // La purga borra por fecha de procesado; sin este índice sería un scan de toda la
+    // tabla cada vez que pasa el recolector.
+    modelBuilder.Entity<OutboxMessage>()
+        .HasIndex(m => m.ProcessedAt)
+        .HasDatabaseName("IX_OutboxMessages_ProcessedAt");
+
+    modelBuilder.Entity<ProcessedMessage>()
+        .HasIndex(m => m.ProcessedAt)
+        .HasDatabaseName("IX_ProcessedMessages_ProcessedAt");
   }
 
 

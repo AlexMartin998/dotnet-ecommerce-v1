@@ -1,7 +1,10 @@
+using System.Data;
 using ApiEcommerce.Data;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Options;
-using ApiEcommerce.Shared.Messaging.RabbitMq;
+using ApiEcommerce.Shared.Db;
 
 namespace ApiEcommerce.Shared.Messaging;
 
@@ -25,27 +28,21 @@ namespace ApiEcommerce.Shared.Messaging;
 /// caído no gasta intentos: si lo hiciera, una caída de segundos enterraría eventos
 /// válidos que nadie volvería a publicar. Ver <see cref="BrokerUnavailableException"/>.
 /// </para>
+/// <para>
+/// <b>Una sola réplica drena a la vez</b>, gracias a un <c>sp_getapplock</c> exclusivo.
+/// Ver <see cref="TryAcquirePublisherLockAsync"/>.
+/// </para>
 /// </remarks>
 public sealed class OutboxPublisher(
     IServiceScopeFactory scopeFactory,
     IEventPublisher publisher,
-    IOptions<RabbitMqOptions> options,
+    IOptions<OutboxOptions> options,
     ILogger<OutboxPublisher> logger) : BackgroundService
 {
-  private readonly RabbitMqOptions _options = options.Value;
-
-  /// <summary>Mensajes por vuelta. Acotado para no monopolizar la conexión ni la base.</summary>
-  private const int BatchSize = 50;
-
+  private readonly OutboxOptions _options = options.Value;
 
   protected override async Task ExecuteAsync(CancellationToken stoppingToken)
   {
-    if (!_options.IsEnabled)
-    {
-      logger.LogInformation("RabbitMq:ConnectionString is empty; outbox publisher disabled");
-      return;
-    }
-
     var interval = TimeSpan.FromSeconds(_options.PublishIntervalSeconds);
 
     while (!stoppingToken.IsCancellationRequested)
@@ -72,16 +69,35 @@ public sealed class OutboxPublisher(
     // AppDbContext (scoped) por constructor.
     using var scope = scopeFactory.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var transactions = scope.ServiceProvider.GetRequiredService<ITransactionRunner>();
 
+    await transactions.ExecuteAsync(async token =>
+    {
+      // Si otra réplica está drenando, esta vuelta no hace nada. Es lo correcto: el
+      // trabajo no se pierde, se hace en la siguiente pasada (o la termina la otra).
+      if (!await TryAcquirePublisherLockAsync(db, token))
+      {
+        logger.LogDebug("Another replica is draining the outbox; skipping this cycle");
+        return 0;
+      }
+
+      return await DrainAsync(db, token);
+    }, ct);
+  }
+
+  private async Task<int> DrainAsync(AppDbContext db, CancellationToken ct)
+  {
     var maxAttempts = _options.MaxPublishAttempts;
 
     var pending = await db.OutboxMessages
         .Where(m => m.ProcessedAt == null && m.Attempts < maxAttempts)
-        .OrderBy(m => m.OccurredAt)     // orden de ocurrencia: los eventos importan en orden
-        .Take(BatchSize)
+        .OrderBy(m => m.Sequence)   // orden de INSERCIÓN, no de reloj: ver OutboxMessage.Sequence
+        .Take(_options.BatchSize)
         .ToListAsync(ct);
 
-    if (pending.Count == 0) return;
+    if (pending.Count == 0) return 0;
+
+    var published = 0;
 
     foreach (var message in pending)
     {
@@ -91,6 +107,7 @@ public sealed class OutboxPublisher(
 
         message.ProcessedAt = DateTime.Now;
         message.LastError = null;
+        published++;
 
         logger.LogInformation("Published {EventType} {MessageId}", message.Type, message.Id);
       }
@@ -103,13 +120,13 @@ public sealed class OutboxPublisher(
         // contenedor— para que el mensaje quedara con Attempts=5, fuera del filtro de
         // arriba y por tanto sin republicarse NUNCA, ni al volver el broker.
         //
-        // Se corta la tanda (los siguientes fallarían igual) pero sin tocar Attempts
-        // ni guardar: el mensaje sigue vivo y se reintenta en la vuelta siguiente,
-        // tantas vueltas como dure la caída.
+        // Se corta la tanda (los siguientes fallarían igual) pero sin tocar Attempts:
+        // el mensaje sigue vivo y se reintenta en la vuelta siguiente, tantas vueltas
+        // como dure la caída. Lo ya publicado en esta tanda SÍ se guarda.
         logger.LogWarning(
             "Broker unavailable ({Error}); {Pending} event(s) stay in the outbox, no attempt consumed",
-            ex.Message, pending.Count);
-        return;
+            ex.Message, pending.Count - published);
+        break;
       }
       catch (Exception ex) when (ex is not OperationCanceledException)
       {
@@ -138,5 +155,59 @@ public sealed class OutboxPublisher(
     }
 
     await db.SaveChangesAsync(ct);
+
+    return published;
+  }
+
+  /// <summary>
+  /// Toma un bloqueo aplicativo exclusivo para que <b>solo una réplica drene a la vez</b>.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Sin esto, con dos réplicas ambas leen el mismo lote y publican los mismos mensajes:
+  /// no corrompe nada —el consumidor deduplica por <c>MessageId</c>— pero dobla el
+  /// tráfico del broker y del consumidor.
+  /// </para>
+  /// <para>
+  /// <b>Por qué un bloqueo global y no un claim por filas</b> (una columna
+  /// <c>LockedUntil</c> con <c>UPDATE ... OUTPUT</c>): el claim permite que dos réplicas
+  /// drenen <i>en paralelo</i>, y eso destruye justamente la garantía de orden que da
+  /// <c>Sequence</c>. Además obliga a gestionar la expiración del claim para que una
+  /// réplica que muere no deje filas bloqueadas. Aquí drenar es un trabajo de fondo cada
+  /// pocos segundos y con lote acotado: serializarlo no cuesta nada y sale más simple y
+  /// más correcto.
+  /// </para>
+  /// <para>
+  /// ⚠️ <c>@LockOwner = 'Transaction'</c>: el bloqueo se suelta solo al hacer commit o
+  /// rollback, incluso si el proceso muere. Con <c>'Session'</c> quedaría atado a una
+  /// conexión del <i>pool</i>, que se reutiliza para otra cosa: la receta para un
+  /// bloqueo que no suelta nadie.
+  /// </para>
+  /// </remarks>
+  private async Task<bool> TryAcquirePublisherLockAsync(AppDbContext db, CancellationToken ct)
+  {
+    var transaction = db.Database.CurrentTransaction
+        ?? throw new InvalidOperationException("The publisher lock requires an active transaction.");
+
+    await using var command = db.Database.GetDbConnection().CreateCommand();
+
+    command.Transaction = transaction.GetDbTransaction();
+    command.CommandType = CommandType.StoredProcedure;
+    command.CommandText = "sp_getapplock";
+
+    command.Parameters.Add(new SqlParameter("@Resource", _options.PublisherLockName));
+    command.Parameters.Add(new SqlParameter("@LockMode", "Exclusive"));
+    command.Parameters.Add(new SqlParameter("@LockOwner", "Transaction"));
+    // Timeout 0: no esperamos. Si otro lo tiene, se salta la vuelta y se reintenta en la
+    // siguiente; encolar réplicas esperando un bloqueo solo acumula latencia.
+    command.Parameters.Add(new SqlParameter("@LockTimeout", 0));
+
+    var result = new SqlParameter { ParameterName = "@Result", SqlDbType = SqlDbType.Int, Direction = ParameterDirection.ReturnValue };
+    command.Parameters.Add(result);
+
+    await command.ExecuteNonQueryAsync(ct);
+
+    // >= 0 concedido (0 inmediato, 1 tras esperar); < 0 no concedido.
+    return result.Value is int code && code >= 0;
   }
 }

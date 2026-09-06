@@ -35,6 +35,36 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 
 ## 2. Bitácora
 
+### 2026-09-06 — Deuda 12.1: el outbox, robusto para más de una réplica
+
+- **Orden determinista**: columna `Sequence` (`bigint IDENTITY`). Se ordenaba por
+  `OccurredAt`, que es `DateTime.Now` del proceso que escribió la fila: con dos réplicas el
+  orden dependía del reloj de cada máquina y dos eventos del mismo agregado podían salir
+  invertidos. Ahora lo asigna un único árbitro, el servidor SQL, que además desempata las
+  filas del mismo milisegundo.
+- **Una sola réplica drena a la vez**, con `sp_getapplock` exclusivo
+  (`@LockOwner='Transaction'`, timeout 0). ⚠️ Se descartó el claim por filas
+  (`LockedUntil` + `UPDATE ... OUTPUT`) **a propósito**: permite drenar en paralelo, y eso
+  destruye la garantía de orden que acabamos de ganar, además de obligar a gestionar la
+  expiración del claim. Serializar un trabajo de fondo con lote acotado no cuesta nada.
+- **Purga** (`OutboxCleaner`): retención configurable, borrado en tandas de 5.000 con
+  `ExecuteDeleteAsync`. Se registra **fuera** del `if` del broker: las tablas crecen aunque
+  no haya nadie publicando, y con RabbitMQ apagado crecen más.
+- **`OutboxOptions` propio** (sección `Outbox`): `PublishIntervalSeconds`, `BatchSize` y
+  `MaxPublishAttempts` salen de `RabbitMqOptions`. El outbox es **agnóstico al broker**;
+  tener sus mandos bajo `RabbitMq:` daba a entender lo contrario.
+
+Verificado ejecutando, no solo compilando:
+- 3 compras seguidas → publicadas en orden de `Sequence` y consumidas en orde.
+- **Dos réplicas reales** (dos procesos contra la misma base): 15 eventos, 7 publicados por
+  una y 8 por la otra, **cero duplicados**.
+- Contención **determinista**: reteniendo el `sp_getapplock` desde otra sesión SQL, la
+  compra sigue respondiendo **200** y no se publica nada; al soltarlo, se publica.
+- Purga: borra la fila procesada de 30 días y **conserva** la pendiente con reintentos
+  agotados, que es la propiedad que de verdad importa.
+- Migración revisada antes de aplicar: `ALTER TABLE ADD [Sequence] bigint NOT NULL IDENTITY`,
+  sin recrear la tabla ni perder datos. 153 tests en verde.
+
 ### 2026-09-06 — CI (fase 6) y los secretos fuera del repo
 
 **CI** — `.github/workflows/ci.yml`: build + los 153 tests en cada push y PR, con SQL

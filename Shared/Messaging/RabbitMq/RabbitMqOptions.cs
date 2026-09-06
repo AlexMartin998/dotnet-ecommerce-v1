@@ -33,23 +33,8 @@ public sealed class RabbitMqOptions
   [Range(1, 1000)]
   public ushort PrefetchCount { get; init; } = 10;
 
-  /// <summary>Cada cuánto drena el publicador la tabla outbox.</summary>
-  [Range(1, 300)]
-  public int PublishIntervalSeconds { get; init; } = 5;
-
-  /// <summary>
-  /// Intentos antes de dar por perdido un mensaje CONCRETO y dejarlo para revisión
-  /// manual. <b>Un broker caído no consume intentos</b>: solo los cuentan los fallos
-  /// atribuibles al propio mensaje (payload ilegible, sin cola destino…).
-  /// </summary>
-  /// <remarks>
-  /// Vive aquí y no como <c>const</c> porque lo leen DOS sitios —el publicador y la
-  /// sonda <c>outbox-backlog</c>— y tenerlo duplicado en ambos con un comentario que
-  /// pedía "mantener sincronizado" es exactamente la clase de acuerdo que se rompe
-  /// callado: la sonda contaría un umbral distinto del que aplica el publicador.
-  /// </remarks>
-  [Range(1, 50)]
-  public int MaxPublishAttempts { get; init; } = 5;
+  // PublishIntervalSeconds, MaxPublishAttempts y BatchSize se movieron a OutboxOptions:
+  // son del OUTBOX, que es agnóstico al broker, no de RabbitMQ. Ver Shared/Messaging/OutboxOptions.cs.
 
   public bool IsEnabled => !string.IsNullOrWhiteSpace(ConnectionString);
 
