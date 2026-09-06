@@ -32,6 +32,12 @@ public static class MessagingExtensions
     // evento se confirme en la misma transacción que el cambio de negocio.
     services.AddScoped<IEventOutbox, EventOutbox>();
 
+    // El inbox también SIEMPRE, y por el mismo motivo que el outbox: procesar un mensaje
+    // exactamente una vez es una garantía sobre la base de datos, no sobre el broker.
+    // Registrarlo dentro del `if` de RabbitMQ ataría una pieza transaccional a que haya
+    // transporte — y además dejaría sus tests dependiendo de que hubiera broker.
+    services.AddScoped<IMessageInbox, MessageInbox>();
+
     // La purga tampoco depende del broker: las tablas crecen aunque no haya nadie
     // publicando, y con RabbitMQ apagado crecen MÁS. Va fuera del `if` de abajo.
     services.AddHostedService<OutboxCleaner>();

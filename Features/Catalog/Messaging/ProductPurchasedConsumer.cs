@@ -1,14 +1,10 @@
 using System.Text;
 using System.Text.Json;
-using ApiEcommerce.Data;
 using ApiEcommerce.Features.Catalog.Events;
 using ApiEcommerce.Shared.Messaging.RabbitMq;
-using Microsoft.Data.SqlClient;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
-using ApiEcommerce.Shared.Db;
 using ApiEcommerce.Shared.Messaging;
 
 namespace ApiEcommerce.Features.Catalog.Messaging;
@@ -38,9 +34,6 @@ public sealed class ProductPurchasedConsumer(
   private readonly RabbitMqOptions _options = options.Value;
 
   private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
-
-  /// <summary>Umbral para el aviso de stock bajo.</summary>
-  private const int LowStockThreshold = 5;
 
   protected override async Task ExecuteAsync(CancellationToken stoppingToken)
   {
@@ -159,41 +152,20 @@ public sealed class ProductPurchasedConsumer(
       }
 
       using var scope = scopeFactory.CreateScope();
-      var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-      var transactions = scope.ServiceProvider.GetRequiredService<ITransactionRunner>();
+      var inbox = scope.ServiceProvider.GetRequiredService<IMessageInbox>();
+      var handler = scope.ServiceProvider.GetRequiredService<IProductPurchasedHandler>();
 
       // ---- idempotencia + efecto, ATÓMICOS --------------------------------
       // El outbox garantiza at-least-once, así que este mensaje PUEDE llegar dos veces.
-      // La clave primaria de ProcessedMessages es lo que impide el duplicado de verdad:
-      // si dos réplicas procesan el mismo mensaje a la vez, una revienta al insertar.
+      // Quien impide el duplicado de verdad es la clave primaria de ProcessedMessages,
+      // dentro de la MISMA transacción que el efecto. El porqué —un P0 real— está en
+      // IMessageInbox, junto al mecanismo.
       //
-      // ⚠️ La marca y el efecto van en la MISMA transacción, y eso corrige un bug real.
-      // Antes la marca se confirmaba ANTES del efecto, con el razonamiento de que así la
-      // restricción única "abría la puerta" al efecto y quien perdía el choque no lo
-      // ejecutaba. Ese razonamiento valía cuando NO había reintentos; en cuanto los hubo,
-      // se volvió al revés: si el efecto fallaba, la marca ya estaba confirmada, y en la
-      // reentrega el mensaje se reconocía como duplicado, se hacía ack y **desaparecía sin
-      // haberse procesado nunca**. Toda la maquinaria de reintentos era inerte para el
-      // único caso para el que existe.
-      //
-      // En una sola transacción se cumplen las dos cosas: si el efecto falla, la marca se
-      // deshace con él y el reintento puede volver a intentarlo; y si dos réplicas corren
-      // a la vez, la PK hace fallar a una y su efecto se deshace también.
-      var processed = await transactions.ExecuteAsync(async token =>
-      {
-        // Atajo barato para el caso normal (ya procesado): evita abrir el efecto.
-        if (await db.ProcessedMessages.AnyAsync(m => m.Id == messageId, token))
-          return false;
-
-        db.ProcessedMessages.Add(new ProcessedMessage { Id = messageId, Type = eventType! });
-
-        await ProcessAsync(@event, token);
-
-        // El choque de PK sale AQUÍ, y arrastra al efecto en el rollback.
-        await db.SaveChangesAsync(token);
-
-        return true;
-      }, ct);
+      // Esto vivía aquí dentro, y por eso el arreglo del P0 se quedó sin test: no había
+      // forma de hacer fallar el efecto sin un broker delante. Ahora el consumidor es
+      // fontanería AMQP y la garantía es una pieza que se prueba sola.
+      var processed = await inbox.ProcessOnceAsync(
+          messageId, eventType!, token => handler.HandleAsync(@event, token), ct);
 
       if (!processed)
         logger.LogInformation("Duplicate {MessageId} ignored", messageId);
@@ -209,26 +181,23 @@ public sealed class ProductPurchasedConsumer(
       logger.LogError(ex, "Unparseable payload for {MessageId}; sending to DLQ", messageId);
       await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: false, CancellationToken.None);
     }
-    catch (DbUpdateException ex) when (ex.InnerException is SqlException { Number: 2601 or 2627 })
+    catch (Exception ex) when (IsConcurrentDuplicate(ex))
     {
       // SOLO el choque en la PK de ProcessedMessages: otra réplica ya lo procesó.
-      // No es un error, es la deduplicación funcionando.
-      //
-      // El filtro por número de error es imprescindible: un `catch (DbUpdateException)`
-      // a secas se tragaría también timeouts y deadlocks (1205), haría ack, y el
-      // mensaje desaparecería de la cola SIN procesarse y con un log que dice
-      // "duplicado ignorado". Justo la pérdida que la mensajería viene a evitar.
+      // No es un error, es la deduplicación funcionando. Quién sabe reconocerlo es el
+      // inbox, que es de quien es la tabla — aquí solo se decide qué hacer con el ack.
       logger.LogInformation("Concurrent duplicate {MessageId} ignored", messageId);
       await channel.BasicAckAsync(args.DeliveryTag, multiple: false, CancellationToken.None);
     }
     catch (Exception ex)
     {
-      // Contador REAL de intentos, leído de `x-death`. Antes se usaba
-      // `args.Redelivered`, que es una BANDERA del broker y no un contador: se pone a
-      // true en cuanto el mensaje se entregó alguna vez sin ack —incluido un reinicio
-      // del pod sin ningún fallo— así que eran 2 intentos como mucho y con 0 ms entre
-      // ellos, porque un requeue devuelve el mensaje a la CABEZA de la cola.
-      var attempts = DeliveryAttempts(args) + 1;
+      // Contador REAL de intentos. Antes se usaba `args.Redelivered`, que es una BANDERA
+      // del broker y no un contador: se pone a true en cuanto el mensaje se entregó alguna
+      // vez sin ack —incluido un reinicio del pod sin ningún fallo— así que eran 2
+      // intentos como mucho y con 0 ms entre ellos, porque un requeue devuelve el mensaje
+      // a la CABEZA de la cola. Después se leyó de `x-death`, que sí cuenta pero es del
+      // broker; hoy lo escribimos nosotros (ver AttemptHeader).
+      var attempts = RetryAttempts.Read(args.BasicProperties.Headers) + 1;
 
       if (attempts < _options.MaxDeliveryAttempts)
       {
@@ -236,7 +205,7 @@ public sealed class ProductPurchasedConsumer(
             "Failed to process {MessageId} (attempt {Attempt}/{Max}); retrying in {Delay}s",
             messageId, attempts, _options.MaxDeliveryAttempts, _options.RetryDelaySeconds);
 
-        await ScheduleRetryAsync(channel, args, ct);
+        await ScheduleRetryAsync(channel, args, attempts, ct);
         return;
       }
 
@@ -249,41 +218,6 @@ public sealed class ProductPurchasedConsumer(
   }
 
   /// <summary>
-  /// Cuántas veces ha caducado ya este mensaje en la cola de reintento.
-  /// </summary>
-  /// <remarks>
-  /// El broker escribe una entrada en <c>x-death</c> por cada cola desde la que se hizo
-  /// dead-letter, con un <c>count</c> acumulado. Se busca la de la cola de reintento: las
-  /// entradas de otras colas (la principal, cuando algo va a la DLQ) contarían otra cosa.
-  /// </remarks>
-  private long DeliveryAttempts(BasicDeliverEventArgs args)
-  {
-    if (args.BasicProperties.Headers?.TryGetValue("x-death", out var raw) is not true
-        || raw is not IEnumerable<object> deaths)
-      return 0;
-
-    foreach (var death in deaths.OfType<IDictionary<string, object?>>())
-    {
-      // Los valores de texto viajan como byte[] en el cliente AMQP: comparar contra un
-      // string sin convertir devuelve siempre false, en silencio.
-      if (death.TryGetValue("queue", out var queue)
-          && AsString(queue) == _options.RetryQueue
-          && death.TryGetValue("count", out var count)
-          && count is long value)
-        return value;
-    }
-
-    return 0;
-  }
-
-  private static string? AsString(object? value) => value switch
-  {
-    byte[] bytes => Encoding.UTF8.GetString(bytes),
-    string text => text,
-    _ => value?.ToString()
-  };
-
-  /// <summary>
   /// Manda el mensaje a la cola de espera y confirma el original.
   /// </summary>
   /// <remarks>
@@ -294,11 +228,12 @@ public sealed class ProductPurchasedConsumer(
   /// deduplica. Se prefiere duplicar a perder, que es la misma regla del outbox.
   /// </para>
   /// <para>
-  /// Se copian las cabeceras <b>incluida <c>x-death</c></b>: es lo que hace que el contador
-  /// se acumule entre vueltas en vez de empezar de cero cada vez.
+  /// Se copian las cabeceras y se <b>incrementa la nuestra</b>: es lo que hace que el
+  /// contador se acumule entre vueltas en vez de empezar de cero cada vez.
   /// </para>
   /// </remarks>
-  private async Task ScheduleRetryAsync(IChannel channel, BasicDeliverEventArgs args, CancellationToken ct)
+  private async Task ScheduleRetryAsync(
+      IChannel channel, BasicDeliverEventArgs args, int attempts, CancellationToken ct)
   {
     var properties = new BasicProperties
     {
@@ -306,14 +241,25 @@ public sealed class ProductPurchasedConsumer(
       Type = args.BasicProperties.Type,
       ContentType = args.BasicProperties.ContentType,
       DeliveryMode = DeliveryModes.Persistent,
-      Headers = args.BasicProperties.Headers
+      Headers = RetryAttempts.With(args.BasicProperties.Headers, attempts)
     };
 
     try
     {
+      // ⚠️ Al exchange POR DEFECTO y con la COLA como routing key, no al exchange de
+      // reintento. Con un exchange de por medio, TODAS las colas de espera ligadas a él
+      // reciben una copia — y desde que el nombre lleva el TTL dentro, las de plazos
+      // anteriores siguen ahí y ligadas. Medido: un solo reintento aparecía en las tres
+      // colas de espera a la vez, y cada una lo devolvía a la principal por su cuenta.
+      // El inbox las deduplica, así que no se ejecuta de más, pero multiplica el tráfico
+      // y hace ilegible lo que está pasando.
+      //
+      // Publicar a la cola concreta es además lo que de verdad se quiere decir: "este
+      // mensaje, a esperar AQUÍ". El exchange nunca aportó enrutado: solo tenía un
+      // binding.
       await channel.BasicPublishAsync(
-          exchange: _options.RetryExchange,
-          routingKey: _options.RoutingKey,
+          exchange: string.Empty,
+          routingKey: _options.RetryQueue,
           mandatory: true,
           basicProperties: properties,
           body: args.Body.ToArray(),
@@ -333,19 +279,14 @@ public sealed class ProductPurchasedConsumer(
   }
 
   /// <summary>
-  /// El efecto de negocio. Aquí es un log de stock bajo; en un sistema real sería
-  /// notificar a compras, escribir una proyección de lectura o llamar a un webhook.
+  /// ¿Es el choque de clave primaria del inbox? Se pregunta a través de un scope porque
+  /// el filtro de un <c>catch</c> corre fuera del que abrió <c>HandleAsync</c>.
   /// </summary>
-  private Task ProcessAsync(ProductPurchased @event, CancellationToken ct)
+  private bool IsConcurrentDuplicate(Exception exception)
   {
-    logger.LogInformation(
-        "Purchase processed: {Quantity} x {Sku} ({ProductName}), remaining {RemainingStock}",
-        @event.Quantity, @event.Sku, @event.ProductName, @event.RemainingStock);
+    using var scope = scopeFactory.CreateScope();
 
-    if (@event.RemainingStock <= LowStockThreshold)
-      logger.LogWarning(
-          "LOW STOCK for {Sku}: only {RemainingStock} left", @event.Sku, @event.RemainingStock);
-
-    return Task.CompletedTask;
+    return scope.ServiceProvider.GetRequiredService<IMessageInbox>().IsConcurrentDuplicate(exception);
   }
+
 }

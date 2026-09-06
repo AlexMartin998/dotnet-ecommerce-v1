@@ -189,6 +189,26 @@ Verificado con Redis apuntando a un puerto muerto: 40 simultáneas con la misma 
 descuentan **1** y todas reciben 200. Antes era imposible por diseño. Y la identidad
 byte a byte del replay se arregló sola al memorizar el DTO en vez de la respuesta HTTP.
 
+### Paso 8.quater — Deuda de mensajería — ✅ **cerrada** (2026-09-06)
+
+Detalle en [`planning/18`](../planning/18_deuda-de-mensajeria.md). Cierra
+`planning/12` §12.5 **entera**.
+
+El hallazgo transversal: **lo que no se podía probar era lo que vivía dentro de un
+`BackgroundService`**. El efecto sale a `IProductPurchasedHandler`, la unidad
+transaccional a `IMessageInbox` —gemelo de `IEventOutbox`— y el contador de intentos
+a `RetryAttempts`. Con eso, el test del P0 del consumidor —pendiente desde que se
+arregló el bug— se escribe sin broker.
+
+También: contador de reintentos en cabecera propia (un replay desde la DLQ ya vuelve
+con presupuesto), `RetryDelaySeconds` configurable de verdad (el TTL va en el nombre
+de la cola, así que cambiarlo no da 406), canal AMQP reutilizado, y `global.json` con
+la CI instalando los dos SDK.
+
+⚠️ Y un defecto que abrió ese mismo cambio y **solo se vio ejecutando**: con las colas
+de espera ligadas a un exchange, cada reintento se copiaba a todas. Se publica al
+exchange por defecto con el nombre de la cola como routing key.
+
 ### Paso 9 — Partir en proyectos (cuando duela, no antes)
 
 Los tres bloques del composition root (`AddApplication` / `AddInfrastructure` /

@@ -70,9 +70,17 @@ jobs:
       - name: Instalar .NET
         uses: actions/setup-dotnet@v4
         with:
-          # El proyecto es net9.0. Se instala el SDK 9 y no el 10 del dev container:
-          # en CI conviene el SDK que corresponde al TFM, sin roll-forward de por medio.
-          dotnet-version: '9.0.x'
+          # LOS DOS, y cada uno por un motivo distinto:
+          #   10.0.x -> es el SDK que fija global.json, y el que hay en el entorno de
+          #             trabajo. Compilar aqui y alli con el MISMO SDK es lo que hace que
+          #             "cero warnings" signifique lo mismo en los dos sitios; antes se
+          #             medía con analizadores distintos y la CI podia fallar por algo que
+          #             en local no salia, o peor, al reves.
+          #   9.0.x  -> el proyecto es net9.0 y el SDK 10 NO trae el runtime 9. Sin esto
+          #             compila pero `dotnet test` no puede EJECUTAR los tests.
+          dotnet-version: |
+            9.0.x
+            10.0.x
 
       # Cachear ~/.nuget baja el restore de ~40 s a unos pocos. La clave incluye el hash
       # de los .csproj: si cambian las dependencias, se invalida sola.

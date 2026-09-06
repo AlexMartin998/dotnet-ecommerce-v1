@@ -2721,3 +2721,90 @@ Task<CommandOutcome<ProductDto>> BuyAsync(BuyProductDto dto, CommandIntent inten
   - -- un fallo semantico no es no monotono con la concurrencia; una **cola** si
   - -- es la firma de head-of-line blocking sobre UNA conexion TCP compartida por cache,
        idempotencia y health check
+
+
+---
+---
+
+
+## 31. Lo que no se puede probar suele estar en el sitio equivocado
+
+- --- ⭐ **El patron que unia casi toda la deuda de mensajeria**
+  - -- cuatro puntos distintos, una sola causa: **vivian dentro de un `BackgroundService`
+       atado a AMQP**, y por eso "verificado a mano" era lo maximo a lo que se llegaba
+  - -- sacarlos de ahi convirtio tres cosas verificadas a ojo en **diez tests**
+  - -- la regla que queda: si algo no se puede probar sin levantar media infraestructura,
+       el problema no es el test, es donde vive el codigo
+
+- --- **El P0 que llevaba meses sin red**
+```
+marca ANTES del efecto  ->  efecto falla  ->  la reentrega se ve como duplicado
+                        ->  ack  ->  el mensaje DESAPARECE sin procesarse
+```
+  - -- se arreglo (marca y efecto en una transaccion) pero el test no se podia escribir:
+       `ProcessAsync` era privado y solo escribia un log. **No habia forma de hacerlo fallar**
+  - -- se parte en dos piezas: `IProductPurchasedHandler` (el efecto) e `IMessageInbox` (la
+       unidad transaccional, gemelo de `IEventOutbox`)
+  - -- y entonces el test es trivial: pasarle un efecto que lanza
+  - -- ⚠️ el test de concurrencia enseño algo que no estaba escrito: **la perdedora LANZA**
+       el choque de PK. El consumidor depende de reconocerlo para hacer ack; si dejara de
+       reconocerlo, el mensaje daria vueltas hasta la DLQ **sin que nada fallara a la vista**
+
+- --- ⭐ **Un contador que escribe otro no es tu contador**
+  - -- `x-death` lo escribe el broker, y **sobrevive al paso por la DLQ**: un mensaje que un
+       operador reencolaba volvia con el presupuesto agotado y moria en la primera entrega
+  - -- o sea que **la herramienta que existe para recuperar mensajes no los recuperaba**
+  - -- ademas el parseo era fragil: los valores de texto viajan como `byte[]` y compararlos
+       con un `string` sin convertir devuelve `false` EN SILENCIO (error ya cometido)
+  - -- y filtraba por el NOMBRE de la cola de reintento... que justo iba a cambiar
+  - -- con cabecera propia (`x-retry-attempt`) el replay es **borrar una cabecera conocida**
+
+- --- **Configuracion que no se puede cambiar no es configuracion**
+  - -- `x-message-ttl` se fija al DECLARAR la cola: cambiar `RetryDelaySeconds` daba
+       **406 PRECONDITION_FAILED** y dejaba la mensajeria abajo
+  - -- solucion: **el TTL en el NOMBRE** (`...retry.7s`). Cambiarlo declara una cola nueva:
+       despliegue aditivo, sin borrar nada en produccion
+  - -- ⚠️ se descarto el TTL **en el mensaje**: en una cola FIFO un mensaje con TTL largo
+       bloquea a los de detras aunque ya hayan caducado (head-of-line blocking)
+
+- --- 🔴 **Y el arreglo abrio un bug que SOLO se vio ejecutando**
+```
+colas de espera ligadas a un exchange  ->  cada reintento se copia a TODAS
+   retry (vieja) = 1 msg,  retry.30s = 1 msg,  retry.7s = 1 msg   <- el MISMO mensaje
+```
+  - -- las colas de plazos anteriores siguen existiendo **y ligadas**: no eran huerfanas
+       inofensivas, seguian recibiendo
+  - -- el inbox lo deduplicaba (no se ejecutaba de mas) pero multiplicaba el trafico y hacia
+       ilegible lo que pasaba
+  - -- arreglo: publicar al **exchange por defecto** con el NOMBRE DE LA COLA como routing
+       key. Sin binding, sin fan-out — y es lo que de verdad se queria decir: "este mensaje,
+       a esperar AQUI"
+  - -- `RetryExchange` desaparece entero: nunca aporto enrutado, solo tenia un binding
+  - -- ⭐ leccion: un cambio "aditivo y seguro" en topologia hay que **mirarlo en la UI del
+       broker**, no razonarlo. `curl` a `/api/queues` tarda 2 segundos
+
+- --- **Un canal AMQP por mensaje**
+  - -- abrir un canal es un viaje de ida y vuelta al broker; con `BatchSize` 50 eran 50
+  - -- reutilizarlo: medido, 30 eventos publicados abriendo **1** canal (de 1 a 2 en total)
+  - -- ⚠️ los `IChannel` **no prometen ser thread-safe**: el acceso va con semaforo. Y si el
+       publish falla hay que **descartar el canal**, o el siguiente falla con "canal cerrado"
+       en vez de reconectar
+
+- --- ⚠️ **`global.json` y el `rollForward` que no salta de major**
+  - -- aqui SDK 10.0.400, en CI 9.0.x: "cero warnings" se medía con analizadores distintos
+  - -- fijar `9.0.100` + `latestFeature` **no arranca aqui**: `latestFeature` se mueve dentro
+       de la misma banda major.minor, no salta a la 10
+  - -- se fija la **10** (la unica que hay aqui) y la CI instala LAS DOS:
+```yaml
+dotnet-version: |
+  9.0.x     # el SDK 10 NO trae el runtime 9: sin esto compila pero no EJECUTA net9.0
+  10.0.x    # el que fija global.json
+```
+
+- --- **Y lo que NO se verifico, dicho a proposito**
+  - -- el ciclo completo de reintentos con un efecto que falla de verdad
+  - -- todos los fallos de CONTENIDO (tipo inesperado, cuerpo ilegible) van a la DLQ **por
+       diseño**, asi que el unico disparador del reintento es un fallo de infraestructura
+  - -- provocarlo aqui exigia tumbar SQL Server, que es compartido
+  - -- se cubre en dos mitades (4 tests del inbox + 6 del contador) y se deja escrito, en vez
+       de dar por probado mas de lo que se probo

@@ -4,7 +4,7 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-06** (la idempotencia pasa a ser una garantía transaccional).
+Última actualización: **2026-09-06** (deuda de mensajería cerrada; `planning/12` completo).
 
 ---
 
@@ -22,13 +22,14 @@
 | 08 | Idempotencia de peticiones | ✅ | [`features/08`](features/08_idempotencia.feature) · [`planning/08`](planning/08_idempotencia.md) | `63269ac` |
 | 09 | Eventos de dominio (outbox + RabbitMQ) | ✅ | [`features/09`](features/09_eventos-de-dominio.feature) · [`planning/09`](planning/09_eventos-de-dominio.md) | `63269ac` + fix |
 | 10 | Límites, salud y despliegue | ✅ | [`features/10`](features/10_limites-y-salud.feature) · [`planning/10`](planning/10_limites-y-salud.md) | `63269ac` |
-| 11 | **Tests** | ✅ fases 1–6 (**171 tests** + CI) | [`planning/11`](planning/11_proyecto-de-tests.md) | `14c9e76` + |
-| 12 | Deuda de la revisión 2026-08-30 | 🟡 cerrada salvo §12.5 | [`planning/12`](planning/12_deuda-revision-multiagente.md) | — |
+| 11 | **Tests** | ✅ fases 1–6 (**183 tests** + CI) | [`planning/11`](planning/11_proyecto-de-tests.md) | `14c9e76` + |
+| 12 | Deuda de la revisión 2026-08-30 | ✅ (§12.5 en [`planning/18`](planning/18_deuda-de-mensajeria.md)) | [`planning/12`](planning/12_deuda-revision-multiagente.md) | — |
 | 13 | Refresh tokens y revocación | ❌ | [`planning/13`](planning/13_refresh-tokens.md) | — |
 | 14 | Administración de usuarios | ❌ | [`planning/14`](planning/14_admin-usuarios.md) | — |
 | 15 | Partir en proyectos | ❌ diferido | [`planning/15`](planning/15_partir-en-proyectos.md) | — |
 | 16 | Idempotencia bajo carga | ✅ | [`features/16`](features/16_idempotencia-bajo-carga.feature) · [`planning/16`](planning/16_idempotencia-bajo-carga.md) | `7f120a2` |
-| 17 | Idempotencia transaccional | ✅ | [`features/17`](features/17_idempotencia-transaccional.feature) · [`planning/17`](planning/17_idempotencia-transaccional.md) | — |
+| 17 | Idempotencia transaccional | ✅ | [`features/17`](features/17_idempotencia-transaccional.feature) · [`planning/17`](planning/17_idempotencia-transaccional.md) | `b9f62aa` |
+| 18 | Deuda de mensajería | ✅ | [`features/18`](features/18_mensajeria-robusta.feature) · [`planning/18`](planning/18_deuda-de-mensajeria.md) | — |
 
 **Ya no queda ningún ⚠️.** El 09 se cerró el 2026-09-05 contra un RabbitMQ real, y esa
 verificación destapó un bug que el build y el smoke test no veían (abajo).
@@ -36,6 +37,49 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 ---
 
 ## 2. Bitácora
+
+### 2026-09-06 — La deuda de mensajería, y por qué no se podía probar
+
+Cerrado `planning/12` §12.5 entero. **El patrón de casi todos los puntos era el mismo**: lo
+que no se podía probar era lo que vivía dentro de un `BackgroundService` atado a AMQP.
+
+- 🔴 **El test del P0 del consumidor**, que llevaba pendiente desde que se arregló el bug.
+  El efecto sale a `IProductPurchasedHandler` y la unidad transaccional a `IMessageInbox`
+  —el gemelo de `IEventOutbox`, mismo patrón que `ICommandLog` para HTTP—, así que probarlo
+  **ya no necesita broker**. 4 tests, incluido el que de verdad importa: efecto que falla →
+  no queda marca → el reintento **reejecuta**. Y uno que fija que la perdedora de una
+  carrera es reconocible como choque de PK, porque de eso depende el consumidor para hacer
+  ack en vez de gastar un reintento.
+- **El contador de intentos pasa a una cabecera nuestra** (`x-retry-attempt`), extraído a
+  `RetryAttempts`, una función pura con 6 tests. Arregla dos cosas: un replay desde la DLQ
+  ya no vuelve con el presupuesto agotado (`x-death` sobrevivía al paso por la DLQ, así que
+  la herramienta para recuperar mensajes no los recuperaba), y se acaba el parseo frágil
+  —los valores de texto viajan como `byte[]` y compararlos sin convertir da `false` en
+  silencio, error ya cometido una vez—.
+- **`RetryDelaySeconds` deja de ser inmutable**: el nombre de la cola de espera lleva su TTL
+  dentro, así que cambiarlo declara una cola nueva en vez de dar 406 y dejar la mensajería
+  abajo. Verificado: con la de 7 s ya declarada, arrancar a 12 s no da error.
+- 🔴 **Y ese cambio abrió un defecto que solo se vio EJECUTANDO**: con las colas de espera
+  ligadas a un exchange, cada reintento se copiaba a **todas** —incluidas las de plazos
+  anteriores, que siguen existiendo—. Medido: un reintento apareció a la vez en las tres.
+  El inbox lo deduplicaba, así que no se ejecutaba de más, pero multiplicaba el tráfico.
+  Arreglado publicando al exchange por defecto con el nombre de la cola como routing key;
+  `RetryExchange` desaparece, porque nunca aportó enrutado.
+- **Canal AMQP reutilizado** en el publicador: medido, 30 eventos abriendo **1** canal en
+  vez de 30. Con el acceso serializado, porque los `IChannel` no son thread-safe.
+- **`global.json`** fija la banda del SDK y la CI instala los dos: el 10 para compilar
+  —igual que aquí, para que «cero warnings» signifique lo mismo— y el 9 porque el SDK 10 no
+  trae su runtime y sin él `dotnet test` no puede ejecutar.
+- **El orden del outbox pasa a no-goal deliberado**, documentado donde lo va a leer quien
+  toque eso (el XML doc de `Sequence`) y con la señal concreta para reabrirlo.
+
+⚠️ **Lo que NO se verificó de punta a punta**, y conviene que quede dicho: el ciclo completo
+de reintentos con un efecto que falla de verdad. Los fallos de contenido van a la DLQ **por
+diseño**, así que el único disparador es un fallo de infraestructura y provocarlo exigía
+tumbar SQL Server, que es compartido. Se cubre en dos mitades (los 4 tests del inbox y los
+6 del contador), no de una.
+
+**183 tests** en verde (eran 171), build sin warnings.
 
 ### 2026-09-06 — La idempotencia deja de ser una optimización
 

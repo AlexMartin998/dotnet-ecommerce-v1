@@ -188,10 +188,12 @@ public sealed class RabbitMqConnection(
     // cola principal. Redeclarar una cola existente con argumentos distintos da
     // PRECONDITION_FAILED (406) y cierra el canal: habría que borrar la cola en producción
     // —con sus mensajes— para desplegar esto. Así el despliegue es aditivo y sin parada.
-    await channel.ExchangeDeclareAsync(
-        _options.RetryExchange, ExchangeType.Topic, durable: true, autoDelete: false,
-        cancellationToken: ct);
-
+    // ⚠️ La cola de espera NO se liga a ningún exchange, y eso es deliberado. El
+    // consumidor publica el reintento al exchange por defecto usando el NOMBRE DE LA COLA
+    // como routing key. Con un exchange de por medio, todas las colas de espera ligadas a
+    // él recibirían una copia de cada reintento — y como el nombre lleva el TTL dentro
+    // (para poder cambiarlo sin un 406), las de plazos anteriores siguen existiendo y
+    // ligadas. Medido: un reintento aparecía a la vez en las tres colas de espera.
     await channel.QueueDeclareAsync(
         _options.RetryQueue, durable: true, exclusive: false, autoDelete: false,
         arguments: new Dictionary<string, object?>
@@ -203,9 +205,6 @@ public sealed class RabbitMqConnection(
           ["x-dead-letter-routing-key"] = _options.RoutingKey
         },
         cancellationToken: ct);
-
-    await channel.QueueBindAsync(
-        _options.RetryQueue, _options.RetryExchange, _options.RoutingKey, cancellationToken: ct);
 
     logger.LogInformation(
         "RabbitMQ topology ready: {Exchange} -> {Queue} (retry {Retry} every {Delay}s, dlq {Dlq})",

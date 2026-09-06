@@ -61,9 +61,16 @@ public class OutboxMessage
   /// consumir el IDENTITY) son la otra cara del mismo hecho.
   /// </para>
   /// <para>
-  /// Hoy da igual: hay un evento por compra y ningún consumidor exige orden entre
-  /// agregados. Si algún día importa, hace falta un <i>watermark</i> que espere a las
-  /// transacciones abiertas, no una columna. Queda anotado en <c>planning/12</c>.
+  /// <b>Y se deja así a propósito</b>, no por pendiente. Hoy hay un evento por compra y
+  /// ningún consumidor exige orden entre agregados; arreglarlo de verdad pide un
+  /// <i>watermark</i> que espere a las transacciones abiertas —no una columna— y eso es
+  /// complejidad real a cambio de nada.
+  /// </para>
+  /// <para>
+  /// <b>Señal para reabrirlo</b>: el día que un consumidor necesite ver dos eventos del
+  /// MISMO agregado en orden (un <c>ProductUpdated</c> seguido de un
+  /// <c>ProductPurchased</c>). Mientras cada evento se baste a sí mismo, ordenar no
+  /// compra nada. Ver <c>planning/18</c> §18.6.
   /// </para>
   /// </remarks>
   public long Sequence { get; set; }

@@ -70,6 +70,11 @@ public static class CatalogExtensions
     // pone el mecanismo (conexión, outbox, publicador) y la condición de "hay broker";
     // registrarlo allí obligaría a Shared a conocer este tipo e invertiría la dirección
     // de dependencias declarada en el composition root.
+    // El EFECTO de reaccionar a una compra, separado del transporte. Se registra
+    // SIEMPRE, también sin broker: es lógica del slice, y así se puede probar sin AMQP
+    // delante — que es justo lo que faltaba para cubrir el P0 del consumidor.
+    services.AddScoped<IProductPurchasedHandler, LowStockNotifier>();
+
     services.AddEventConsumer<ProductPurchasedConsumer>(configuration);
 
     return services;
