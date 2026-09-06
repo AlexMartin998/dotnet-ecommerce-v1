@@ -20,6 +20,11 @@ namespace ApiEcommerce.Shared.Messaging;
 /// Al revés se perderían mensajes si el proceso muere entremedias. Así, como mucho, se
 /// publica dos veces — <b>at-least-once</b>, y por eso el consumidor deduplica.
 /// </para>
+/// <para>
+/// <b>Qué cuenta como intento.</b> Solo el fallo atribuible a UN mensaje. Un broker
+/// caído no gasta intentos: si lo hiciera, una caída de segundos enterraría eventos
+/// válidos que nadie volvería a publicar. Ver <see cref="BrokerUnavailableException"/>.
+/// </para>
 /// </remarks>
 public sealed class OutboxPublisher(
     IServiceScopeFactory scopeFactory,
@@ -32,8 +37,6 @@ public sealed class OutboxPublisher(
   /// <summary>Mensajes por vuelta. Acotado para no monopolizar la conexión ni la base.</summary>
   private const int BatchSize = 50;
 
-  /// <summary>Intentos antes de dejar de reintentar un mensaje concreto.</summary>
-  private const int MaxAttempts = 5;
 
   protected override async Task ExecuteAsync(CancellationToken stoppingToken)
   {
@@ -70,8 +73,10 @@ public sealed class OutboxPublisher(
     using var scope = scopeFactory.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
+    var maxAttempts = _options.MaxPublishAttempts;
+
     var pending = await db.OutboxMessages
-        .Where(m => m.ProcessedAt == null && m.Attempts < MaxAttempts)
+        .Where(m => m.ProcessedAt == null && m.Attempts < maxAttempts)
         .OrderBy(m => m.OccurredAt)     // orden de ocurrencia: los eventos importan en orden
         .Take(BatchSize)
         .ToListAsync(ct);
@@ -89,24 +94,46 @@ public sealed class OutboxPublisher(
 
         logger.LogInformation("Published {EventType} {MessageId}", message.Type, message.Id);
       }
+      catch (BrokerUnavailableException ex)
+      {
+        // ⚠️ EL BROKER CAÍDO NO CONSUME INTENTOS. No es un fallo de ESTE mensaje: le
+        // pasa igual a todos, y contarlo aquí hacía que una caída corta enterrara
+        // eventos válidos para siempre. Medido: con 5 intentos cada 5 s, bastaban
+        // **25 segundos** de broker caído —menos que el start_period de su propio
+        // contenedor— para que el mensaje quedara con Attempts=5, fuera del filtro de
+        // arriba y por tanto sin republicarse NUNCA, ni al volver el broker.
+        //
+        // Se corta la tanda (los siguientes fallarían igual) pero sin tocar Attempts
+        // ni guardar: el mensaje sigue vivo y se reintenta en la vuelta siguiente,
+        // tantas vueltas como dure la caída.
+        logger.LogWarning(
+            "Broker unavailable ({Error}); {Pending} event(s) stay in the outbox, no attempt consumed",
+            ex.Message, pending.Count);
+        return;
+      }
       catch (Exception ex) when (ex is not OperationCanceledException)
       {
+        // Aquí sí: el fallo es atribuible al mensaje (payload ilegible, sin cola
+        // destino con `mandatory: true`…). Estos son los que de verdad hay que dejar
+        // de reintentar, y solo estos.
         message.Attempts++;
         message.LastError = ex.Message.Length > 1000 ? ex.Message[..1000] : ex.Message;
 
         // Traza completa solo cuando el mensaje se agota: los intentos intermedios
-        // son ruido esperado mientras el broker esté caído.
-        if (message.Attempts >= MaxAttempts)
+        // son ruido esperado.
+        if (message.Attempts >= maxAttempts)
           logger.LogError(ex,
               "Giving up on {MessageId} after {Attempts} attempts; it stays in the outbox for manual review",
               message.Id, message.Attempts);
         else
           logger.LogWarning(
               "Failed to publish {MessageId} (attempt {Attempts}/{Max}): {Error}",
-              message.Id, message.Attempts, MaxAttempts, ex.Message);
+              message.Id, message.Attempts, maxAttempts, ex.Message);
 
-        // El broker está caído: no tiene sentido intentar los siguientes de la tanda.
-        break;
+        // `continue`, no `break`: el broker está vivo, así que un mensaje envenenado
+        // no debe bloquear la cabecera de la tanda y retrasar a los que sí saldrían
+        // (head-of-line blocking).
+        continue;
       }
     }
 

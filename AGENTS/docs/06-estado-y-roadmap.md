@@ -48,12 +48,13 @@ paginación y seeding.
 | Idempotencia de peticiones | ✅ | `[Idempotent]` + `Idempotency-Key` sobre Redis (`SET NX`) |
 | Outbox transaccional | ✅ | `OutboxMessage` en la misma transacción que el negocio; la API funciona con el broker caído |
 | Publicación a RabbitMQ | ✅ | `OutboxPublisher` (BackgroundService) con publisher confirms y mensajes persistentes |
+| Reintentos del outbox | ✅ | **un broker caído no consume intentos**: solo los cuenta el fallo atribuible a un mensaje (`BrokerUnavailableException`) |
 | Consumidor | ✅ | `ProductPurchasedConsumer`: ack manual, prefetch, DLQ, dedupe por `ProcessedMessage` |
 | Dockerfile + compose | ✅ | multi-stage, usuario `$APP_UID` de la imagen base, `curl` instalado para el healthcheck |
 | Migraciones al arrancar | ✅ | `MigrateAsync()` en el scope de arranque (la imagen runtime no lleva `dotnet-ef`) |
 | Idempotencia de la config | ✅ | validación condicional de `SeedOptions`; `ValidateOnStart` en todas las secciones |
 | `UseForwardedHeaders` | ✅ | el rate limiter particiona por la IP real, no por la del proxy |
-| Sonda de backlog del outbox | ✅ | `outbox-backlog` → `Degraded` si hay eventos que agotaron reintentos |
+| Sonda de backlog del outbox | ✅ | `outbox-backlog` → `Degraded` si hay eventos que agotaron reintentos; el umbral sale de `RabbitMq:MaxPublishAttempts`, el mismo que aplica el publicador |
 | Tests | ❌ | sin proyecto de pruebas |
 
 ## Lo que se verificó (2026-08-30)
@@ -118,6 +119,12 @@ dejó abierto a propósito**, para que nadie lo descubra creyendo que es nuevo:
   `UPDATE ... OUTPUT` que reserve el lote.
 - **Sin limpieza de `OutboxMessages` ni de `ProcessedMessages`.** Crecen sin
   límite; hace falta un job de purga de lo ya procesado.
+- **Sin backoff ni camino de vuelta para un mensaje agotado.** Ahora que una caída
+  del broker ya no gasta intentos, los que llegan a `MaxPublishAttempts` son de
+  verdad mensajes malos — pero se reintentan cada 5 s hasta agotarse (sin espera
+  creciente) y, una vez agotados, **no hay forma de revivirlos desde la aplicación**:
+  solo un `UPDATE` a mano. Falta `NextAttemptAt` (backoff exponencial) y un endpoint
+  de administración para reintentar o descartar.
 - **`RowVersion` no cierra el *lost update* entre dos administradores.** El token
   no se expone en `ProductDto` ni se acepta en `UpdateProductDto`, así que el
   PATCH usa el que acaba de leer. Cerrarlo es publicarlo como `ETag` y exigir

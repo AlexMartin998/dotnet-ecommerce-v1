@@ -4,7 +4,7 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-05**.
+Última actualización: **2026-09-06**.
 
 ---
 
@@ -20,7 +20,7 @@
 | 06 | Imágenes de producto | ✅ | [`features/06`](features/06_imagenes-de-producto.feature) · [`planning/06`](planning/06_imagenes-de-producto.md) | `34a3b44` |
 | 07 | Compra y concurrencia | ✅ | [`features/07`](features/07_compra-y-concurrencia.feature) · [`planning/07`](planning/07_compra-y-concurrencia.md) | `63269ac` |
 | 08 | Idempotencia de peticiones | ✅ | [`features/08`](features/08_idempotencia.feature) · [`planning/08`](planning/08_idempotencia.md) | `63269ac` |
-| 09 | Eventos de dominio (outbox + RabbitMQ) | ⚠️ parcial | [`features/09`](features/09_eventos-de-dominio.feature) · [`planning/09`](planning/09_eventos-de-dominio.md) | `63269ac` |
+| 09 | Eventos de dominio (outbox + RabbitMQ) | ✅ | [`features/09`](features/09_eventos-de-dominio.feature) · [`planning/09`](planning/09_eventos-de-dominio.md) | `63269ac` + fix |
 | 10 | Límites, salud y despliegue | ✅ | [`features/10`](features/10_limites-y-salud.feature) · [`planning/10`](planning/10_limites-y-salud.md) | `63269ac` |
 | 11 | **Tests** | ❌ **siguiente** | [`planning/11`](planning/11_proyecto-de-tests.md) | — |
 | 12 | Deuda de la revisión 2026-08-30 | ❌ | [`planning/12`](planning/12_deuda-revision-multiagente.md) | — |
@@ -28,12 +28,50 @@
 | 14 | Administración de usuarios | ❌ | [`planning/14`](planning/14_admin-usuarios.md) | — |
 | 15 | Partir en proyectos | ❌ diferido | [`planning/15`](planning/15_partir-en-proyectos.md) | — |
 
-**El único ⚠️ es el 09** y es honesto: el outbox está verificado, pero **el camino del
-broker nunca se ha ejercitado** porque en el entorno de trabajo no hay RabbitMQ ni Docker.
+**Ya no queda ningún ⚠️.** El 09 se cerró el 2026-09-05 contra un RabbitMQ real, y esa
+verificación destapó un bug que el build y el smoke test no veían (abajo).
 
 ---
 
 ## 2. Bitácora
+
+### 2026-09-05 — Slice 09 verificado contra RabbitMQ real, y el bug que destapó
+
+El owner levantó `rabbitmq_generic`. Ejercitado por fin el camino completo del broker:
+
+- Los **13 eventos** que llevaban en el outbox desde el 2026-08-30 se drenaron solos al
+  arrancar: publicados, consumidos y confirmados (`ack 13`).
+- Compra nueva → outbox → publicación → consumo → `ack`, con el aviso de stock bajo.
+- **Deduplicación**: el mismo `MessageId` publicado dos veces se procesa una
+  (`Duplicate … ignored`) y se confirma igual.
+- **DLQ**: un `type` inesperado se rechaza sin reencolar y aparece en la dead-letter queue,
+  sin llegar a deserializarse.
+
+🔴 **Bug encontrado y corregido: una caída corta del broker enterraba eventos.**
+`Attempts` contaba igual "este mensaje falla" que "el broker está caído", y el publicador
+además hacía `break` en el primer fallo. Medido: **25 segundos** de broker caído dejaban el
+evento con `Attempts=5`, fuera del filtro `Attempts < MaxAttempts` y por tanto **sin
+republicarse nunca, ni al volver el broker**. Menos de lo que tarda en arrancar el propio
+contenedor de RabbitMQ (`start_period: 30s`), o sea que **un reinicio rutinario del broker
+perdía eventos** — justo lo que el outbox existe para impedir.
+
+Corregido con `BrokerUnavailableException`: el broker caído **no consume intentos** y corta
+la tanda sin guardar; solo cuenta el fallo atribuible a un mensaje, y con `continue` en vez
+de `break` para que un mensaje envenenado no bloquee la cabecera de la tanda. De paso,
+`MaxPublishAttempts` pasa a `RabbitMqOptions`: lo leían el publicador y la sonda
+`outbox-backlog` como dos `const` separadas con un comentario pidiendo sincronizarlas.
+
+Medido después del fix: **45 s de caída (9 vueltas) → `Attempts` sigue en 0**, y al volver
+el broker el evento se publica y se consume.
+
+⚠️ **Quedan 14 eventos enterrados por el bug anterior** (`Attempts=5`, `LastError =
+"RabbitMQ is not available."`), que el fix no revive solo: `/health/ready` sigue en
+`Degraded` hasta decidir si se republican o se descartan. Ver §5.
+
+⚠️ **El dev container ya solo tiene .NET 10** (SDK 10.0.400, runtime 10.0.11); el proyecto
+es `net9.0`. Compila, pero **no arranca** sin `DOTNET_ROLL_FORWARD=Major`. Toda la
+verificación de arriba se hizo así, o sea **sobre el runtime 10, no sobre el 9** que usa el
+`Dockerfile` (`aspnet:9.0`). Decisión pendiente en §5.
 
 ### 2026-09-05 — Compose de despliegue y bloque del broker (`docker-compose.prod.yml`)
 
@@ -116,9 +154,16 @@ Medido contra SQL Server y Redis **reales**:
 | `Cache MISS` → `HIT` → invalidación en PATCH | correcto; clave verificada en Redis por RESP |
 | Subida de `.txt` renombrado a `.png` | 400 (magic bytes) |
 | Ventana de rate limit en `auth` | 429 tras 10/min |
+| Backlog de 13 eventos al volver el broker | publicados y consumidos, `ack 13`, DLQ vacía |
+| Compra → outbox → publicación → consumo | `ack`, aviso de stock bajo correcto |
+| Mismo `MessageId` publicado dos veces | efecto aplicado **una** vez, ambos con `ack` |
+| Evento con `type` inesperado | `nack` sin reencolar → **1 mensaje en la DLQ** |
+| Broker caído 25 s (**antes del fix**) | evento enterrado con `Attempts=5`, **nunca republicado** |
+| Broker caído 45 s (**después del fix**) | `Attempts=0`; al volver el broker, publicado y consumido |
 
-**No verificado**: publicación y consumo reales contra RabbitMQ, y el `Dockerfile`
-construido (no hay Docker en el entorno de trabajo).
+**No verificado**: el `Dockerfile` construido y `docker-compose.prod.yml` levantado (no hay
+Docker en el dev container), y **nada sobre el runtime .NET 9**: todo lo de arriba corrió
+sobre .NET 10 con `DOTNET_ROLL_FORWARD=Major`.
 
 ---
 
@@ -146,4 +191,5 @@ construido (no hay Docker en el entorno de trabajo).
 | **Licencia de AutoMapper** | La 15.1.1 exige licencia comercial en producción (avisa por log). ¿Comprar, fijar ≤13.x (última MIT), o migrar a Mapperly? |
 | **Política de commits** | `rules.md` §12 dice que el agente commitea (práctica de este repo). En el repo de frontend del owner la regla es la contraria. ¿Se confirma? |
 | **Secretos de desarrollo** | `appsettings.Development.json` está commiteado con la clave JWT y la password de SQL. Aceptable en local; hay que moverlo a user-secrets antes de que el repo salga de la máquina. |
-| **RabbitMQ** | El bloque está listo en `docker-compose.fragment.yml`; falta **pegarlo en `~/Documents/code/000_infra` y hacer `docker compose up -d rabbitmq_generic`** (solo el owner puede: no hay Docker en el dev container). Es lo que cierra el ⚠️ del slice 09. |
+| **14 eventos enterrados** | Los abandonó el bug de reintentos, no son mensajes malos. ¿Se republican (`UPDATE OutboxMessages SET Attempts = 0 WHERE ProcessedAt IS NULL AND Attempts >= 5`) o se descartan? Hasta entonces `/health/ready` = `Degraded`. |
+| **Runtime .NET 9** | El dev container ya solo trae .NET 10 y el proyecto es `net9.0`. ¿Instalar el runtime 9 en el contenedor, o **migrar el proyecto a `net10.0`** (con EF Core 10 y el `Dockerfile` a `aspnet:10.0`)? Mientras tanto solo arranca con `DOTNET_ROLL_FORWARD=Major`. |
