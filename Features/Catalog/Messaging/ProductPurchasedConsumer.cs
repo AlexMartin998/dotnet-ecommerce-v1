@@ -184,23 +184,101 @@ public sealed class ProductPurchasedConsumer(
     }
     catch (Exception ex)
     {
-      // ⚠️ LIMITACIÓN CONOCIDA. `redelivered` es una bandera del BROKER, no un
-      // contador: se pone a true en cuanto el mensaje se entregó alguna vez sin ack,
-      // incluido un reinicio del pod sin ningún fallo de proceso. Efectivamente esto
-      // son 2 intentos como máximo y con 0 ms entre ellos (un requeue devuelve el
-      // mensaje a la CABEZA de la cola, así que se reentrega de inmediato).
-      //
-      // Reintentos contados y con backoff exigen una RETRY QUEUE con `x-message-ttl`
-      // que dead-letterea de vuelta a la principal, y leer `x-death[0].count`. Está
-      // anotado en 06-estado-y-roadmap.md; mientras tanto se prefiere esto a fingir
-      // un contador que no existe.
-      var toDlq = args.Redelivered;
+      // Contador REAL de intentos, leído de `x-death`. Antes se usaba
+      // `args.Redelivered`, que es una BANDERA del broker y no un contador: se pone a
+      // true en cuanto el mensaje se entregó alguna vez sin ack —incluido un reinicio
+      // del pod sin ningún fallo— así que eran 2 intentos como mucho y con 0 ms entre
+      // ellos, porque un requeue devuelve el mensaje a la CABEZA de la cola.
+      var attempts = DeliveryAttempts(args) + 1;
 
-      logger.LogError(ex, "Failed to process {MessageId} (redelivered: {Redelivered}) -> {Action}",
-          messageId, args.Redelivered, toDlq ? "DLQ" : "requeue");
+      if (attempts < _options.MaxDeliveryAttempts)
+      {
+        logger.LogWarning(ex,
+            "Failed to process {MessageId} (attempt {Attempt}/{Max}); retrying in {Delay}s",
+            messageId, attempts, _options.MaxDeliveryAttempts, _options.RetryDelaySeconds);
 
-      await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: !toDlq, CancellationToken.None);
+        await ScheduleRetryAsync(channel, args, ct);
+        return;
+      }
+
+      logger.LogError(ex,
+          "Failed to process {MessageId} after {Attempts} attempt(s) -> DLQ",
+          messageId, attempts);
+
+      await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: false, CancellationToken.None);
     }
+  }
+
+  /// <summary>
+  /// Cuántas veces ha caducado ya este mensaje en la cola de reintento.
+  /// </summary>
+  /// <remarks>
+  /// El broker escribe una entrada en <c>x-death</c> por cada cola desde la que se hizo
+  /// dead-letter, con un <c>count</c> acumulado. Se busca la de la cola de reintento: las
+  /// entradas de otras colas (la principal, cuando algo va a la DLQ) contarían otra cosa.
+  /// </remarks>
+  private long DeliveryAttempts(BasicDeliverEventArgs args)
+  {
+    if (args.BasicProperties.Headers?.TryGetValue("x-death", out var raw) is not true
+        || raw is not IEnumerable<object> deaths)
+      return 0;
+
+    foreach (var death in deaths.OfType<IDictionary<string, object?>>())
+    {
+      // Los valores de texto viajan como byte[] en el cliente AMQP: comparar contra un
+      // string sin convertir devuelve siempre false, en silencio.
+      if (death.TryGetValue("queue", out var queue)
+          && AsString(queue) == _options.RetryQueue
+          && death.TryGetValue("count", out var count)
+          && count is long value)
+        return value;
+    }
+
+    return 0;
+  }
+
+  private static string? AsString(object? value) => value switch
+  {
+    byte[] bytes => Encoding.UTF8.GetString(bytes),
+    string text => text,
+    _ => value?.ToString()
+  };
+
+  /// <summary>
+  /// Manda el mensaje a la cola de espera y confirma el original.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// ⚠️ <b>Publicar primero, confirmar después.</b> Al revés, morir entremedias pierde el
+  /// mensaje: ya estaría confirmado y aún no reencolado. En este orden, morir entremedias
+  /// solo provoca una reentrega —el mensaje nunca se confirmó— y el consumidor la
+  /// deduplica. Se prefiere duplicar a perder, que es la misma regla del outbox.
+  /// </para>
+  /// <para>
+  /// Se copian las cabeceras <b>incluida <c>x-death</c></b>: es lo que hace que el contador
+  /// se acumule entre vueltas en vez de empezar de cero cada vez.
+  /// </para>
+  /// </remarks>
+  private async Task ScheduleRetryAsync(IChannel channel, BasicDeliverEventArgs args, CancellationToken ct)
+  {
+    var properties = new BasicProperties
+    {
+      MessageId = args.BasicProperties.MessageId,
+      Type = args.BasicProperties.Type,
+      ContentType = args.BasicProperties.ContentType,
+      DeliveryMode = DeliveryModes.Persistent,
+      Headers = args.BasicProperties.Headers
+    };
+
+    await channel.BasicPublishAsync(
+        exchange: _options.RetryExchange,
+        routingKey: _options.RoutingKey,
+        mandatory: true,
+        basicProperties: properties,
+        body: args.Body.ToArray(),
+        cancellationToken: ct);
+
+    await channel.BasicAckAsync(args.DeliveryTag, multiple: false, CancellationToken.None);
   }
 
   /// <summary>

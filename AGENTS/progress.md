@@ -35,6 +35,26 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 
 ## 2. Bitácora
 
+### 2026-09-06 — Deuda 12.1: reintentos del consumidor con contador REAL
+
+`args.Redelivered` es una bandera del broker, no un contador: eran 2 intentos como mucho y
+con 0 ms entre ellos, porque un `requeue` devuelve el mensaje a la **cabeza** de la cola.
+Ahora hay una cola de espera (`…product-purchased.retry`) con `x-message-ttl` que
+dead-letterea de vuelta a la principal, y el contador sale de `x-death[].count`.
+
+⚠️ Dos decisiones que no son obvias:
+- Se añade como topología **nueva** en vez de cambiar el `x-dead-letter-exchange` de la cola
+  principal. Redeclarar una cola existente con argumentos distintos da **406** y cierra el
+  canal: habría que borrar la cola en producción —con sus mensajes— para desplegar. Así el
+  despliegue es aditivo.
+- Se publica al reintento **antes** de confirmar el original. Al revés, morir entremedias
+  pierde el mensaje; en este orden solo provoca una reentrega, que el consumidor deduplica.
+  Duplicar antes que perder, la misma regla del outbox.
+
+Verificado con un cuerpo ilegible y TTL de 2 s: intentos a los `:34`, `:36` y `:38` —el
+espaciado **es** el TTL— y al tercero a la DLQ. Después, con los valores reales, la
+topología declara con TTL 30 s y una compra normal sigue funcionando sin un solo error.
+
 ### 2026-09-06 — Deuda 12.1: el outbox, robusto para más de una réplica
 
 - **Orden determinista**: columna `Sequence` (`bigint IDENTITY`). Se ordenaba por

@@ -145,9 +145,39 @@ public sealed class RabbitMqConnection(
     await channel.QueueBindAsync(
         _options.Queue, _options.Exchange, _options.RoutingKey, cancellationToken: ct);
 
+    // ---- reintento con espera -------------------------------------------------
+    // Cola de ESPERA, sin consumidor. El mensaje entra, caduca por `x-message-ttl` y el
+    // broker lo dead-letterea de vuelta al exchange principal, donde la cola principal lo
+    // recoge otra vez. Cada vuelta el broker incrementa `x-death[].count`, que es el
+    // contador real de intentos que antes no existía.
+    //
+    // ⚠️ Se añade como topología NUEVA en vez de cambiar el `x-dead-letter-exchange` de la
+    // cola principal. Redeclarar una cola existente con argumentos distintos da
+    // PRECONDITION_FAILED (406) y cierra el canal: habría que borrar la cola en producción
+    // —con sus mensajes— para desplegar esto. Así el despliegue es aditivo y sin parada.
+    await channel.ExchangeDeclareAsync(
+        _options.RetryExchange, ExchangeType.Topic, durable: true, autoDelete: false,
+        cancellationToken: ct);
+
+    await channel.QueueDeclareAsync(
+        _options.RetryQueue, durable: true, exclusive: false, autoDelete: false,
+        arguments: new Dictionary<string, object?>
+        {
+          ["x-message-ttl"] = _options.RetryDelaySeconds * 1000,
+          ["x-dead-letter-exchange"] = _options.Exchange,
+          // Sin esto conservaría la routing key con la que entró aquí, y el mensaje no
+          // encontraría la cola principal al volver.
+          ["x-dead-letter-routing-key"] = _options.RoutingKey
+        },
+        cancellationToken: ct);
+
+    await channel.QueueBindAsync(
+        _options.RetryQueue, _options.RetryExchange, _options.RoutingKey, cancellationToken: ct);
+
     logger.LogInformation(
-        "RabbitMQ topology ready: {Exchange} -> {Queue} (dlq {Dlq})",
-        _options.Exchange, _options.Queue, _options.DeadLetterQueue);
+        "RabbitMQ topology ready: {Exchange} -> {Queue} (retry {Retry} every {Delay}s, dlq {Dlq})",
+        _options.Exchange, _options.Queue, _options.RetryQueue, _options.RetryDelaySeconds,
+        _options.DeadLetterQueue);
   }
 
   public async ValueTask DisposeAsync()
