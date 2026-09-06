@@ -3,6 +3,8 @@ using ApiEcommerce.Shared.Caching;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using ApiEcommerce.Shared.Messaging;
+using ApiEcommerce.Shared.Messaging.RabbitMq;
+using Microsoft.Extensions.Options;
 
 namespace ApiEcommerce.Shared.Http.Health;
 
@@ -45,16 +47,22 @@ public static class HealthCheckExtensions
 
 
 /// <summary>Cuenta los eventos del outbox que se dieron por perdidos.</summary>
-public sealed class OutboxBacklogHealthCheck(AppDbContext db) : IHealthCheck
+/// <remarks>
+/// El umbral se lee de <see cref="RabbitMqOptions.MaxPublishAttempts"/>, el MISMO valor
+/// que aplica el publicador. Antes era una <c>const</c> aquí con un comentario pidiendo
+/// mantenerla sincronizada: subir el máximo en el publicador habría dejado esta sonda
+/// contando como perdidos mensajes que aún se estaban reintentando.
+/// </remarks>
+public sealed class OutboxBacklogHealthCheck(
+    AppDbContext db, IOptions<RabbitMqOptions> options) : IHealthCheck
 {
-  /// <summary>Debe coincidir con <c>OutboxPublisher.MaxAttempts</c>.</summary>
-  private const int MaxAttempts = 5;
-
   public async Task<HealthCheckResult> CheckHealthAsync(
       HealthCheckContext context, CancellationToken cancellationToken = default)
   {
+    var maxAttempts = options.Value.MaxPublishAttempts;
+
     var abandoned = await db.OutboxMessages
-        .CountAsync(m => m.ProcessedAt == null && m.Attempts >= MaxAttempts, cancellationToken);
+        .CountAsync(m => m.ProcessedAt == null && m.Attempts >= maxAttempts, cancellationToken);
 
     return abandoned == 0
         ? HealthCheckResult.Healthy("No abandoned outbox messages")

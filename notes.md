@@ -1752,3 +1752,79 @@ networks:
   - -- `docker ps` no existe ahi; ni el `Dockerfile` ni estos composes se pueden construir
        ni levantar desde dentro. Se ejecutan en el HOST
   - -- por eso el camino real del broker sigue sin ejercitarse: es el unico ⚠️ del slice 09
+
+
+
+
+
+
+## 23. El bug que solo se ve con el broker DE VERDAD
+- --- Contexto: el outbox llevaba semanas "verificado" sin que RabbitMQ existiera.
+      En cuanto el broker existio, el camino feliz funciono a la primera... y el
+      camino de la CAIDA resulto estar roto desde el principio.
+
+- --- ⚠️ **`Attempts` contaba dos cosas distintas como si fueran una**
+  - -- "este mensaje falla" (payload malo, sin cola destino) -> SI es culpa del mensaje
+  - -- "el broker esta caido" -> NO es culpa del mensaje: le pasa igual a todos
+  - -- las dos llegaban como `InvalidOperationException("RabbitMQ is not available.")`
+       y las dos incrementaban `Attempts`
+
+- --- Lo MEDIDO (que es lo que convierte una sospecha en un bug)
+```sh
+# app apuntando a un puerto muerto = broker caido, sin tocar la infraestructura
+RabbitMq__ConnectionString="amqp://guest:guest@172.17.0.1:5673" dotnet bin/Debug/net9.0/ApiEcommerce.dll
+```
+```
+23:57:09 WRN Failed to publish ... (attempt 1/5)
+23:57:29 ERR Giving up on ... after 5 attempts
+>>> ABANDONADO tras 25 segundos de broker caido
+```
+  - -- 5 intentos x 5 s = **25 segundos** de caida y el evento queda con `Attempts=5`
+  - -- el publicador filtra por `Attempts < MaxAttempts`, asi que **no vuelve a mirarlo
+       jamas**: al volver el broker, sigue enterrado
+  - -- comprobado: broker arriba + 12 s -> `ProcessedAt` seguia en NULL
+  - -- 25 s es MENOS que el `start_period: 30s` del healthcheck del propio contenedor de
+       RabbitMQ: **un reinicio rutinario del broker perdia eventos**
+
+- --- El fix: una excepcion propia para distinguir las dos cosas
+```csharp
+catch (BrokerUnavailableException ex)   // infraestructura caida
+{
+  // NO toca Attempts, NO guarda. Corta la tanda y reintenta en la vuelta siguiente.
+  return;
+}
+catch (Exception ex) ...                // culpa del mensaje
+{
+  message.Attempts++;
+  continue;   // <- `continue`, no `break`: el broker esta vivo y un mensaje envenenado
+              //    no debe bloquear la cabecera de la tanda (head-of-line blocking)
+}
+```
+  - -- verificado: **45 s de caida (9 vueltas) -> `Attempts` sigue en 0**, y al volver el
+       broker se publica y se consume
+
+- --- De paso: `MaxAttempts` estaba **duplicado** como `const` en el publicador y en la
+      sonda de salud, con un comentario que pedia "mantenerlos sincronizados"
+  - -- eso no es un acuerdo, es una bomba de relojeria: subir uno deja al otro contando
+       como perdidos mensajes que aun se reintentan
+  - -- ahora es `RabbitMq:MaxPublishAttempts` en las options, una sola fuente
+
+- --- --- Lo que si funciono a la primera contra el broker real
+  - -- los 13 eventos acumulados durante semanas se drenaron solos al arrancar
+  - -- deduplicacion: mismo `MessageId` publicado dos veces -> `Duplicate ... ignored`
+  - -- DLQ: `type` inesperado -> nack sin reencolar, y el mensaje aparece en la DLQ
+       **sin haberse deserializado** (el chequeo del tipo va ANTES del deserializado)
+```sh
+# publicar a mano para forzar los caminos raros, sin tocar el codigo
+curl -u guest:guest -X POST http://172.17.0.1:15672/api/exchanges/%2F/apiecommerce.events/publish \
+  -H 'Content-Type: application/json' \
+  -d '{"properties":{"message_id":"<guid>","type":"product.created"},"routing_key":"product.purchased","payload":"{...}","payload_encoding":"string"}'
+```
+
+- --- ⚠️ El dev container ya solo trae **.NET 10** y el proyecto es `net9.0`
+  - -- `dotnet build` va (el SDK 10 compila para net9.0), pero `dotnet run` **no arranca**:
+       "You must install or update .NET... The following frameworks were found: 10.0.11"
+  - -- parche para seguir trabajando: `DOTNET_ROLL_FORWARD=Major`
+  - -- ojo con lo que eso implica: se esta probando sobre el runtime **10**, no sobre el
+       **9** que usa el `Dockerfile` (`aspnet:9.0`). Hay que decidir: instalar el runtime 9
+       o migrar el proyecto a net10.0

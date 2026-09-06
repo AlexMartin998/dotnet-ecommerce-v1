@@ -16,8 +16,11 @@ public sealed class RabbitMqEventPublisher(
   public async Task PublishAsync(
       Guid messageId, string eventType, string payload, CancellationToken ct = default)
   {
+    // Tipo propio y no InvalidOperationException: el outbox necesita distinguir
+    // "broker caído" (no es culpa de este mensaje, no cuenta como intento) de
+    // "este mensaje falla" (sí cuenta). Ver BrokerUnavailableException.
     var conn = await connection.TryGetConnectionAsync(ct)
-        ?? throw new InvalidOperationException("RabbitMQ is not available.");
+        ?? throw new BrokerUnavailableException("RabbitMQ is not available.");
 
     // publisherConfirmations: BasicPublishAsync no vuelve hasta que el broker ha
     // confirmado (ack). Sin esto, "publicado" solo significa "escrito en un socket"

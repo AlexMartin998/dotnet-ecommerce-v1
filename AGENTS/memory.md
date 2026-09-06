@@ -49,11 +49,11 @@ con otros proyectos, en la red `backend`:
 |---|---|---|
 | `sqlserver_ecommerce` | `172.17.0.1,1434` · BD `ApiEcommerceNET8` | ✅ arriba |
 | `redis_generic` | `172.17.0.1:6999` | ✅ arriba |
-| `rabbitmq_generic` | `172.17.0.1:5672` | ❌ **no existe todavía** |
+| `rabbitmq_generic` | `172.17.0.1:5672` | ✅ arriba (desde 2026-09-05; UI en `:15672`, guest/guest) |
 
-Para RabbitMQ hay un bloque listo para pegar en ese compose:
-**`docker-compose.fragment.yml`** (raíz del repo). Sin él, la app arranca igual y los
-eventos se acumulan en la tabla `OutboxMessages` — es el diseño, no un fallo.
+El bloque de RabbitMQ está en **`docker-compose.fragment.yml`** (raíz del repo), ya pegado
+en el compose central. Si algún día no está, la app arranca igual y los eventos se acumulan
+en `OutboxMessages` — es el diseño, no un fallo.
 
 **La API en contenedor** tiene su propio **`docker-compose.prod.yml`** (raíz del repo):
 declara *solo* la app y se engancha a la red `backend` de aquel compose como **externa**
@@ -143,6 +143,10 @@ Piezas que conviene conocer antes de tocar nada:
 | Editar con scripts | Una sustitución global se cuela en los **bloques comentados** de aprendizaje. Ya pasó dos veces. |
 | Rate limiter propio | 100 req/min global y 10/min en `auth`. Al hacer pruebas de carga te limita **a ti**: reinicia el proceso para resetear la ventana. |
 | Lockout de Identity | 5 logins fallidos bloquean la cuenta 5 min. Probar con un usuario nuevo, no con el de siempre. |
+| **Runtime .NET** | El dev container ya solo tiene **.NET 10** (SDK 10.0.400) y el proyecto es `net9.0`: **compila pero NO arranca**. Hace falta `DOTNET_ROLL_FORWARD=Major`, y entonces se está probando sobre el runtime 10, no sobre el 9 del `Dockerfile`. |
+| `pkill -f ApiEcommerce` | **Se mata a sí mismo**: el cwd y la propia línea de comando contienen esa cadena. Guardar el PID (`echo $! > api.pid`) y `kill` por PID. Ya ha pasado dos veces. |
+| Arrancar la app | `dotnet run` deja un proceso hijo que no muere con el padre. Mejor `dotnet bin/Debug/net9.0/ApiEcommerce.dll`, que sí da el PID real. |
+| `POST /api/v1/category` | Devuelve **201 sin cuerpo** (`CreatedAtRoute(..., null)`): el id sale de la cabecera `Location`, no del JSON. No es un fallo. |
 
 ---
 
@@ -184,6 +188,7 @@ Capítulos 15–20 son la referencia de estilo más reciente.
 Category y Product tienen el slice vertical completo. Hay auth con Identity+JWT,
 versionado, CORS, cache Redis con decorador, paginación, subida de imágenes, seeding,
 rate limiting, Serilog, health checks, protección de carreras, idempotencia y outbox +
-RabbitMQ. **No hay tests: es el paso 7 y el siguiente.**
+RabbitMQ — este último **verificado de punta a punta contra un broker real** el
+2026-09-05, incluidos deduplicación y DLQ. **No hay tests: es el paso 7 y el siguiente.**
 
 Ver `progress.md` para el detalle de qué está hecho, qué está a medias y qué falta.
