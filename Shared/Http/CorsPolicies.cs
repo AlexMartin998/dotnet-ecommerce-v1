@@ -36,6 +36,16 @@ public static class CorsPolicies
         policy.WithOrigins(origins)
               .AllowAnyMethod()
               .AllowAnyHeader()
+              // ⚠️ Imprescindible desde que el refresh token viaja en cookie: sin esto el
+              // navegador NO la manda en una petición a otro origen, y tampoco aceptaría
+              // la respuesta que la establece. El login funcionaría y el refresh no,
+              // otra vez sin ningún error en el servidor.
+              //
+              // Es legal aquí precisamente porque arriba hay una lista explícita de
+              // orígenes: combinar credenciales con `AllowAnyOrigin()` está PROHIBIDO por
+              // la especificación y ASP.NET Core lanza en tiempo de ejecución si se
+              // intenta. Es la mejor razón para no haber puesto nunca el comodín.
+              .AllowCredentials()
               // Deja que el front lea las cabeceras de versión que emite ReportApiVersions.
               .WithExposedHeaders("api-supported-versions", "api-deprecated-versions");
       });

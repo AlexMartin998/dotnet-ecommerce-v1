@@ -1,5 +1,6 @@
 using ApiEcommerce.Shared.Idempotency;
 using StackExchange.Redis;
+using ApiEcommerce.Shared.Auth;
 
 namespace ApiEcommerce.Shared.Caching;
 
@@ -76,12 +77,17 @@ public static class CachingExtensions
       services.AddSingleton<IConnectionMultiplexer>(_ => multiplexer.Value);
 
       services.AddSingleton<IIdempotencyStore, RedisIdempotencyStore>();
+
+      // La denylist de access tokens. Singleton como el resto: no guarda estado por
+      // request y sus dependencias ya son singletons.
+      services.AddSingleton<IAccessTokenDenylist, RedisAccessTokenDenylist>();
     }
     else
     {
       // Null Object: los decoradores siguen compilando y ejecutando sin un solo `if`.
       services.AddSingleton<ICacheService, NoCacheService>();
       services.AddSingleton<IIdempotencyStore, NoIdempotencyStore>();
+      services.AddSingleton<IAccessTokenDenylist, NoAccessTokenDenylist>();
     }
 
     return services;

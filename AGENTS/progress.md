@@ -4,7 +4,7 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-06** (mensajería y errores bajo carga cerrados).
+Última actualización: **2026-09-06** (sesiones revocables: refresh tokens).
 
 ---
 
@@ -22,15 +22,15 @@
 | 08 | Idempotencia de peticiones | ✅ | [`features/08`](features/08_idempotencia.feature) · [`planning/08`](planning/08_idempotencia.md) | `63269ac` |
 | 09 | Eventos de dominio (outbox + RabbitMQ) | ✅ | [`features/09`](features/09_eventos-de-dominio.feature) · [`planning/09`](planning/09_eventos-de-dominio.md) | `63269ac` + fix |
 | 10 | Límites, salud y despliegue | ✅ | [`features/10`](features/10_limites-y-salud.feature) · [`planning/10`](planning/10_limites-y-salud.md) | `63269ac` |
-| 11 | **Tests** | ✅ fases 1–6 (**186 tests** + CI) | [`planning/11`](planning/11_proyecto-de-tests.md) | `14c9e76` + |
+| 11 | **Tests** | ✅ fases 1–6 (**193 tests** + CI) | [`planning/11`](planning/11_proyecto-de-tests.md) | `14c9e76` + |
 | 12 | Deuda de la revisión 2026-08-30 | ✅ (§12.5 en [`planning/18`](planning/18_deuda-de-mensajeria.md)) | [`planning/12`](planning/12_deuda-revision-multiagente.md) | — |
-| 13 | Refresh tokens y revocación | ❌ | [`planning/13`](planning/13_refresh-tokens.md) | — |
+| 13 | Refresh tokens y revocación | ✅ | [`features/13`](features/13_refresh-tokens.feature) · [`planning/13`](planning/13_refresh-tokens.md) | — |
 | 14 | Administración de usuarios | ❌ | [`planning/14`](planning/14_admin-usuarios.md) | — |
 | 15 | Partir en proyectos | ❌ diferido | [`planning/15`](planning/15_partir-en-proyectos.md) | — |
 | 16 | Idempotencia bajo carga | ✅ | [`features/16`](features/16_idempotencia-bajo-carga.feature) · [`planning/16`](planning/16_idempotencia-bajo-carga.md) | `7f120a2` |
 | 17 | Idempotencia transaccional | ✅ | [`features/17`](features/17_idempotencia-transaccional.feature) · [`planning/17`](planning/17_idempotencia-transaccional.md) | `b9f62aa` |
 | 18 | Deuda de mensajería | ✅ | [`features/18`](features/18_mensajeria-robusta.feature) · [`planning/18`](planning/18_deuda-de-mensajeria.md) | `a77b5df` |
-| 19 | Errores bajo carga | ✅ | [`planning/19`](planning/19_errores-bajo-carga.md) | — |
+| 19 | Errores bajo carga | ✅ | [`planning/19`](planning/19_errores-bajo-carga.md) | `347f901` |
 
 **Ya no queda ningún ⚠️.** El 09 se cerró el 2026-09-05 contra un RabbitMQ real, y esa
 verificación destapó un bug que el build y el smoke test no veían (abajo).
@@ -38,6 +38,50 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 ---
 
 ## 2. Bitácora
+
+### 2026-09-06 — Sesiones que se pueden revocar
+
+Hasta hoy un access token robado valía **60 minutos** y no había forma de invalidarlo: ni
+cerrando sesión, ni cambiando la contraseña. `planning/13`, con el diseño fijado por el
+owner: **el refresh token viaja en cookie `HttpOnly`**.
+
+- **Rotación con detección de reuso.** Cada refresco gasta el token y entrega otro; que
+  reaparezca uno ya gastado solo tiene dos explicaciones, y la rotación existe para que
+  sean distinguibles. Fuera de la ventana de gracia se revoca **la familia entera** —con
+  dos copias circulando no se sabe cuál es la del dueño—.
+- ⚠️ **La ventana de gracia no es un parche: sin ella la detección es inutilizable.** Un
+  móvil o una SPA lanzan peticiones en paralelo; dos reciben 401 casi a la vez, las dos
+  refrescan con el mismo token y la segunda parece un ladrón. Se cerraría la sesión de
+  usuarios legítimos sin parar.
+- **`TryConsumeAsync` es un `UPDATE … WHERE RevokedAt IS NULL`**, no un leer-y-escribir:
+  dos peticiones simultáneas no pueden gastar el mismo token. Misma forma que el descuento
+  de stock.
+- **La misma división de `planning/17`**: la *garantía* («esta sesión no se puede
+  extender») es la familia revocada en la BASE; la *optimización* es la denylist de `jti`
+  en Redis, que solo adelanta la muerte del access token que el cliente ya tiene.
+  Verificado con Redis muerto: el logout **sigue cortando la sesión**.
+
+⚠️ **Dos trampas de cookies que habrían fallado en silencio**, las dos con la misma forma
+—login 200, cookie no guardada, refresh fallando siempre sin un error en el servidor—:
+
+1. El prefijo **`__Host-`** que proponía el plan exige `Path=/` y `Secure`, y aquí el
+   `Path` va acotado y en local se sirve por HTTP. Se descartó.
+2. `Secure` decidido por `IsDevelopment()`: el host de tests usa `"Testing"` y va por HTTP,
+   así que marcaba la cookie como `Secure` y **ningún test de sesión podía pasar**. Lo
+   cazaron los tests. Ahora se decide por `Request.IsHttps`, que se ajusta solo.
+
+Y faltaba **`AllowCredentials()`** en CORS: sin eso el navegador no manda la cookie a otro
+origen. Es legal porque los orígenes son una lista explícita — combinarlo con
+`AllowAnyOrigin()` está prohibido por la especificación.
+
+`Jwt:ExpirationMinutes` baja de 60 a **15**: con refresh, la ventana en la que un access
+token robado sirve es lo único que no se puede cerrar a voluntad.
+
+✏️ Una comprobación mía dio `HttpOnly=False` y era **un falso negativo** (Kestrel emite
+`httponly` en minúscula y yo comparaba sensible a mayúsculas). Misma clase de error que el
+`grep "[ERR]"` de ayer; el test de la suite ya compara sin distinguir.
+
+**193 tests** en verde (eran 186).
 
 ### 2026-09-06 — Los «errores» que no eran errores
 

@@ -35,14 +35,23 @@ nunca hace push (`rules.md` §12).
    ⚠️ El middleware va **por debajo** de `UseExceptionHandler`, o el framework ya ha
    escrito su línea de Error antes de llamarte.
 
+6. **`planning/13` — sesiones revocables**. Refresh token en **cookie `HttpOnly`**
+   (decisión del owner), con rotación y detección de reuso: reusar un token gastado fuera
+   de la ventana de gracia revoca **la familia entera**. `Jwt:ExpirationMinutes` baja de 60
+   a **15**. La garantía es la familia revocada en la BASE; la denylist de `jti` en Redis
+   solo adelanta la muerte del access token que el cliente ya tiene.
+   ⚠️ Dos trampas de cookies que fallan **en silencio** (login 200, cookie no guardada,
+   refresh siempre 401, cero errores en el servidor): el prefijo `__Host-` exige `Path=/`
+   y `Secure`; y decidir `Secure` por `IsDevelopment()` rompe el host de tests, que usa
+   `"Testing"` sobre HTTP. Se decide por `Request.IsHttps`.
+
 ### Por dónde seguir (en este orden)
-1. **`planning/13`** refresh tokens · **`planning/14`** administración de usuarios (hoy el
-   único camino para tener un admin es el seeder).
+1. **`planning/14`** administración de usuarios. Hoy el único camino para tener un admin es
+   el seeder. Se lleva de paso dos cosas de `planning/13`: revocar todas las sesiones al
+   cambiar la contraseña, y un «cerrar sesión en todos los dispositivos».
 2. `planning/15` (partir en proyectos) sigue **diferido a propósito**.
-3. Deuda menor viva, toda anotada: `planning/17` §17.4 (la huella sobre el DTO enlazado,
-   solo `buy` declara intención, la retención compartida en `Outbox:RetentionDays`) y
-   `planning/19` §19.4 (EF sigue logueando a Error sus fallos de conexión — se deja a
-   propósito).
+3. Deuda menor viva, toda anotada: `planning/13` (no hay cliente móvil cubierto: la cookie
+   es una decisión para SPA), `planning/17` §17.4 y `planning/19` §19.4.
 
 ⚠️ **Colas huérfanas en el broker de desarrollo**: al cambiar `RetryDelaySeconds` quedan
 colas `…retry.<N>s` de plazos anteriores. Están vacías y **ya no reciben nada** (no tienen
@@ -340,7 +349,7 @@ misma transacción que el efecto) y outbox +
 RabbitMQ — este último **verificado de punta a punta contra un broker real** el
 2026-09-05, incluidos deduplicación y DLQ.
 
-**Tests y CI hechos**: `tests/ApiEcommerce.Tests`, **186** (unitarios + integración +
+**Tests y CI hechos**: `tests/ApiEcommerce.Tests`, **193** (unitarios + integración +
 concurrencia + degradación y arranque) y `.github/workflows/ci.yml`. **`planning/12`
 cerrado** salvo la licencia de AutoMapper. Lo siguiente es `planning/12` §12.5 (la deuda
 nueva) y luego refresh tokens y administración de usuarios.

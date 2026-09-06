@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.IdentityModel.Tokens.Jwt;
 
 namespace ApiEcommerce.Shared.Auth;
 
@@ -22,4 +23,33 @@ public static class ClaimsPrincipalExtensions
   public static string GetRequiredUserId(this ClaimsPrincipal principal)
       => principal.GetUserId()
          ?? throw new Exceptions.UnauthorizedAppException("The token does not carry a user id.");
+
+  /// <summary>El <c>jti</c> del access token: lo que identifica a ESTE token, no al usuario.</summary>
+  /// <remarks>
+  /// Es lo que permite invalidar un token concreto sin tocar los demás del mismo usuario
+  /// (ver <c>IAccessTokenDenylist</c>).
+  /// </remarks>
+  public static string? GetTokenId(this ClaimsPrincipal principal)
+  {
+    ArgumentNullException.ThrowIfNull(principal);
+
+    return principal.FindFirstValue(JwtRegisteredClaimNames.Jti);
+  }
+
+  /// <summary>Cuándo expira el access token, en <b>UTC</b>.</summary>
+  /// <remarks>
+  /// ⚠️ El claim <c>exp</c> es un epoch <b>UTC</b> (RFC 7519) y llega como texto. Es la
+  /// excepción al <c>DateTime.Now</c> local del resto del proyecto: convertirlo a local
+  /// aquí haría que la denylist calculara un TTL con horas de desfase.
+  /// </remarks>
+  public static DateTime? GetTokenExpiry(this ClaimsPrincipal principal)
+  {
+    ArgumentNullException.ThrowIfNull(principal);
+
+    var raw = principal.FindFirstValue(JwtRegisteredClaimNames.Exp);
+
+    return long.TryParse(raw, out var seconds)
+        ? DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime
+        : null;
+  }
 }

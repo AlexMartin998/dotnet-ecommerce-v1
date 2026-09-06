@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Options;
 using ApiEcommerce.Features.Accounts.Models;
 using ApiEcommerce.Features.Accounts.Service;
+using ApiEcommerce.Features.Accounts.Repository;
 
 namespace ApiEcommerce.Features.Accounts;
 
@@ -78,6 +79,22 @@ public static class AccountsExtensions
     // que haga falta rotación en caliente, se cambia IOptions por IOptionsMonitor.
     services.AddSingleton<IJwtTokenService, JwtTokenService>();
     services.AddScoped<IAuthService, AuthService>();
+
+    // Sesiones revocables. Scoped porque escriben en la base dentro de la transacción
+    // del request; la cookie es un adaptador sin estado, pero depende de IOptions y del
+    // entorno, así que Singleton bastaría — se deja Scoped por uniformidad con el resto
+    // del slice y porque no se instancia en caliente.
+    services.AddOptions<RefreshTokenOptions>()
+        .Bind(configuration.GetSection(RefreshTokenOptions.SectionName))
+        .ValidateDataAnnotations()
+        .ValidateOnStart();
+
+    services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
+    services.AddScoped<IRefreshTokenService, RefreshTokenService>();
+    services.AddScoped<RefreshTokenCookie>();
+
+    // Siempre, como el resto de purgas: la tabla crece haya o no actividad.
+    services.AddHostedService<RefreshTokenCleaner>();
 
     return services;
   }
