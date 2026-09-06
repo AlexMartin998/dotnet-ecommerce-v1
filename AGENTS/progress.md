@@ -4,7 +4,7 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-06** (órdenes y comprobante en PDF: cuarto contexto acotado).
+Última actualización: **2026-09-06** (documentación regenerada contra el código).
 
 ---
 
@@ -39,6 +39,41 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 ---
 
 ## 2. Bitácora
+
+### 2026-09-06 — Regenerar la documentación, y lo que eso destapó
+
+`CLAUDE.md` se carga en **toda** sesión de agente, así que cada afirmación falsa contamina
+todas a la vez. Una auditoría contra el código encontró **~20**: carpetas que no existen
+(`Models/Dtos/`, `Service/Crud/`, `Service/Auth/`), nombres del composition root inventados
+(`AddApplication`/`AddInfrastructure`), «`[Transactional]` está aplicado a `POST /buy`»
+cuando no lo lleva ningún endpoint, y —la peor— **«no hay proyecto de tests: `dotnet build`
+es el único check»** con 262 tests y CI en verde.
+
+Reescrito entero contra el código, con cuatro agentes levantando el inventario en paralelo
+(Shared, slices, configuración/despliegue, auditoría) y **un quinto intentando refutar el
+resultado**. Ese último no encontró ninguna afirmación falsa y sí cuatro imprecisiones, las
+cuatro corregidas.
+
+**La decisión que evita la recaída**: una sola fuente de verdad por dato, escrita en
+`memory.md` §6.ter. Los **conteos volátiles no van en `CLAUDE.md`** —quedan obsoletos y
+nadie lo nota—; van en `progress.md` y `memory.md`, que se actualizan en el mismo commit que
+el código. `docs/01`–`05` conservan su razonamiento, que es lo valioso y lo que ningún
+documento regenerado reproduce; lo que iba caduco eran rutas, nombres de método y números.
+
+🔴 **Y verificar la documentación destapó un bug de código**: el orden por defecto de
+`BaseRepository` no tenía **desempate estable**. `CreatedAt` no es único —lo estampa
+`DateTime.Now`, y el seeding crea cinco categorías en el mismo tick—, así que el orden no
+era total; como cada página es un `OFFSET/FETCH` independiente, una fila podía salir en dos
+páginas y otra en ninguna. La regla estaba escrita a mano en los repositorios que paginan de
+verdad (`ProductRepository`, `OrderRepository`) y **faltaba justo en el camino genérico**,
+que es el que sirve `GET /api/v1/category/paged`. Arreglado con un `ThenByDescending` por
+clave primaria y un test que pagina 12 categorías creadas seguidas comprobando que no hay
+duplicados ni pérdidas.
+
+También se regeneró el `README.md` de la raíz, que seguía siendo un borrador de comandos
+sueltos desde los primeros commits.
+
+**262 tests** en verde.
 
 ### 2026-09-06 — Órdenes, y el comprobante que no se genera en la petición
 
@@ -117,7 +152,7 @@ sin permiso de escritura. Medido: 2 intentos → DLQ → la orden pasa a `failed
 `receipt_failed`, **con la compra intacta** (`paid`, total y líneas), y el mensaje muerto en
 la DLQ de órdenes y **no** en la del catálogo.
 
-**261 tests** en verde (eran 202), build sin warnings.
+**262 tests** en verde (eran 202), build sin warnings.
 
 ### 2026-09-06 — Administrar usuarios, y el agujero que eso destapó
 

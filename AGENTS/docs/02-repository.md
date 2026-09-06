@@ -33,10 +33,15 @@ IBaseRepository<T> where T : class, IEntity     ← contrato CRUD genérico
 
 Reglas:
 
-- **Toda** interfaz de repositorio hereda de `IBaseRepository<T>`. Nunca se
+- **Por defecto**, la interfaz de repositorio hereda de `IBaseRepository<T>`, y nunca
   redeclara `GetByIdAsync` / `GetAllAsync` en la interfaz específica.
-- **Toda** implementación hereda de `BaseRepository<T>` con constructor primario:
+- **Por defecto**, la implementación hereda de `BaseRepository<T>` con constructor primario:
   `public class XRepository(AppDbContext db) : BaseRepository<X>(db), IXRepository`.
+- ⚠️ **Y hay excepciones legítimas, que se justifican por escrito.** `IOrderRepository` y
+  `IRefreshTokenRepository` **no heredan**: de las cinco operaciones del CRUD genérico no
+  les vale ninguna tal cual —una orden no se actualiza ni se borra, se coloca y cambia de
+  estado— y heredarlas sería exponer cinco métodos que nadie debe llamar. Heredar por
+  costumbre es peor que no heredar.
 - `_db`, `_dbSet`, `Query()` y `ApplyDefaultOrder()` son `protected` en la base;
   los métodos específicos los usan directamente.
 - Un método en la interfaz específica solo se justifica si expresa una **consulta
@@ -68,7 +73,7 @@ Semántica esperada — no cambiar sin actualizar este documento:
 
 ## La restricción `where T : class, IEntity`
 
-`Models/IEntity.cs` define dos interfaces marcadoras:
+`Shared/Persistence/IEntity.cs` define dos interfaces marcadoras:
 
 ```csharp
 public interface IEntity                 { int Id { get; } }
@@ -140,15 +145,21 @@ llama a `SaveChangesAsync()` internamente. Consecuencias:
 
 - Una operación de servicio que toque dos repositorios **no es atómica** por
   defecto.
-- `Shared/Db/TransactionalAttribute` envuelve la acción del controller en una
-  transacción con execution strategy, así que los `SaveChanges` intermedios
-  quedan dentro de la misma transacción y hacen rollback juntos.
-- **Regla:** toda acción de controller que provoque escrituras en más de un
-  repositorio lleva `[Transactional]`. Hoy lo lleva `POST /api/product/buy`.
+- **Regla:** la unidad transaccional la abre el **servicio** con `ITransactionRunner`, no
+  el controller. Dentro de ese delegado, los `SaveChanges` intermedios quedan en la misma
+  transacción y hacen rollback juntos.
+- ⚠️ **`[Transactional]` existe pero NO se usa en ninguna acción**, y no es un olvido: con
+  `EnableRetryOnFailure`, EF exige la transacción dentro de `strategy.ExecuteAsync(...)` y
+  la estrategia **reejecuta el delegado**. Un `ActionExecutionDelegate` **no es
+  reentrante**: invocarlo dos veces ejecutaría la acción dos veces. Una lambda de servicio
+  sí se puede repetir. Además la transacción es política de **negocio**, no de HTTP.
+- ⚠️ El contrato de `ITransactionRunner` es que **la operación debe ser replayable**: puede
+  ejecutarse más de una vez ante un fallo transitorio, así que no puede dar por buena
+  ninguna lectura del intento anterior.
 
-Si el proyecto crece, la evolución natural es sacar `SaveChangesAsync()` de la
-base y meter un `IUnitOfWork` explícito — pero es un cambio grande y hoy **no**
-es el diseño elegido.
+La evolución hacia un `IUnitOfWork` explícito ya ocurrió a medias y por partes:
+`IBaseRepository.SaveChangesAsync()` + `ITransactionRunner` son esa costura, y
+`OrderRepository.Add()` deliberadamente **no** guarda — manda la transacción de negocio.
 
 ### Timestamps
 
@@ -164,7 +175,7 @@ Es el equivalente a `@EnableJpaAuditing` de Spring. Un repositorio que asigne
 
 ## Registro en DI
 
-En `Shared/DependencyInjection/ServiceCollectionExtensions.cs` → `AddRepositories()`,
+En `Shared/DependencyInjection/ServiceCollectionExtensions.cs` → `AddCatalogFeature()` / `AddOrderingFeature()`,
 lifetime **Scoped** (igual que `AppDbContext`):
 
 ```csharp

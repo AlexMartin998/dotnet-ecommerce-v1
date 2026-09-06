@@ -15,7 +15,7 @@ formas de reutilizar ese CRUD, y este proyecto eligió la segunda:
 | Probar una regla | hay que construir el servicio entero con todas sus dependencias | `new CategoryRules(repoFalso)` y ya |
 | Añadir colaboradores | el constructor pelea con el de la base | uno más en el constructor |
 | Saltarse el CRUD | un `override` mal hecho lo consigue en silencio | imposible: `CrudService` es `sealed` |
-| Coste | 0 líneas por entidad | **5 reenvíos de una línea por entidad** |
+| Coste | 0 líneas por entidad | **6 reenvíos de una línea por entidad** |
 
 Ese coste de cinco líneas es el único punto a favor de la herencia, y se paga a
 cambio de que las reglas sean unidades independientes. **En la capa de servicio

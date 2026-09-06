@@ -36,13 +36,19 @@ en `AddFeatures()`, y toda la dependencia hacia `Catalog` en **una** clase (`Cat
    «unhandled exception» a nivel Error con traza. 30 compras simultáneas sobre stock 20 →
    **10 incidentes falsos**; un 404 de categoría, igual. Silenciada la línea duplicada del
    framework (`GlobalExceptionHandler` ya lo registraba, y mejor): de 10 a **0**.
-6. **Revisión multiagente** (`rules.md` §9): 🔴 `ReceiptStatus.Failed` era **inalcanzable**
+6. **Documentación regenerada contra el código** (§6.ter): `CLAUDE.md` tenía **~20
+   afirmaciones falsas** —carpetas inexistentes, nombres del composition root inventados,
+   «no hay proyecto de tests»— y ese archivo se carga en **toda** sesión. Reescrito con
+   cuatro agentes de inventario y uno intentando refutar el resultado. 🔴 Y verificarlo
+   destapó un bug: el orden por defecto de `BaseRepository` **no tenía desempate estable**,
+   así que `/paged` podía repetir filas y saltarse otras.
+7. **Revisión multiagente** (`rules.md` §9): 🔴 `ReceiptStatus.Failed` era **inalcanzable**
    (comprobante muerto en la DLQ = 409 `receipt_not_ready` eterno) → hook `OnExhaustedAsync`
    en `EventConsumer`; 🔴 **deadlock evitable** descontando stock en el orden del carrito →
    se ordenan las líneas por SKU; la canonicalización de rutas **no seguía enlaces
    simbólicos**; una barra final en `Documents:RootPath` rompía el almacén en silencio; y
    `?page=MAXINT` daba **500** en todos los `/paged` (previo).
-7. **261 tests** (eran 202), build sin warnings. Verificado ejecutando: ciclo completo
+8. **262 tests** (eran 202), build sin warnings. Verificado ejecutando: ciclo completo
    compra → evento → PDF, **30 simultáneas → 20 órdenes con 20 números únicos**, y el ciclo
    de reintentos con un fallo real → DLQ → orden `failed` (la compra sigue válida).
 
@@ -102,7 +108,7 @@ autoridad**: se trajo la *feature*, nunca el *código*.
 
 ```sh
 dotnet build                                          # build de la solución (API + tests)
-dotnet test tests/ApiEcommerce.Tests                  # 261 tests, ~85 s
+dotnet test tests/ApiEcommerce.Tests                  # 262 tests, ~85 s
 dotnet watch run --urls "http://0.0.0.0:8021"         # dev
 ASPNETCORE_ENVIRONMENT=Development dotnet ef database update
 ```
@@ -113,7 +119,7 @@ desarrollo. Tras clonar hay que poner tres valores (`ConnectionStrings:ConexionS
 `UserSecretsId` = `apiecommerce-dev-2026`. Sin la clave JWT, el arranque falla con
 `OptionsValidationException` — es lo correcto, no un fallo de configuración del entorno.
 
-**CI**: `.github/workflows/ci.yml` corre build (`-warnaserror`) + los 261 tests en cada
+**CI**: `.github/workflows/ci.yml` corre build (`-warnaserror`) + los 262 tests en cada
 push y PR, con SQL Server y Redis como `services` del runner, y construye el `Dockerfile`.
 
 ### Los tests (paso 11, fases 1–5; falta la 6, CI)
@@ -227,7 +233,7 @@ Shared/          <- transversal, de ningun dominio
   DependencyInjection/   composition root (NO registra nada)
 Data/            AppDbContext + DataSeeder
 Exceptions/      jerarquia AppException (dominio -> HTTP)
-Migrations/      EF Core (10 aplicadas)
+Migrations/      EF Core (13 aplicadas)
 AGENTS/          docs/ features/ planning/ context/ + memory.md progress.md rules.md
 notes.md         <- el log de aprendizaje del autor. MUY importante, ver §6
 ```
@@ -321,7 +327,36 @@ bloques ```sh``` con los comandos reales, y mucha separación entre capítulos. 
 portar algo del curso— **qué hacía mal el original**. Ese contraste es lo que más valora.
 Los gotchas se marcan con ⚠️. Los números medidos van con su medición.
 
-Capítulos 15–20 son la referencia de estilo más reciente.
+Los capítulos 30–36 son la referencia de estilo más reciente.
+
+---
+
+## 6.ter Una sola fuente de verdad por dato (regenerado el 2026-09-06)
+
+La documentación se reescribió contra el código porque **`CLAUDE.md` tenía ~20 afirmaciones
+falsas** —carpetas que no existían, nombres de método del composition root inventados, «no
+hay proyecto de tests» con 261 tests en verde— y ese archivo **se carga en cada sesión**,
+así que cada mentira contaminaba todas a la vez.
+
+Para que no vuelva a pasar, cada dato tiene **un solo dueño**:
+
+| Dato | Dueño |
+|---|---|
+| Arquitectura, convenciones, trampas, comandos | `CLAUDE.md` |
+| Las reglas duras, en su forma larga | `rules.md` |
+| El razonamiento de diseño (por qué composición, por qué no `virtual`…) | `docs/01`–`05` |
+| Qué está hecho y qué falta | `docs/06` + `progress.md` |
+| Punto de continuación, decisiones del owner, trampas del entorno | **este archivo** |
+| Qué se decidió en una tarea y qué quedó abierto | `planning/NN` |
+| El aprendizaje, con el gotcha y la medición | `notes.md` |
+
+⚠️ **Los conteos volátiles (tests, migraciones, endpoints) NO van en `CLAUDE.md`**: viven
+aquí y en `progress.md`, que se actualizan en el mismo commit que el código. Si vuelves a
+meter un número en `CLAUDE.md`, quedará obsoleto y nadie lo notará.
+
+⚠️ `docs/01`–`05` conservan su razonamiento —que es lo valioso— pero **sus rutas y nombres
+de método iban por detrás del código**. Se corrigieron; si vuelves a ver una ruta que no
+existe, es esto reapareciendo.
 
 ---
 
@@ -375,7 +410,7 @@ idempotencia **transaccional** (`ExecutedCommands`, en la misma transacción que
 outbox + RabbitMQ **con varias colas** —verificado de punta a punta contra un broker real—
 y un almacén de documentos privados sustituible (`IDocumentStore`).
 
-**Tests y CI**: `tests/ApiEcommerce.Tests`, **261** (unitarios + integración + concurrencia
+**Tests y CI**: `tests/ApiEcommerce.Tests`, **262** (unitarios + integración + concurrencia
 + degradación y arranque) y `.github/workflows/ci.yml`. El roadmap está **sin pendientes
 salvo el 15** (partir en proyectos, diferido a propósito); lo que queda son deudas menores,
 anotadas en §0.

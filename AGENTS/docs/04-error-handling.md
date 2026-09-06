@@ -37,12 +37,18 @@ inglés. `Message` es para humanos y puede cambiar sin romper a nadie.
 | `ConflictAppException(message)` | `conflict` | **409** | choque con el estado actual: nombre duplicado, SKU repetido | ✅ existe |
 | `UnauthorizedAppException(message)` | `unauthorized` | **401** | falta credencial o el token no es válido | ✅ existe |
 | `ForbiddenAppException(message)` | `forbidden` | **403** | autenticado pero sin permiso sobre el recurso | ✅ existe |
-| `ValidationAppException(errors)` | `validation_error` | **422** | validación de negocio con detalle por campo | ✅ existe (sin uso todavía) |
+| `ValidationAppException(errors)` | `validation_error` | **422** | validación de negocio con detalle por campo | ✅ en uso (`AuthService`) |
+| `PreconditionFailedAppException(message)` | `precondition_failed` | **412** | `If-Match` no casa con la versión actual | ✅ en uso (`ProductRules`) |
+| `IdempotencyConflictAppException(message)` | `idempotency_key_reuse` | **422** | la misma clave con un cuerpo distinto | ✅ en uso (`CommandLog`) |
 | `CustomAppException(code, msg, status)` | libre | libre | escotilla de escape para casos puntuales | ✅ existe |
 
-`UnauthorizedAppException` y `ForbiddenAppException` ya existen y ya están
-mapeadas, aunque nada las lanza todavía: empiezan a usarse **junto con JWT**
-(ver `README_init.md`).
+`UnauthorizedAppException` y `ForbiddenAppException` las lanzan hoy `AuthService` y
+`RefreshTokenService`.
+
+⚠️ **`CustomAppException` no es la escotilla perezosa que parece.** Se usa cuando el `code`
+es parte del contrato y ninguna clase existente lo aporta: `OrderService` distingue
+`receipt_not_ready` (vuelve en un momento) de `receipt_failed` (ya no va a existir), los dos
+409. Un solo código habría dejado al cliente haciendo polling eterno.
 
 Reglas del catálogo:
 

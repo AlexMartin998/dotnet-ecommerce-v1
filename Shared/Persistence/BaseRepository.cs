@@ -46,12 +46,31 @@ public class BaseRepository<T> : IBaseRepository<T> where T : class, IEntity
 
   /// <summary>
   /// Orden por defecto de los listados: lo más nuevo primero.
+  /// </summary>
+  /// <remarks>
+  /// <para>
   /// Usa <c>EF.Property</c> en vez de un cast a <see cref="IAuditable"/> porque un
   /// cast dentro del árbol de expresión no es traducible a SQL.
-  /// </summary>
+  /// </para>
+  /// <para>
+  /// ⚠️ <b>El desempate por <c>Id</c> no es cosmético: sin él, paginar está roto.</b>
+  /// <c>CreatedAt</c> no es único —lo estampa <c>DateTime.Now</c>, y varias filas creadas
+  /// en el mismo tick lo comparten; el seeding crea cinco categorías así—. Con un orden
+  /// no total, SQL Server puede devolver las filas empatadas en distinto orden en cada
+  /// consulta, y como cada página es un <c>OFFSET/FETCH</c> <b>independiente</b>, una fila
+  /// puede salir en dos páginas y otra en ninguna. La clave primaria da el orden total que
+  /// lo hace determinista.
+  /// </para>
+  /// <para>
+  /// Lo tenían escrito a mano los repositorios que paginan de verdad
+  /// (<c>ProductRepository</c>, <c>OrderRepository</c>) y faltaba justo aquí, en el camino
+  /// genérico que sirve <c>GET /api/v1/category/paged</c>.
+  /// </para>
+  /// </remarks>
   protected IQueryable<T> ApplyDefaultOrder(IQueryable<T> query)
       => IsAuditable
           ? query.OrderByDescending(e => EF.Property<DateTime>(e, nameof(IAuditable.CreatedAt)))
+                 .ThenByDescending(e => EF.Property<int>(e, nameof(IEntity.Id)))
           : query.OrderByDescending(e => EF.Property<int>(e, nameof(IEntity.Id)));
 
   public async Task<T?> GetByIdAsync(int id, CancellationToken ct = default)

@@ -24,7 +24,7 @@ Prohibido:
 - ❌ `try/catch` de excepciones de negocio → lo maneja el handler global.
 - ❌ Inyectar `IMapper`, `IXRepository` o `AppDbContext`.
 - ❌ Consultas LINQ, reglas de unicidad, cálculos de stock, etc.
-- ❌ Devolver entidades de `Models/` en el body.
+- ❌ Devolver entidades de `Features/<Slice>/Models/` en el body.
 
 ```csharp
 [HttpPost(Name = "CreateCategory")]
@@ -104,7 +104,7 @@ Prohibido:
 
 - `Models/X.cs` es la **entidad EF Core**: clave, índices, FKs, propiedades de
   navegación, `[Column(TypeName = ...)]` para precisión decimal.
-- `Models/Dtos/` es el **contrato público de la API**. Cambiar un DTO es un
+- `Features/<Slice>/Dtos/` es el **contrato público de la API**. Cambiar un DTO es un
   cambio breaking; cambiar una entidad es una migración. Son ejes distintos y
   por eso no se comparten tipos.
 - Tres DTOs por entidad, con propósitos distintos:
@@ -127,7 +127,7 @@ propiedad plana mapeada en el `Profile`.
 
 ## Mapping
 
-Un `Profile` por entidad en `Mapping/XProfile.cs`. Registrados por escaneo de
+Un `Profile` por entidad en `Features/<Slice>/Mapping/XProfile.cs`. Registrados por escaneo de
 assembly en `Program.cs`, así que **crear el archivo basta**, no hay que
 registrarlo a mano.
 
@@ -156,8 +156,8 @@ registrarlo a mano.
   formato de error). **Es la única carpeta, junto a `Controllers/`, que puede
   conocer códigos HTTP.**
 - `Shared/DependencyInjection/` — `ServiceCollectionExtensions`, el **composition
-  root**: no registra nada, compone en tres bloques (`AddApplication`,
-  `AddInfrastructure`, `AddWebApi`) los `Add…` que cada feature declara en su
+  root**: no registra nada, compone en tres bloques (`AddSharedInfrastructure`,
+  `AddFeatures`, `AddWebApi`) los `Add…` que cada feature declara en su
   propia carpeta. Ver `05-convenciones.md` → Inyección de dependencias.
 
 

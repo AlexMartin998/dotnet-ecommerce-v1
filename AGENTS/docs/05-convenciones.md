@@ -5,7 +5,7 @@ Category**, que es el de referencia.
 
 ## C# y estilo
 
-- **Namespaces file-scoped**: `namespace ApiEcommerce.Repository;`
+- **Namespaces file-scoped**: `namespace ApiEcommerce.Features.Catalog.Repository;`
 - **Namespace = carpeta**, raíz `ApiEcommerce`, carpetas de capa en singular
   (`Service`, `Repository`, `Controllers` es la excepción heredada de la plantilla).
 - **Indentación: 2 espacios** en todo salvo `Controllers/`, que usa 4 (herencia
@@ -106,7 +106,7 @@ Un `/// <summary>Gets the id.</summary>` sobre `GetId` es ruido: no se agrega.
 - En `CreateXDto` los campos obligatorios llevan `[Required]`; en `UpdateXDto`
   todo es nullable/opcional.
 - En `UpdateXDto` **todo es nullable, tipos valor incluidos** (`decimal? Price`,
-  `int? Stock`, `int? CategoryId`). Ver `01-capas-y-contratos.md` → Models/Dtos.
+  `int? Stock`, `int? CategoryId`). Ver `01-capas-y-contratos.md` → DTOs.
 - Semántica del PATCH: **omitir un campo (o enviarlo `null`) significa "no
   tocar"**. Para vaciar un campo opcional se envía `""`, no `null`.
 
@@ -253,21 +253,28 @@ services.AddOptions<JwtOptions>()
   → `dotnet ef database update`. **Revisar siempre** el archivo generado antes de
   aplicarlo; EF a veces propone un drop/recreate que pierde datos.
 - `dotnet ef migrations remove` solo deshace la última migración **no aplicada**.
-- La cadena `ConnectionStrings:ConexionSql` está hardcodeada en `appsettings.json`
-  apuntando a un contenedor SQL Server en `172.17.0.1,1434`. Es aceptable para
-  este proyecto de aprendizaje, pero **la contraseña no debería viajar en el
-  repo**: al agregar JWT, mover credenciales a user-secrets
-  (`dotnet user-secrets set`) o variables de entorno.
+- ✅ **Ya hecho**: ningún secreto viaja en el repo. `appsettings.json` y
+  `appsettings.Development.json` se commitean con **configuración no sensible** y las
+  claves vacías; la cadena de conexión, `Jwt:SecretKey` y `Seed:AdminPassword` viven en
+  **user-secrets** (`UserSecretsId = apiecommerce-dev-2026`) o en variables de entorno
+  (`Jwt__SecretKey`, doble guion bajo por cada `:`). Puesta en marcha: `README_init.md`.
 
 ## Verificación
 
-No hay proyecto de tests ni linter: **`dotnet build` es el único check**.
-Correrlo tras cada cambio estructural, y `dotnet watch run --urls "http://0.0.0.0:8021"`
-para probar contra Swagger (`/swagger/index.html`, solo en `Development`).
+El suelo son tres cosas: **`dotnet build` sin warnings** (la CI compila con
+`-warnaserror`), **`dotnet test tests/ApiEcommerce.Tests` en verde**, y
+**probar ejecutando** lo que toque concurrencia, dependencias externas o el arranque —
+peticiones simultáneas, con la dependencia caída, y con `ASPNETCORE_ENVIRONMENT=Production`.
 
-Cuando se agreguen tests, el destino es un proyecto hermano `ApiEcommerce.Tests`
-con xUnit o MSTest + Moq sobre las interfaces (`IXRepository`), patrón AAA
-(Arrange-Act-Assert), cubriendo camino feliz y cada excepción de dominio.
-**Empezar por las clases `XRules`**: son las que concentran la lógica, dependen
-solo de un repositorio y se instancian con un mock en una línea. Eso es
-exactamente lo que se ganó al componer el CRUD en vez de heredarlo.
+✅ **El proyecto de tests ya existe** (`tests/ApiEcommerce.Tests`, xUnit + Moq +
+`Mvc.Testing`) y la profecía se cumplió: se empezó por `CategoryRules`/`ProductRules`, que
+se instancian con un mock en una línea — exactamente lo que se ganó al componer el CRUD en
+vez de heredarlo.
+
+⚠️ **FluentAssertions NO se usa** aunque la skill la pida: desde la v8 exige licencia
+comercial. `Assert` de xunit basta.
+⚠️ Los de integración levantan la API entera contra **SQL Server y Redis reales**, con base
+y prefijo propios. Van **sin paralelismo** (comparten base), y se configuran con
+`UseSetting`, **nunca** con `ConfigureAppConfiguration`: varias piezas leen la config
+*eager* para decidir qué implementación registran, y eso ocurre antes de esos callbacks —
+el host arrancaba con las implementaciones nulas y los tests pasaban sin probar nada.

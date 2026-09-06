@@ -9,7 +9,7 @@ paginación y seeding.
 
 | Componente | Estado | Nota |
 | --- | --- | --- |
-| `AppDbContext` + migraciones | ✅ | 10 migraciones aplicadas (la última, `AddOrdering`); auditoría automática en `SaveChangesAsync` |
+| `AppDbContext` + migraciones | ✅ | 13 migraciones aplicadas (la última, `AddOrdering`); auditoría automática en `SaveChangesAsync` |
 | `IEntity` / `IAuditable` | ✅ | implementadas por `Category` y `Product`; sin reflexión en los genéricos |
 | `IBaseRepository<T>` / `BaseRepository<T>` | ✅ | `where T : class, IEntity`, `CancellationToken`, orden genérico por `CreatedAt` |
 | `CategoryRepository` | ✅ | `NameExistsAsync(excludeId)`, `HasProductsAsync` |
@@ -28,7 +28,7 @@ paginación y seeding.
 | `TransactionalAttribute` | ✅ | aplicado a `POST /api/v1/product/buy`; efectivo desde que `AddPersistence` activa `EnableRetryOnFailure` |
 | AutoMapper | ✅ | `CategoryProfile`, `ProductProfile`; `MappingProfile` retirado (comentado) |
 | Validación de DTOs | ✅ | DataAnnotations completas en los 5 DTOs de entrada |
-| Registro de DI | ✅ | un `XExtensions.cs` por feature, en su carpeta; `Shared/DependencyInjection/` es solo composition root (`AddApplication`/`AddInfrastructure`/`AddWebApi`) |
+| Registro de DI | ✅ | un `XxxExtensions.cs` por feature, en su carpeta; `Shared/DependencyInjection/` es solo composition root (`AddSharedInfrastructure`/`AddFeatures`/`AddWebApi`) |
 | `CancellationToken` extremo a extremo | ✅ | controller → servicio → repositorio → EF |
 | Identity + JWT | ✅ | `ApplicationUser`, `AddIdentityCore`, `JwtOptions` validado con `ValidateOnStart` |
 | `AuthController` | ✅ | `register` / `login` / `me`, rol fijo `user` en el registro |
@@ -59,7 +59,7 @@ paginación y seeding.
 | Idempotencia de la config | ✅ | validación condicional de `SeedOptions`; `ValidateOnStart` en todas las secciones |
 | `UseForwardedHeaders` | ✅ | el rate limiter particiona por la IP real, no por la del proxy |
 | Sonda de backlog del outbox | ✅ | `outbox-backlog` → `Degraded` si hay eventos que agotaron reintentos; el umbral sale de `RabbitMq:MaxPublishAttempts`, el mismo que aplica el publicador |
-| Tests | ✅ | `tests/ApiEcommerce.Tests`: **261** (unitarios + integración + concurrencia + degradación y arranque) |
+| Tests | ✅ | `tests/ApiEcommerce.Tests`: **262** (unitarios + integración + concurrencia + degradación y arranque) |
 
 ## Lo que se verificó (2026-08-30)
 
@@ -229,9 +229,10 @@ así que decidirlo en `GlobalExceptionHandler` llega tarde.
 
 ### Paso 9 — Partir en proyectos (cuando duela, no antes)
 
-Los tres bloques del composition root (`AddApplication` / `AddInfrastructure` /
-`AddWebApi`) son ya las costuras: `ApiEcommerce.Api` / `.Infrastructure` /
-`.Application` (+ `.Domain`). Hoy la dirección de dependencias es una convención;
+Los tres bloques del composition root (`AddSharedInfrastructure` / `AddFeatures` /
+`AddWebApi`) son ya las costuras, y con el vertical slicing la línea de corte más natural
+ya no es por capa técnica sino **por contexto acotado**: `ApiEcommerce.Api` +
+un proyecto por slice + `.Shared`. Hoy la dirección de dependencias es una convención;
 partir en proyectos la convierte en algo que impone el compilador. **No es
 urgente**: hacerlo antes de que el proyecto lo pida solo añade fricción.
 
@@ -300,6 +301,9 @@ test.
   modelo usa hora local, y `UpdatedAt` recién estampado se serializa con offset
   mientras el leído de base sale sin él. Es una migración de todo a la vez:
   entidades, DTOs y datos.
+- **El orden por defecto ya tiene desempate estable** (`BaseRepository.ApplyDefaultOrder`,
+  `CreatedAt` desc + clave primaria). ⚠️ Un repositorio que escriba su propio `OrderBy`
+  tiene que repetirlo: sin orden total, paginar repite filas y se salta otras.
 - **Listados sin paginar.** `GET /api/v1/category` y `GET /api/v1/product` siguen
   trayendo la tabla entera; existen `/paged` al lado. El siguiente paso es
   deprecarlos por versión (`v2` sin ellos), no borrarlos, que sería breaking.
