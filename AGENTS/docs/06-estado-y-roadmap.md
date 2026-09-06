@@ -122,41 +122,34 @@ registran** no ven lo que inyecta `ConfigureAppConfiguration` — hay que usar
 `UseSetting`. Es el precio del patrón que este documento bendice en otro sitio, y
 conviene tenerlo presente al añadir otra decisión de registro por configuración.
 
-### Paso 8 — Deuda conocida de la revisión de 2026-08-30 (no cerrada)
+### Paso 8 — Deuda de la revisión de 2026-08-30 — ✅ **cerrada** (2026-09-06)
 
-Tres revisiones con `dotnet-best-practices` sobre concurrencia, mensajería e
-infraestructura. Los P0 y los P1 baratos están corregidos; **esto es lo que se
-dejó abierto a propósito**, para que nadie lo descubra creyendo que es nuevo:
+Todo lo que se dejó abierto a propósito está hecho. Lo que se decidió y por qué:
 
-- **Reintentos del consumidor sin contador real.** `args.Redelivered` es una
-  bandera del broker, no un contador: son 2 intentos como máximo y sin backoff.
-  Lo correcto es una *retry queue* con `x-message-ttl` que dead-letterea de vuelta
-  a la principal, leyendo `x-death[0].count`. Se quitó `MaxDeliveryAttempts` de la
-  configuración por no dejar una opción muerta que documenta algo que no ocurre.
-- **`OutboxPublisher` sin claim: con más de una réplica publica duplicados.** El
-  `SELECT` no tiene `UPDLOCK`/`READPAST` ni columna de reserva, así que dos
-  instancias leen el mismo lote. No corrompe (el consumidor deduplica) pero dobla
-  el tráfico. Antes de correr con varias réplicas: `sp_getapplock` o un
-  `UPDATE ... OUTPUT` que reserve el lote.
-- **Sin limpieza de `OutboxMessages` ni de `ProcessedMessages`.** Crecen sin
-  límite; hace falta un job de purga de lo ya procesado.
-- **Sin backoff ni camino de vuelta para un mensaje agotado.** Ahora que una caída
-  del broker ya no gasta intentos, los que llegan a `MaxPublishAttempts` son de
-  verdad mensajes malos — pero se reintentan cada 5 s hasta agotarse (sin espera
-  creciente) y, una vez agotados, **no hay forma de revivirlos desde la aplicación**:
-  solo un `UPDATE` a mano. Falta `NextAttemptAt` (backoff exponencial) y un endpoint
-  de administración para reintentar o descartar.
-- **`RowVersion` no cierra el *lost update* entre dos administradores.** El token
-  no se expone en `ProductDto` ni se acepta en `UpdateProductDto`, así que el
-  PATCH usa el que acaba de leer. Cerrarlo es publicarlo como `ETag` y exigir
-  `If-Match`. El XML doc de `Product.RowVersion` ya dice exactamente qué garantiza
-  y qué no.
-- **La clave de idempotencia no incluye un hash del cuerpo.** La misma clave con
-  otro payload reproduce la respuesta del primero en silencio; lo estándar
-  (Stripe) es guardar el hash y devolver 422 si no coincide.
-- **`AutoMapper 15.1.1` exige licencia comercial en producción** (avisa por log al
-  arrancar). Es una decisión de producto pendiente: comprar licencia, fijar
-  AutoMapper ≤ 13.x (última MIT), o migrar a Mapperly. Ver `05-convenciones.md`.
+| Deuda | Cómo se cerró |
+|---|---|
+| Reintentos del consumidor sin contador real | Cola de espera con `x-message-ttl` que dead-letterea de vuelta; el contador sale de `x-death[].count`. **Topología nueva**, sin tocar la cola principal: redeclararla con otros argumentos da **406** y obligaría a borrarla en producción |
+| `OutboxPublisher` sin claim | **`sp_getapplock` exclusivo**, no un claim por filas: el claim deja drenar en paralelo y eso destruye la garantía de orden. Serializar un trabajo de fondo con lote acotado no cuesta nada |
+| Orden del outbox por reloj | Columna `Sequence` (`bigint IDENTITY`): un único árbitro y desempate real |
+| Sin purga | `OutboxCleaner`, retención configurable, borrado en tandas. **Nunca toca lo no procesado** |
+| `RowVersion` no cierra el *lost update* | `ETag` en el GET + `If-Match` en el PATCH → **412**. Opcional, para no romper a los clientes actuales |
+| Idempotencia sin hash del cuerpo | SHA-256 de los argumentos enlazados, guardado **desde la reserva**; clave reutilizada con otro cuerpo → **422** |
+| Sin OpenTelemetry | Trazas y métricas + `X-Correlation-Id`. **Se instrumenta siempre, se exporta solo si hay endpoint** |
+| Sin CI | `.github/workflows/ci.yml`, con `-warnaserror` y un job que construye la imagen |
+| `UseHsts()` | Añadido fuera de Development |
+| Tres conexiones a Redis | Un solo multiplexer para la cache, el store de idempotencia y el health check |
+
+**Lo único que queda es una decisión de producto**, no técnica: la **licencia de
+AutoMapper** (la 15.1.1 exige licencia comercial en producción y avisa por log).
+Opciones: comprar, fijar ≤13.x (última MIT), o migrar a Mapperly. Afecta a
+`05-convenciones.md`.
+
+**Deuda nueva que abrió este trabajo**, anotada para no descubrirla creyéndola vieja:
+- El *replay* de idempotencia re-serializa el cuerpo memorizado y no es idéntico **byte
+  a byte** al que escribe MVC. Equivalente para cualquier cliente que parsee JSON;
+  garantizarlo exigiría capturar lo que MVC escribe de verdad.
+- El publicador mantiene una transacción abierta mientras publica al broker. El lote está
+  acotado, pero conviene medirlo si el lote crece.
 
 ### Paso 9 — Partir en proyectos (cuando duela, no antes)
 
