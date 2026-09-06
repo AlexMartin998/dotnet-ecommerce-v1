@@ -25,10 +25,18 @@ Contrato: [`features/09_eventos-de-dominio.feature`](../features/09_eventos-de-d
 ## Verificado (sin broker)
 Compras con el broker caído → 3×200, eventos persistidos, publicador reintentando.
 
-## Pendiente
-- [ ] **Levantar RabbitMQ** con `docker-compose.fragment.yml` y ejecutar los `@broker`.
-- [ ] Reintentos del consumidor con **contador real** (`args.Redelivered` es una bandera,
-      no un contador: son 2 intentos sin backoff). Hace falta *retry queue* con
-      `x-message-ttl` y leer `x-death[0].count`. → [`12`](12_deuda-revision-multiagente.md)
-- [ ] **Claim en el outbox**: con más de una réplica, dos publicadores leen el mismo lote.
-- [ ] **Purga** de `OutboxMessages` procesados y de `ProcessedMessages`.
+## Pendiente — **ninguno**. Todo cerrado; se deja el rastro de dónde
+
+- [x] **Levantar RabbitMQ** y ejecutar los `@broker`. → hecho el 2026-09-05 contra un
+      broker real; esa verificación destapó un P0 que el build y el smoke test no veían.
+- [x] Reintentos del consumidor con **contador real**. → [`12`](12_deuda-revision-multiagente.md)
+      §12.1 (cola de espera con `x-message-ttl`), y luego
+      [`18`](18_deuda-de-mensajeria.md) §18.2, que cambió `x-death` por una cabecera
+      nuestra: la del broker sobrevive al paso por la DLQ y dejaba sin presupuesto a los
+      mensajes reencolados por un operador.
+- [x] **Claim en el outbox**. → [`12`](12_deuda-revision-multiagente.md) §12.1, resuelto con
+      `sp_getapplock` exclusivo. Verificado con dos réplicas reales: 15 eventos, 7 y 8,
+      cero duplicados.
+- [x] **Purga** de `OutboxMessages` y `ProcessedMessages`. → `OutboxCleaner`
+      ([`12`](12_deuda-revision-multiagente.md) §12.1). Desde
+      [`17`](17_idempotencia-transaccional.md) purga también `ExecutedCommands`.
