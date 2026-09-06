@@ -46,4 +46,15 @@
     <None Remove="AGENTS/**" />
   </ItemGroup>
 
+  <!-- MISMO motivo que AGENTS/**: el glob implícito del SDK compila TODO el .cs que
+       cuelgue de esta carpeta, así que sin esto el proyecto de tests se compilaría
+       DENTRO de la API — arrastrando xunit y Moq a la imagen de producción, y
+       provocando una referencia circular con su propio ProjectReference. -->
+  <ItemGroup>
+    <Compile Remove="tests/**" />
+    <Content Remove="tests/**" />
+    <EmbeddedResource Remove="tests/**" />
+    <None Remove="tests/**" />
+  </ItemGroup>
+
 </Project>
