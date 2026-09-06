@@ -27,8 +27,17 @@ WORKDIR /app
 # HEALTHCHECK de abajo resolvería `curl: not found` (exit 127) y el contenedor
 # quedaría `unhealthy` PARA SIEMPRE — bloqueando cualquier `depends_on:
 # condition: service_healthy` que apunte a este servicio.
+#
+# ⚠️ libfontconfig1 es para QuestPDF: en Linux dibuja con SkiaSharp, que la necesita para
+# resolver fuentes. Sin ella, generar un comprobante lanza dentro del consumidor y el
+# mensaje acaba en la DLQ — y el fallo aparece SOLO dentro del contenedor, porque en local
+# la librería ya está. Es el peor sitio para descubrir una dependencia nativa.
+#
+# NO hacen falta fuentes del sistema: QuestPDF embebe la suya (Lato) en el paquete, y por
+# eso el renderizador no pide ninguna familia concreta. Instalar fonts-* aquí sería peso
+# muerto — y peor, invitaría a pedir una fuente que quizá no esté en el siguiente entorno.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl libfontconfig1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app .
@@ -42,6 +51,12 @@ COPY --from=build /app .
 # Identity (reset de contraseña, confirmación de email) se invalidan en cada reinicio
 # y no valen entre réplicas.
 RUN mkdir -p /app/wwwroot/ProductsImages && chown -R $APP_UID:$APP_UID /app/wwwroot
+
+# Comprobantes. ⚠️ FUERA de wwwroot y esto no es cosmético: dentro, UseStaticFiles los
+# serviría a cualquiera que adivinara la ruta, sin pasar por autenticación. Se sirven por
+# GET /api/v1/order/{id}/receipt, que comprueba de quién es la orden.
+# También va como volumen en compose, o cada redespliegue se lleva los comprobantes.
+RUN mkdir -p /app/App_Data/documents && chown -R $APP_UID:$APP_UID /app/App_Data
 
 USER $APP_UID
 

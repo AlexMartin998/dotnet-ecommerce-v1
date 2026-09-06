@@ -185,7 +185,8 @@ services.AddScoped<ICategoryService, CategoryService>();
   de entidad, reglas): el contexto vive lo que dura el request y capturarlo en un
   singleton corrompería el change tracker.
 - **Singleton** para lo que no guarda estado por request y solo depende de otros
-  singletons: `IJwtTokenService`, `ICacheService`, `IFileStorage`.
+  singletons: `IJwtTokenService`, `ICacheService`, `IFileStorage`, `IDocumentStore`,
+  `IReceiptRenderer`.
 - **El mismo servicio se registra con el mismo lifetime en todas sus ramas.** Si
   un registro condicional da `Scoped` en una rama y `Singleton` en otra, se crea
   una mina: un consumidor singleton funcionará en el entorno de una rama y

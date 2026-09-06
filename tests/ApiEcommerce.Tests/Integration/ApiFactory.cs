@@ -53,6 +53,17 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
   private static string Env(string name, string fallback)
       => Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value : fallback;
 
+  /// <summary>
+  /// Carpeta de comprobantes de la corrida. <b>Temporal y propia</b>.
+  /// </summary>
+  /// <remarks>
+  /// ⚠️ Sin esto, <c>Documents:RootPath</c> es relativo al content root, o sea el
+  /// directorio del proyecto: cada corrida dejaría PDFs dentro del repo. Y siendo una
+  /// carpeta por corrida, dos suites en paralelo tampoco se pisan.
+  /// </remarks>
+  private static readonly string DocumentsRoot =
+      Path.Combine(Path.GetTempPath(), $"apiecommerce-tests-docs-{Guid.NewGuid():N}");
+
   private static string SqlHost => Env("TEST_SQL_HOST", "172.17.0.1");
   private static string SqlPort => Env("TEST_SQL_PORT", "1434");
   private static string SqlPassword => Env("TEST_SQL_PASSWORD", "YourStrong@Passw0rd");
@@ -127,6 +138,11 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
           ["RateLimit:GlobalPermitLimit"] = "1000000",
           ["RateLimit:AuthPermitLimit"] = "1000000",
 
+          // Comprobantes fuera del repo. El proveedor va explícito para que este host
+          // pruebe el MISMO camino que producción y no una rama distinta.
+          ["Documents:Provider"] = "filesystem",
+          ["Documents:RootPath"] = DocumentsRoot,
+
           ["Serilog:MinimumLevel:Default"] = "Warning",
         };
 
@@ -143,7 +159,14 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     using var _ = CreateClient();
   }
 
-  public new Task DisposeAsync() => Task.CompletedTask;
+  public new Task DisposeAsync()
+  {
+    // La base NO se borra al terminar (si algo falla, el estado queda para mirarlo), pero
+    // los ficheros sí: son basura del sistema de ficheros del host, no evidencia.
+    if (Directory.Exists(DocumentsRoot)) Directory.Delete(DocumentsRoot, recursive: true);
+
+    return Task.CompletedTask;
+  }
 
   // ---- clientes -----------------------------------------------------------
 

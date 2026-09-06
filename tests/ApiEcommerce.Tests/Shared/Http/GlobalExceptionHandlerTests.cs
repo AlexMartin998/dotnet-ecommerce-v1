@@ -5,6 +5,7 @@ using ApiEcommerce.Shared.Observability;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -25,14 +26,15 @@ public class GlobalExceptionHandlerTests
              .Callback<ProblemDetailsContext>(c => _written = c.ProblemDetails)
              .ReturnsAsync(true);
 
-  private async Task<HttpContext> HandleAsync(Exception exception)
+  private async Task<HttpContext> HandleAsync(
+      Exception exception, ILogger<GlobalExceptionHandler>? logger = null)
   {
     var context = new DefaultHttpContext();
     context.Request.Method = "POST";
     context.Request.Path = "/api/v1/product";
 
     var sut = new GlobalExceptionHandler(
-        NullLogger<GlobalExceptionHandler>.Instance, _problemDetails.Object);
+        logger ?? NullLogger<GlobalExceptionHandler>.Instance, _problemDetails.Object);
 
     Assert.True(await sut.TryHandleAsync(context, exception, CancellationToken.None));
     return context;
@@ -194,5 +196,56 @@ public class GlobalExceptionHandlerTests
     await sut.TryHandleAsync(context, new Exception("boom"), CancellationToken.None);
 
     Assert.Equal("CID-DEL-CLIENTE", _written!.Extensions["correlationId"]);
+  }
+
+  // ---- registro en el log --------------------------------------------------
+  //
+  // ⭐ Estos dos tests son la red de una decisión de CONFIGURACIÓN, no de código: desde
+  // 2026-09-06 el logger del `ExceptionHandlerMiddleware` del framework está silenciado
+  // en `appsettings.json` (escribía "An unhandled exception has occurred" a nivel Error
+  // TAMBIÉN para los 4xx: medido, 10 rechazos por falta de stock = 10 incidentes falsos
+  // con traza completa). A partir de ahí, **este handler es el ÚNICO que registra las
+  // excepciones**, y que deje de hacerlo no rompería ningún test... salvo estos.
+
+  [Fact]
+  public async Task AnUnmappedException_IsLoggedAsAnErrorWithItsStackTrace()
+  {
+    var logger = new Mock<ILogger<GlobalExceptionHandler>>();
+
+    await HandleAsync(new InvalidOperationException("algo se rompió de verdad"), logger.Object);
+
+    // La excepción va COMO EXCEPCIÓN y no interpolada en el mensaje: es lo que hace que
+    // la traza acabe en el log. Sin ella, un 500 sería una línea sin dónde mirar.
+    logger.Verify(l => l.Log(
+        LogLevel.Error,
+        It.IsAny<EventId>(),
+        It.IsAny<It.IsAnyType>(),
+        It.Is<Exception>(e => e is InvalidOperationException),
+        It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
+  }
+
+  [Fact]
+  public async Task ADomainException_IsAWarningAndNotAnError()
+  {
+    // Quedarse sin stock es el resultado NORMAL de una compra concurrente. Registrarlo
+    // como Error llena de incidentes falsos justo el log que hay que leer cuando pasa
+    // algo de verdad.
+    var logger = new Mock<ILogger<GlobalExceptionHandler>>();
+
+    await HandleAsync(new ConflictAppException("Insufficient stock for SKU 'X'."), logger.Object);
+
+    logger.Verify(l => l.Log(
+        LogLevel.Error,
+        It.IsAny<EventId>(),
+        It.IsAny<It.IsAnyType>(),
+        It.IsAny<Exception>(),
+        It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Never);
+
+    logger.Verify(l => l.Log(
+        LogLevel.Warning,
+        It.IsAny<EventId>(),
+        It.IsAny<It.IsAnyType>(),
+        It.IsAny<Exception>(),
+        It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
   }
 }

@@ -6,6 +6,7 @@ using ApiEcommerce.Features.Catalog.Messaging;
 using ApiEcommerce.Shared.Caching;
 using ApiEcommerce.Shared.Crud;
 using ApiEcommerce.Shared.Messaging;
+using ApiEcommerce.Shared.Messaging.RabbitMq;
 using ApiEcommerce.Shared.Persistence;
 
 namespace ApiEcommerce.Features.Catalog;
@@ -32,6 +33,9 @@ public static class CatalogExtensions
   public static IServiceCollection AddCatalogFeature(
       this IServiceCollection services, IConfiguration configuration)
   {
+    var rabbit = configuration.GetSection(RabbitMqOptions.SectionName).Get<RabbitMqOptions>()
+                 ?? new RabbitMqOptions();
+
     // ---- repositorios ------------------------------------------------------
     services.AddScoped<ICategoryRepository, CategoryRepository>();
     services.AddScoped<IProductRepository, ProductRepository>();
@@ -75,7 +79,17 @@ public static class CatalogExtensions
     // delante — que es justo lo que faltaba para cubrir el P0 del consumidor.
     services.AddScoped<IProductPurchasedHandler, LowStockNotifier>();
 
-    services.AddEventConsumer<ProductPurchasedConsumer>(configuration);
+    // La cola es del SLICE: dice a qué reacciona el catálogo. Shared/Messaging solo pone
+    // el mecanismo y la condición de "hay broker".
+    //
+    // ⚠️ Los nombres salen de RabbitMqOptions y la dead-letter es la HEREDADA
+    // (`{Exchange}.dlx`), no una por cola como en los slices nuevos. No es incoherencia:
+    // esta cola ya existe en los brokers con ese `x-dead-letter-exchange`, y redeclararla
+    // con otro da 406 PRECONDITION_FAILED y deja la mensajería abajo. Cambiarlo exige
+    // borrar la cola, que es una parada — y no compensa por estética.
+    services.AddEventConsumer<ProductPurchasedConsumer>(
+        configuration,
+        new EventSubscription(rabbit.Queue, rabbit.RoutingKey, rabbit.DeadLetterExchange));
 
     return services;
   }

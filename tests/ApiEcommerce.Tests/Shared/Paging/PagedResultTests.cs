@@ -54,4 +54,23 @@ public class PagedResultTests
     Assert.Equal(137, empty.TotalItems);
     Assert.True(empty.HasPrevious);
   }
+
+  // ---- PageQuery -----------------------------------------------------------
+
+  [Theory]
+  [InlineData(1, 10, 0)]
+  [InlineData(3, 10, 20)]
+  [InlineData(int.MaxValue, 100, int.MaxValue)]
+  [InlineData(int.MaxValue, 1, int.MaxValue - 1)]
+  public void Skip_NeverOverflowsIntoANegativeOffset(int page, int pageSize, int expected)
+  {
+    // ⚠️ `(Page - 1) * PageSize` en `int` DESBORDA con `?page=2147483647`: el resultado es
+    // negativo y SQL Server responde «The offset specified in a OFFSET clause may not be
+    // negative» — un 500 con traza a partir de un query string, en TODOS los endpoints
+    // paginados. Lo destapó una revisión de seguridad probándolo.
+    var query = new PageQuery { Page = page, PageSize = pageSize };
+
+    Assert.Equal(expected, query.Skip);
+    Assert.True(query.Skip >= 0);
+  }
 }

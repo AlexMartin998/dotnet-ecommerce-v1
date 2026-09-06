@@ -3038,3 +3038,298 @@ Pero renovar la sesion NO vuelve a pedir credenciales.
        contra `UserRoles` — **no** subir el pageSize
   - -- el test de "sin credenciales" se afirma sobre el **JSON crudo**, no sobre el tipo: lo
        que hay que impedir es el campo añadido "por comodidad" a un DTO
+
+
+
+
+<br>
+
+
+
+
+## 35. Ordenes y su comprobante  <- el PDF no se genera en la peticion
+
+- --- ⭐ **La decision que ordena todas las demas**
+```
+comprar -> orden en BD  +  evento en el outbox   (misma transaccion, responde YA)
+                              |
+                              v  RabbitMQ
+                         consumidor -> dibuja el PDF -> lo guarda -> marca la orden
+```
+  - -- generar un documento **tarda**, y una compra ya cobrada no puede depender de que el
+       generador este vivo ni de que sea rapido
+  - -- por eso `OrderPlaced` sale por el **outbox que ya existia**: escribir el evento es
+       parte de la transaccion de la compra. O hay orden y evento, o no hay ninguno
+  - -- el cliente recibe la orden con `receiptStatus: "pending"` y pregunta despues. Sin ese
+       campo, "todavia no esta" y "fallo" serian **indistinguibles**
+
+- --- **Lo que se copia se CONGELA** (precio, nombre, SKU, y tambien los datos del cliente)
+  - -- si mañana sube el precio o se renombra el producto, el comprobante de ayer tiene que
+       seguir diciendo lo que se cobro de verdad
+  - -- un documento que cambia cuando cambia el catalogo no es comprobante de nada
+  - -- `LineTotal` se guarda aunque sea `UnitPrice x Quantity`: es lo que se **imprimio**.
+       Recalcularlo al leer parece mas limpio hasta que cambia el redondeo y todos los
+       comprobantes antiguos cuadran mal por un centimo
+  - -- `OrderItem.ProductId` va **sin clave foranea**, a proposito: si un producto se borra,
+       la orden tiene que sobrevivir. Una FK obligaria a elegir entre impedir el borrado o
+       borrar la historia de compras
+
+- --- **El numero de orden sale de una SECUENCIA de SQL Server**
+```sql
+SELECT NEXT VALUE FOR OrderNumbers      -- atomico y sin bloquear
+```
+  - -- `MAX(Number) + 1` es leer-y-escribir: dos compras simultaneas se llevan el mismo
+       numero, contra un indice unico -> una revienta
+  - -- ⚠️ la secuencia **no se reinicia por año**. El año sale de la fecha, asi que en 2027
+       los numeros siguen subiendo. Reiniciarla exigiria un trabajo anual que alguien
+       olvidaria
+  - -- **medido**: 30 compras simultaneas sobre stock 20 -> 20 ordenes con **20 numeros
+       unicos** + 10x409. Cero repetidos
+
+- --- **Dos almacenes de ficheros, y NO se fusionan**
+```
+IFileStorage    -> imagenes de producto  -> DENTRO de wwwroot -> las sirve UseStaticFiles
+IDocumentStore  -> comprobantes          -> FUERA de wwwroot  -> los sirve un endpoint
+```
+  - -- un comprobante lleva el nombre del cliente, su direccion y lo que pago. Bajo
+       `wwwroot/` lo descargaria **cualquiera que adivinara la ruta**, sin pasar por
+       autenticacion
+  - -- dos necesidades opuestas no caben detras de la misma abstraccion por mucho que las
+       dos "guarden ficheros". La pregunta no es "¿que hace?" sino "¿quien puede leerlo?"
+
+- --- **La base guarda una CLAVE OPACA, no una ruta** (esto es lo que permite el cambio de infra)
+```
+mal:  /app/App_Data/documents/2026/09/x.pdf   <- al migrar a S3, reescribir TODAS las filas
+bien: 2026/09/cdfdcf87c326aadb22845f2f46c8c691.pdf
+```
+  - -- quien llama la guarda y la devuelve; no puede construirla, interpretarla ni
+       convertirla en ruta. Solo la entiende `IDocumentStore`
+  - -- la parte aleatoria son 16 bytes de un CSPRNG: **no se deriva de la orden ni del
+       usuario**. Si fuera deducible, cualquier despiste futuro en el control de acceso
+       pasaria de filtrar un documento a filtrarlos todos
+  - -- carpetas por año/mes no es estetica: un solo directorio con cientos de miles de
+       ficheros hace lento hasta un `ls`
+  - -- cambiar a S3 / R2 / MinIO / Cloudinary = **escribir otra implementacion y una linea
+       en `AddDocumentStorage`**. Ni el dominio, ni el consumidor, ni el controller cambian
+  - -- ⚠️ un `Provider` desconocido **tumba el arranque**. Caer al disco ante un `"s3"` mal
+       escrito seria escribir comprobantes en un contenedor efimero creyendo que estan en el
+       bucket, y enterarse en el primer reinicio, con los comprobantes ya perdidos
+
+- --- **Tres barreras para el acceso, y hacen falta las tres**
+  - -- fuera de `wwwroot` (no hay URL publica que adivinar)
+  - -- clave aleatoria (no se deduce)
+  - -- el endpoint comprueba **de quien es la orden**
+  - -- la de otro devuelve **404 y no 403**: "existe pero no es tuya" ya filtra que existe, y
+       con ids correlativos eso permite contar las ordenes de la tienda desde fuera
+  - -- comprobante que aun no esta: **409 con `code: receipt_not_ready`**, no 404. Un 404 le
+       dice al cliente que deje de pedirlo; el 409 le dice que vuelva en un momento
+
+- --- 🔴 **Un bug que solo se vio descargando: el fichero llegaba con el nombre de la clave**
+```
+Content-Disposition: attachment; filename=cdfdcf87c326aadb22845f2f46c8c691.pdf
+```
+  - -- el almacen devolvia lo unico que sabe del documento. **Como se llama de cara al
+       usuario es conocimiento del DOMINIO**, no de la infraestructura
+  - -- lo pone el servicio: `content with { FileName = $"{order.Number}.pdf" }`
+  - -- guardarlo en el almacen para poder devolverlo seria meter presentacion en la
+       infraestructura, y obligaria a cada proveedor futuro a tener donde ponerlo
+
+- --- **QuestPDF: validar la propuesta, no aceptarla**
+  - -- **licencia**: Community es gratuita, tambien comercialmente, con ingresos brutos
+       anuales **por debajo de 1.000.000 USD** (90 dias de transicion al superarlo). Se mira
+       PRIMERO por lo que paso con AutoMapper 15, que empezo a exigir licencia con el
+       proyecto ya montado. ⚠️ es un umbral, no un "gratis para siempre"
+  - -- composicion en C#, no HTML->PDF: sin navegador headless que empaquetar ni proceso
+       externo que se cuelgue. Las alternativas eran iText7 (AGPL o licencia **desde el
+       primer dia**) y wkhtmltopdf/Chromium (arranque por documento)
+  - -- ⚠️ **la licencia se declara al ARRANCAR o lanza al GENERAR**: sin cuidarlo, la API
+       arranca sana y los comprobantes fallan **uno a uno** dentro del consumidor, cinco
+       reintentos y a la DLQ cada uno
+  - -- ⚠️ en Linux dibuja con SkiaSharp: hace falta **`libfontconfig1`** en la imagen. La
+       `aspnet` no la trae, y sin ella revienta **solo dentro del contenedor**
+  - -- ⚠️ **sin `FontFamily` explicita.** Se pedia Calibri, que **no existe en Linux**.
+       QuestPDF **embebe** su fuente por defecto (Lato) en el paquete: comprobado en el PDF
+       generado, `MediaBox [0 0 595 842]` y subsets `Lato-Regular/Bold/SemiBold` dentro. Con
+       una fuente del sistema, dos replicas producirian documentos distintos de la misma orden
+  - -- cultura **invariante** en el documento, no la del servidor: si no, el mismo
+       comprobante sale con coma o con punto decimal segun la maquina que lo genere
+
+- --- **El broker servia a UN consumidor, y eso no se veia hasta el segundo**
+```
+publicador: BasicPublishAsync(mandatory: true) con publisher confirms
+   -> un evento que no encaja con NINGUNA cola vuelve como 312 NO_ROUTE
+   -> el outbox lo cuenta como intento fallido -> se agota en MaxPublishAttempts
+   => la compra funciona y el comprobante NO se genera NUNCA
+```
+  - -- `RabbitMqOptions` tenia `Queue` y `RoutingKey`: una cola. Ahora cada slice declara su
+       `EventSubscription` y `RabbitMqConnection` declara la topologia de **todas**
+  - -- ⚠️ la cola del catalogo se declara con los argumentos **EXACTOS de hoy**. Cambiar el
+       `x-dead-letter-exchange` de una cola existente da **406 PRECONDITION_FAILED** y deja
+       la mensajeria abajo — la misma trampa que `RetryDelaySeconds`. Por eso el DLX es un
+       **campo** de la suscripcion y no una formula: el catalogo conserva el heredado y los
+       slices nuevos usan uno por cola
+  - -- ⚠️ y una DLX **por cola**: la heredada es `fanout`, asi que dos colas apuntando a ella
+       repartirian cada mensaje muerto a las DOS dead-letters. Es el mismo defecto que el
+       reintento copiandose a todas las colas de espera (cap. 31)
+  - -- `EventSubscriptionOf<TConsumer>`: si el consumidor pidiera `EventSubscription` a
+       secas, con dos registradas recibiria **la ultima**, y el fallo seria un consumidor
+       escuchando la cola de otro. Cerrado por tipo, el que se equivoque **no compila**
+
+- --- **Se HEREDA para reutilizar mecanismo** (y aqui si tocaba)
+  - -- toda la fonteneria AMQP —ack manual, deduplicacion, reintentos con espera, DLQ,
+       prefetch— sale a `EventConsumer<TConsumer, TEvent>`
+  - -- la alternativa era **copiar 200 lineas** por consumidor, y varias de ellas son
+       arreglos de bugs que costaron encontrarse: el reintento al exchange por defecto, los
+       publisher confirms antes del ack, el contador propio de intentos
+  - -- con dos copias, el proximo arreglo entra en una y la otra se queda con el bug. Cada
+       consumidor concreto queda en **10 lineas**: que evento escucha y quien lo atiende
+
+- --- **El efecto, fuera del `BackgroundService`** (la leccion del cap. 31, aplicada de entrada)
+  - -- `IReceiptGenerator` corre **dentro** de la transaccion del inbox: si lanza, la marca
+       de "procesado" se deshace con el y el mensaje se reintenta
+  - -- por vivir fuera del consumidor se puede preguntar "¿que pasa si el almacen falla?"
+       con un mock, sin broker delante
+  - -- ⚠️ **el fichero se escribe dentro de la transaccion y NO se deshace con ella.** Si el
+       commit falla queda un PDF huerfano. Se acepta **en esta direccion**: un huerfano es
+       basura recolectable (nadie lo apunta, no se alcanza sin su clave); un comprobante
+       perdido es un cliente sin su documento. Escribir despues de confirmar mueve el
+       problema al otro lado y ahi SI se pierden documentos
+  - -- si la orden ya tiene clave, no se regenera: **segunda red bajo la del inbox**, y no es
+       redundante — el inbox deduplica por `MessageId`, y un replay manual desde la DLQ llega
+       con otro id
+
+- --- 🔴 **Y lo que aparecio midiendo: 10 "errores" que eran el funcionamiento normal**
+```
+30 compras simultaneas sobre stock 20:
+   20 ordenes OK  +  10 x 409 "sin stock"
+   ... y 10 lineas [ERR] "An unhandled exception has occurred" CON TRAZA COMPLETA
+```
+  - -- un 404 de categoria hacia **lo mismo**: o sea que **no era de este slice**, venia de
+       antes. Es la misma familia del cap. 32 y se le escapo — aquello miro los cortes de
+       cliente y los timeouts de base, no las excepciones de **dominio**
+  - -- la linea del framework es ademas un **duplicado**: `GlobalExceptionHandler` ya
+       registra todo, y mejor (Error con traza para >=500, Warning de una linea para 4xx, y
+       las dos con el `CorrelationId`)
+  - -- ⚠️ `ExceptionHandlerOptions.SuppressDiagnosticsCallback`, que es lo suyo para esto, es
+       de **.NET 10**. Aqui el runtime es 9 -> se silencia por configuracion:
+```json
+"Microsoft.AspNetCore.Diagnostics.ExceptionHandlerMiddleware": "Fatal"
+```
+  - -- se pone `Fatal` porque **Serilog no tiene nivel `None`** (eso es de
+       `Microsoft.Extensions.Logging`) y ese middleware nunca escribe Fatal
+  - -- ⚠️ **y una trampa dentro de la trampa**: dentro de `MinimumLevel:Override` **no se
+       pueden poner claves `//`**. Serilog resuelve CADA clave como nombre de logger y el
+       arranque muere con `No LoggingLevelSwitch has been declared with name "..."`. El
+       comentario tiene que vivir un nivel mas arriba
+  - -- resultado: **de 10 "errores" a 0**, y los mismos hechos como Warning de una linea
+  - -- ⚠️ como ahora el handler es el **UNICO** que registra excepciones, dos tests nuevos
+       fijan que lo siga haciendo. Sin ellos, quitar ese log no rompe nada... y perdemos
+       todas las trazas de 500
+
+- --- ✏️ **Una consecuencia del replay que conviene tener dicha**
+  - -- repetir la compra con la misma `Idempotency-Key` devuelve la respuesta **original**,
+       o sea `receiptStatus: "pending"` aunque el comprobante ya este listo
+  - -- es lo correcto (reproducir, no recalcular — es lo que hace Stripe) y el estado actual
+       se ve con un `GET /api/v1/order/{id}`. Pero quien lo lea del replay se lleva un dato viejo
+
+- --- **Detalles que no son obvios**
+  - -- las lineas repetidas del carrito se **agrupan antes** de apartar stock: dos veces el
+       mismo SKU produciria dos lineas identicas en el comprobante. Cuadra en total, pero el
+       documento queda raro y el cliente llama preguntando
+  - -- "no existe" y "no hay bastante" dan **el mismo 409**: distinguirlos convierte el
+       checkout en un inventario consultable desde fuera
+  - -- `PlaceOrderDto` **no lleva precios**: los pone el servidor desde el catalogo. Un precio
+       que viaja en el cuerpo es un precio que elige el cliente
+  - -- el `Order` no hereda `BaseRepository<T>`: una orden **no se actualiza ni se borra**, se
+       coloca y cambia de estado. De las cinco operaciones del CRUD generico no vale ninguna
+  - -- el host de tests corre **sin broker**, asi que el consumidor no existe alli: la
+       generacion se dispara llamando al **efecto**, que es determinista. Lo otro —que el
+       evento llegue por AMQP— se verifico a mano contra el broker real
+  - -- ⚠️ `Documents:RootPath` es **relativo al content root**: sin sobreescribirlo en los
+       tests, cada corrida dejaria PDFs dentro del repo
+  - -- el volumen de comprobantes en compose **no es opcional**: la base guarda la clave, asi
+       que sin volumen las ordenes seguirian diciendo "disponible" mientras el fichero se fue
+       con el contenedor — un 404 permanente
+  - -- ⚠️ **los numeros de orden pueden tener HUECOS**: una secuencia no se deshace con el
+       rollback (es su forma de no bloquear), asi que una compra fallida o un reintento de
+       EF se llevan un numero. Para un comprobante interno da igual; para una **factura**
+       hay legislaciones que exigen correlatividad **sin huecos**, y eso ya no es una
+       secuencia — es una tabla de contadores por serie bloqueada dentro de la transaccion
+
+- --- 🔴 **Lo que encontro la revision multiagente** (`rules.md` §9) — nada de esto lo veian ni el build ni 246 tests
+```
+1) ReceiptStatus.Failed era INALCANZABLE
+   el estado existia, estaba migrado... y no lo escribia NADIE
+   -> comprobante muerto en la DLQ = 409 "receipt_not_ready" PARA SIEMPRE
+   -> el cliente haciendo polling eterno sobre algo que no va a existir
+```
+  - -- el `catch` de cada intento **no** puede marcarlo: seria mentir mientras quedan
+       reintentos. El unico momento en que "ya no habra mas" es cierto es **el nack final**
+  - -- por eso `EventConsumer` gana un `OnExhaustedAsync`, y `OrderPlacedConsumer` marca ahi
+  - -- ⚠️ el aviso va **antes** del nack (morir despues deja el hecho sin registrar) y
+       **no puede lanzar**: si lanzara, el mensaje no llegaria a la DLQ, que es justo el
+       sitio del que se recupera
+  - -- ⚠️ y solo marca **si no hay clave**: el aviso puede cruzarse con un replay que si
+       termino bien, y marcaria como fallido un comprobante que se esta descargando
+  - -- leccion, otra vez la del cap. 34: **un estado que nadie escribe es un campo que
+       miente**. Al añadir un enum, preguntarse quien pone CADA valor
+
+```
+2) DEADLOCK evitable: el stock se descontaba en el orden del CARRITO
+   A compra [SKU-1, SKU-2]   ->  bloquea 1, pide 2
+   B compra [SKU-2, SKU-1]   ->  bloquea 2, pide 1     -> 1205
+```
+  - -- cada descuento toma un lock de fila que dura **hasta el commit**, y aqui el commit
+       esta lejos (secuencia, INSERT, outbox, marca del comando)
+  - -- se sobrevive —1205 es transitorio y EF reintenta— pero rehaciendo la compra entera,
+       y con contencion alta se agotan los reintentos y sale un 500
+  - -- **arreglo de una linea**: `.OrderBy(l => l.Sku)`. Con un orden total y global de
+       adquisicion de locks, el deadlock deja de ser **posible por construccion**
+  - -- es exactamente el tipo de fallo de `rules.md` §7: no se ve probando de uno en uno
+
+- --- **Y tres mas, todas de "el comentario decia que si y no era verdad"**
+  - -- ⚠️ **`Path.GetFullPath` NO sigue los enlaces simbolicos.** Normaliza `.` y `..`, nada
+       mas. Con `2026 -> ../secretos` dentro del almacen, la ruta normalizada empieza por la
+       raiz, **pasa el filtro** y lee fuera. El revisor lo reprodujo. Ahora se resuelve
+       **segmento a segmento**: un enlace en un directorio intermedio saca la ruta igual, y
+       `ResolveLinkTarget` solo mira el ultimo componente
+  - -- ⚠️ **una barra final en `Documents:RootPath` rompia el almacen entero, en silencio**:
+       `GetFullPath` la CONSERVA y la comprobacion concatena otra, asi que ninguna clave
+       pasaba. Guardar lanzaba, abrir devolvia null: **todos los comprobantes en 404
+       permanente** mientras la orden decia "available". Un caracter en un fichero de config
+  - -- ⚠️ **`?page=2147483647` -> 500**: `(Page-1)*PageSize` desborda a negativo y SQL Server
+       rechaza un OFFSET negativo. En **todos** los `/paged`, y es previo. Se satura, y una
+       pagina fuera de rango vuelve a ser 200 con `[]`, que es la regla que ya estaba escrita
+
+- --- **Menores de la misma tanda**
+  - -- el change tracker quedaba **sucio** tras el `catch` de intencion duplicada: la
+       transaccion se deshace sola, el tracker no. Se limpia en `TransactionRunner` —el
+       dueño del ciclo—, asi que arregla tambien `ProductService`
+  - -- `OpenAsync` tenia un **TOCTOU**: `File.Exists` y luego abrir. Si desaparece entremedias
+       salia `FileNotFoundException` -> **500**, cuando la interfaz promete `null`. Se abre
+       directamente y se atrapa `IOException`
+  - -- un fallo a mitad de `SaveAsync` dejaba un PDF **truncado**. Ya se aceptan huerfanos,
+       pero uno corrupto es otra cosa: se borra donde se sabe
+  - -- el PDF se servia **sin `Cache-Control: no-store`**. Las caches compartidas ya quedan
+       fuera por `Authorization` (RFC 9111), pero el disco del navegador no: un documento con
+       nombre, direccion e importe cacheado en un equipo compartido
+  - -- la raiz del almacen **se rechaza al arrancar si cae dentro de `wwwroot`**. Es la
+       premisa entera de la feature y no la comprobaba nada: era una cadena en un fichero
+
+- --- ⭐ **Y una verificacion que se daba por imposible y no lo era**
+```
+"el ciclo de reintentos con un fallo REAL exige tumbar SQL Server, que es compartido"
+   -> NO. Basta apuntar Documents:RootPath a una ruta sin permiso de escritura.
+      Falla el efecto y no se toca nada mas.
+```
+```
+[WRN] Failed to process 9ae80b8b... (attempt 1/2); retrying in 2s
+[ERR] Failed to process 9ae80b8b... after 2 attempt(s) -> DLQ
+```
+  - -- la orden paso a **`failed`** y la descarga devolvio **409 `receipt_failed`**
+  - -- **la compra siguio siendo valida** (`paid`, total y lineas intactos): que no se pueda
+       imprimir un papel no invalida algo ya cobrado
+  - -- el mensaje muerto aparecio en `order-placed.dlq` (1) y **no** en
+       `product-purchased.dlq` (0): la DLX por cola hace lo que promete
+  - -- leccion: antes de escribir "no se pudo verificar", buscar **que otra dependencia
+       puedes romper** para provocar el mismo camino. Casi siempre hay una mas barata

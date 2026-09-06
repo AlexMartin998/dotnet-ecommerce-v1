@@ -4,7 +4,7 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-06** (administración de usuarios; el roadmap queda sin pendientes salvo el 15).
+Última actualización: **2026-09-06** (órdenes y comprobante en PDF: cuarto contexto acotado).
 
 ---
 
@@ -31,6 +31,7 @@
 | 17 | Idempotencia transaccional | ✅ | [`features/17`](features/17_idempotencia-transaccional.feature) · [`planning/17`](planning/17_idempotencia-transaccional.md) | `b9f62aa` |
 | 18 | Deuda de mensajería | ✅ | [`features/18`](features/18_mensajeria-robusta.feature) · [`planning/18`](planning/18_deuda-de-mensajeria.md) | `a77b5df` |
 | 19 | Errores bajo carga | ✅ | [`planning/19`](planning/19_errores-bajo-carga.md) | `347f901` |
+| 20 | **Órdenes y comprobante en PDF** | ✅ | [`features/20`](features/20_ordenes-y-comprobante.feature) · [`planning/20`](planning/20_ordenes-y-comprobante.md) | — |
 
 **Ya no queda ningún ⚠️.** El 09 se cerró el 2026-09-05 contra un RabbitMQ real, y esa
 verificación destapó un bug que el build y el smoke test no veían (abajo).
@@ -38,6 +39,85 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 ---
 
 ## 2. Bitácora
+
+### 2026-09-06 — Órdenes, y el comprobante que no se genera en la petición
+
+`planning/20`, y lo primero: **`Ordering` es el cuarto contexto acotado** y el primero que
+se añade con el slicing ya asentado. Costó lo que tenía que costar — crear la carpeta y una
+línea en `AddFeatures()` — y toda la dependencia hacia `Catalog` cabe en **una** clase
+(`CatalogGateway`), que es la prueba de que el puerto valía la pena.
+
+**El diseño lo ordenan tres frases**: el PDF **no se genera en la petición** (evento por el
+outbox y un consumidor aparte, porque una compra ya cobrada no puede depender de que el
+generador esté vivo); la base guarda una **clave opaca** y no una ruta (si guardara
+`/app/App_Data/.../x.pdf`, migrar a S3 obligaría a reescribir todas las filas); y lo que se
+copia en la orden **se congela**, porque un documento que cambia cuando cambia el catálogo
+no es comprobante de nada.
+
+**Dos almacenes de ficheros, y no se fusionan.** `IFileStorage` guarda imágenes *dentro* de
+`wwwroot` para que `UseStaticFiles` las sirva a cualquiera: son públicas y esa es su gracia.
+Un comprobante lleva el nombre del cliente, su dirección y lo que pagó. La pregunta que los
+separa no es «¿qué hace?» sino **«¿quién puede leerlo?»**. Tres barreras, y hacen falta las
+tres: fuera de `wwwroot`, clave aleatoria de un CSPRNG, y el endpoint comprobando de quién
+es la orden.
+
+🔴 **Lo que había que resolver por debajo, y no era código de órdenes**: `Shared/Messaging`
+servía a **una** cola. Publicar un segundo evento sin tocarlo fallaba en silencio — el
+publicador usa `mandatory: true` con confirms, así que `order.placed` volvía como **312
+NO_ROUTE**, el outbox lo contaba como intento fallido y se agotaba: la compra funcionaría y
+el comprobante **no se generaría nunca**. Ahora cada slice declara su `EventSubscription` y
+la fontanería AMQP se hereda de `EventConsumer<TConsumer,TEvent>` — 200 líneas que, copiadas,
+habrían dejado los arreglos de `planning/18` en una sola de las dos copias.
+⚠️ Con dos cuidados que son bugs evitados, no estética: la cola del catálogo se declara con
+sus argumentos **exactos de hoy** (cambiar su `x-dead-letter-exchange` da 406 y tumba la
+mensajería) y cada slice nuevo lleva **su propia DLX**, porque la heredada es `fanout` y
+repartiría los mensajes muertos de uno a la dead-letter del otro.
+
+🔴 **Y midiendo apareció algo anterior a esta tarea**: cada 4xx de dominio escribía un
+«An unhandled exception has occurred» a nivel **Error y con traza completa**. Medido: 30
+compras simultáneas sobre stock 20 → 20 órdenes correctas y **10 incidentes falsos**, uno
+por rechazo legítimo. Un 404 de categoría hacía lo mismo, o sea que venía de antes y a
+`planning/19` se le escapó — aquello miró los cortes de cliente y los timeouts de base, no
+las excepciones de dominio. La línea del framework era además **un duplicado**:
+`GlobalExceptionHandler` ya registraba todo, y mejor. Silenciada por configuración: de 10
+«errores» a **0**.
+⚠️ `SuppressDiagnosticsCallback` es de .NET 10; aquí hay que hacerlo con un
+`MinimumLevel:Override` a `Fatal`, porque Serilog no tiene nivel `None`. Y dentro de
+`Override` **no caben comentarios `//`**: Serilog resuelve cada clave como nombre de logger
+y el arranque muere. Lo cazó ejecutando, no compilando.
+
+✏️ **Y dos correcciones propias, las dos vistas ejecutando y no leyendo.** El comprobante se
+descargaba con el nombre de la clave opaca (`cdfdcf87….pdf`): el almacén devolvía lo único
+que sabe, pero cómo se llama un documento **de cara al usuario** es del dominio. Y se pedía
+la fuente Calibri, que **no existe en Linux** — se quita, y el documento usa la que QuestPDF
+**embebe**; verificado en el PDF: A4 y tres subsets de Lato dentro, así que sale igual en
+local que en la imagen.
+
+**Verificado ejecutando** contra SQL Server, Redis y RabbitMQ reales: el ciclo entero compra
+→ evento → PDF (31 KB), 30 compras simultáneas dando **20 números de orden únicos**, 22
+órdenes con sus 22 comprobantes, la misma `Idempotency-Key` devolviendo la misma orden, y
+409/404/401 donde tocan.
+
+**Y la revisión multiagente (`rules.md` §9) encontró cinco cosas que ni el build ni los 246
+tests veían**, dos de ellas serias: 🔴 **`ReceiptStatus.Failed` era inalcanzable** —el estado
+existía, estaba migrado y no lo escribía nadie— así que un comprobante muerto en la DLQ
+dejaba al cliente con un 409 `receipt_not_ready` **para siempre**, o sea haciendo polling
+sobre un documento que no iba a existir; y 🔴 **un deadlock evitable**, porque el stock se
+descontaba en el orden del carrito (A compra `[1,2]`, B compra `[2,1]`, cada uno bloquea el
+primero y espera el del otro). Se arreglan con un hook `OnExhaustedAsync` —el único momento
+en que «ya no habrá más intentos» es cierto— y ordenando las líneas por SKU, que hace el
+deadlock imposible por construcción. Más: la canonicalización de rutas **no seguía enlaces
+simbólicos** aunque el comentario decía que sí (reproducido por el revisor), una barra final
+en `Documents:RootPath` rompía el almacén entero en silencio, y `?page=2147483647` daba un
+**500** en todos los `/paged` por desbordamiento — este último, previo.
+
+✅ **Y algo que se daba por no verificable, se verificó**: el ciclo de reintentos con la
+generación fallando de verdad. No hacía falta tumbar SQL Server, bastaba una raíz de almacén
+sin permiso de escritura. Medido: 2 intentos → DLQ → la orden pasa a `failed` → 409
+`receipt_failed`, **con la compra intacta** (`paid`, total y líneas), y el mensaje muerto en
+la DLQ de órdenes y **no** en la del catálogo.
+
+**261 tests** en verde (eran 202), build sin warnings.
 
 ### 2026-09-06 — Administrar usuarios, y el agujero que eso destapó
 

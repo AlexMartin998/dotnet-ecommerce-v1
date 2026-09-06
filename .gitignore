@@ -416,3 +416,6 @@ Thumbs.db
 # Imagenes subidas en runtime: no son codigo fuente.
 wwwroot/ProductsImages/*
 !wwwroot/ProductsImages/.gitkeep
+
+# Comprobantes generados en local. Van FUERA de wwwroot (son privados) y no se versionan.
+App_Data/

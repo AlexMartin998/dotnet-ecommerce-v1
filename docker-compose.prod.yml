@@ -78,6 +78,11 @@ services:
     volumes:
       # Sin esto, cada redespliegue borra las imágenes de producto ya subidas.
       - apiecommerce_images:/app/wwwroot/ProductsImages
+      # Y los comprobantes. ⚠️ Este volumen NO es opcional: la base guarda la clave del
+      # documento, así que sin él las órdenes seguirían diciendo que su comprobante está
+      # "disponible" mientras el fichero se fue con el contenedor — un 404 permanente al
+      # descargar. Va fuera de wwwroot: son privados y se sirven por endpoint.
+      - apiecommerce_documents:/app/App_Data/documents
     networks:
       - backend
 
@@ -88,3 +93,4 @@ networks:
 
 volumes:
   apiecommerce_images:
+  apiecommerce_documents:

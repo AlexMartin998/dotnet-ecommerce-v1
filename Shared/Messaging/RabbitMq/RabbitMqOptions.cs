@@ -18,11 +18,19 @@ public sealed class RabbitMqOptions
   [Required]
   public string Exchange { get; init; } = "apiecommerce.events";
 
-  /// <summary>Cola que consume este servicio.</summary>
+  /// <summary>Cola que consume el <b>catálogo</b>.</summary>
+  /// <remarks>
+  /// ⚠️ Sigue aquí solo por compatibilidad con los despliegues que ya la traen en su
+  /// configuración. <b>Un consumidor nuevo NO añade una opción aquí</b>: declara su
+  /// <see cref="EventSubscription"/> en su propio slice y se la pasa a
+  /// <c>AddEventConsumer</c>. Meter cada cola en esta clase haría que <c>Shared</c>
+  /// tuviera que conocer todos los slices, que es justo la dependencia que el vertical
+  /// slicing evita.
+  /// </remarks>
   [Required]
   public string Queue { get; init; } = "apiecommerce.product-purchased";
 
-  /// <summary>Patrón de routing keys al que se suscribe la cola.</summary>
+  /// <summary>Patrón de routing keys al que se suscribe la cola del catálogo.</summary>
   [Required]
   public string RoutingKey { get; init; } = "product.purchased";
 
@@ -62,33 +70,18 @@ public sealed class RabbitMqOptions
 
   public bool IsEnabled => !string.IsNullOrWhiteSpace(ConnectionString);
 
-  public string DeadLetterExchange => $"{Exchange}.dlx";
-  public string DeadLetterQueue => $"{Queue}.dlq";
-
-
-  /// <summary>
-  /// Cola de espera: no la consume nadie. Su único trabajo es <b>caducar</b> los mensajes
-  /// para que el broker los devuelva a la cola principal.
-  /// </summary>
+  /// <summary>Dead-letter <b>heredada</b> del catálogo.</summary>
   /// <remarks>
-  /// <para>
-  /// ⚠️ <b>El nombre lleva el TTL dentro, y eso es lo que hace configurable
-  /// <see cref="RetryDelaySeconds"/>.</b> El TTL vive en <c>x-message-ttl</c>, que se fija
-  /// al declarar la cola: cambiarlo sobre una cola existente da <b>406
-  /// PRECONDITION_FAILED</b> y cierra el canal, así que desplegar un plazo nuevo obligaba
-  /// a borrar la cola en producción <i>con sus mensajes dentro</i>. Con el plazo en el
-  /// nombre, cambiarlo declara una cola <b>nueva</b>: despliegue aditivo, sin parada, y la
-  /// vieja se vacía sola porque su dead-letter sigue apuntando a la principal.
-  /// </para>
-  /// <para>
-  /// El precio es una cola huérfana por cada plazo que se haya usado. Se ven en la UI,
-  /// están vacías y se borran a mano cuando estorben — mucho más barato que una parada.
-  /// </para>
-  /// <para>
-  /// ⚠️ Se descartó la alternativa de poner el TTL <b>en el mensaje</b>: en una cola FIFO,
-  /// un mensaje con TTL largo bloquea a todos los de detrás aunque ya hayan caducado
-  /// (head-of-line blocking), porque el broker solo mira la cabeza.
-  /// </para>
+  /// ⚠️ No se toca ni se generaliza: las colas ya declaradas en los brokers la llevan en
+  /// su <c>x-dead-letter-exchange</c>, y redeclarar una cola con otro valor da <b>406
+  /// PRECONDITION_FAILED</b>. Los slices nuevos usan una DLX por cola
+  /// (<see cref="EventSubscription.For"/>), que además evita que el <c>fanout</c> reparta
+  /// los mensajes muertos de un slice a la DLQ del otro.
   /// </remarks>
-  public string RetryQueue => $"{Queue}.retry.{RetryDelaySeconds}s";
+  public string DeadLetterExchange => $"{Exchange}.dlx";
+
+  // DeadLetterQueue y RetryQueue vivían aquí. Se han movido a EventSubscription porque son
+  // de UNA cola, no del broker: con dos consumidores, estas propiedades solo podían
+  // describir a uno de los dos. Su documentación —el porqué del TTL en el nombre— se fue
+  // con ellas.
 }
