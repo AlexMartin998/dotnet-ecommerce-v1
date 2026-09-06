@@ -151,6 +151,44 @@ public sealed class LocalDocumentStore : IDocumentStore
     return Task.CompletedTask;
   }
 
+  public async IAsyncEnumerable<DocumentEntry> ListAsync(
+      DateTime writtenBefore,
+      [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+  {
+    if (!Directory.Exists(_root)) yield break;
+
+    // EnumerateFiles y no GetFiles: devuelve perezosamente, así que un almacén con muchos
+    // ficheros no se materializa entero en memoria antes de mirar el primero.
+    foreach (var path in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
+    {
+      ct.ThrowIfCancellationRequested();
+
+      FileInfo info;
+
+      try
+      {
+        info = new FileInfo(path);
+
+        // Se lee `LastWriteTime` y no `CreationTime`: en varios sistemas de ficheros la
+        // fecha de creación no se mantiene al copiar o restaurar un volumen, y aquí una
+        // fecha demasiado antigua significa "bórralo".
+        if (info.LastWriteTime >= writtenBefore) continue;
+      }
+      catch (IOException)
+      {
+        continue;   // desapareció mientras enumerábamos: no es nuestro problema
+      }
+
+      // La clave es la ruta relativa a la raíz, con '/' — la misma forma que devolvió
+      // SaveAsync. Devolver la ruta absoluta convertiría al recolector en alguien que
+      // conoce el disco, que es justo lo que la clave opaca evita.
+      yield return new DocumentEntry(
+          Path.GetRelativePath(_root, path).Replace(Path.DirectorySeparatorChar, '/'),
+          info.LastWriteTime,
+          info.Length);
+    }
+  }
+
   /// <summary>Borra si está. Idempotente y sin carrera entre el <c>Exists</c> y el borrado.</summary>
   private static void TryDelete(string path)
   {

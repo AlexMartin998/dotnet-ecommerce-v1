@@ -316,7 +316,7 @@ roadmap. Cada `Scenario` debería poder convertirse en un test.
 ## 11. Verificación — el suelo innegociable
 
 - **`dotnet build` limpio (0 warnings, 0 errores)** tras cada cambio estructural.
-- **`dotnet test tests/ApiEcommerce.Tests` en verde** (262 tests). Los de integración
+- **`dotnet test tests/ApiEcommerce.Tests` en verde** (274 tests). Los de integración
   necesitan SQL Server y Redis arriba; usan base y prefijo propios y no tocan los de
   desarrollo. GitHub Actions corre ambos en cada push y PR (`.github/workflows/ci.yml`).
 - **Lo que toque concurrencia, dependencias externas o el arranque se prueba de verdad**,

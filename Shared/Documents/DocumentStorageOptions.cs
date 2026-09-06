@@ -41,4 +41,28 @@ public sealed class DocumentStorageOptions
   /// </remarks>
   [Required]
   public string RootPath { get; init; } = "App_Data/documents";
+
+  /// <summary>
+  /// Cada cuánto pasa el recolector de huérfanos. <b>0 lo apaga.</b>
+  /// </summary>
+  /// <remarks>
+  /// Poder apagarlo sin desplegar no es un lujo: es un job que <b>borra ficheros</b>, y ante
+  /// cualquier sospecha lo primero que uno quiere es pararlo.
+  /// </remarks>
+  [Range(0, 168)]
+  public int CleanupIntervalHours { get; init; } = 12;
+
+  /// <summary>
+  /// Cuánto tiene que llevar escrito un documento antes de que se pueda considerar huérfano.
+  /// </summary>
+  /// <remarks>
+  /// ⚠️ 🔴 <b>Es la única propiedad de todo el recolector que no se puede equivocar.</b> El
+  /// documento se escribe <b>dentro</b> de la transacción que lo referencia, así que existe
+  /// un rato antes de que exista la fila que lo apunta. Sin gracia, el recolector borraría
+  /// comprobantes <b>buenos a mitad de vuelo</b> — y un comprobante borrado no vuelve.
+  /// El valor por defecto está tres órdenes de magnitud por encima de esa ventana a
+  /// propósito: aquí lo barato es esperar y lo caro es acertar por poco.
+  /// </remarks>
+  [Range(1, 720)]
+  public int OrphanGraceHours { get; init; } = 24;
 }

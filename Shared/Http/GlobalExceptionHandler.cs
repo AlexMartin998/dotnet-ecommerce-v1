@@ -150,6 +150,13 @@ public sealed class GlobalExceptionHandler(
     // filtraba mensajes internos del ORM al cliente, porque Detail solo se censura a
     // partir de 500. Que caiga a 500, que es lo que realmente es.
 
+    // El broker no está. No es culpa de quien llama ni un fallo nuestro: es una
+    // dependencia caída, y **es reintentable** — el handler añade `Retry-After` a todo 503.
+    // Solo llega aquí desde los endpoints de administración de mensajería; el outbox la
+    // trata por su cuenta y nunca la deja escapar a HTTP.
+    Messaging.BrokerUnavailableException => (HttpStatusCode.ServiceUnavailable,
+        "broker_unavailable", "Messaging is unavailable"),
+
     UnauthorizedAccessException => (HttpStatusCode.Unauthorized, "unauthorized", "Unauthorized"),
     OperationCanceledException => ((HttpStatusCode)499, "client_closed_request", "Client closed request"),
 

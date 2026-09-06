@@ -59,7 +59,7 @@ paginación y seeding.
 | Idempotencia de la config | ✅ | validación condicional de `SeedOptions`; `ValidateOnStart` en todas las secciones |
 | `UseForwardedHeaders` | ✅ | el rate limiter particiona por la IP real, no por la del proxy |
 | Sonda de backlog del outbox | ✅ | `outbox-backlog` → `Degraded` si hay eventos que agotaron reintentos; el umbral sale de `RabbitMq:MaxPublishAttempts`, el mismo que aplica el publicador |
-| Tests | ✅ | `tests/ApiEcommerce.Tests`: **262** (unitarios + integración + concurrencia + degradación y arranque) |
+| Tests | ✅ | `tests/ApiEcommerce.Tests`: **274** (unitarios + integración + concurrencia + degradación y arranque) |
 
 ## Lo que se verificó (2026-08-30)
 
@@ -294,6 +294,22 @@ simbólicos, una barra final en `Documents:RootPath` rompía el almacén en sile
 `?page=2147483647` daba un 500 en **todos** los `/paged` (previo). Todo corregido y con
 test.
 
+### Paso 11.ter — Recuperar de la DLQ y recoger basura — ✅ **hecho** (2026-09-06)
+
+Detalle en [`planning/21`](../planning/21_recuperar-comprobantes-y-recoger-basura.md).
+Cierra las dos deudas de `planning/20`: un comprobante que agotaba sus reintentos dejaba la
+orden en `failed` —correcto— pero **reemitirlo exigía entrar al broker a mano**, y el
+almacén no tenía quien recogiera lo que nadie apunta.
+
+`GET /api/v1/dead-letter` + `POST /{queue}/replay` (solo admin; la cola llega en la petición
+y se valida contra las suscripciones registradas, que son una **allowlist por
+construcción**), y un recolector de huérfanos con **periodo de gracia** — la única línea de
+todo esto que no se puede equivocar, porque el PDF se escribe dentro de la transacción y
+existe antes que la fila que lo referencia.
+
+Verificado ejecutando el ciclo completo contra RabbitMQ real: morir → verlo en la DLQ →
+arreglar → reemitir → la orden vuelve a `available` con su PDF.
+
 ### Paso 12 — Deudas conocidas y anotadas
 
 - **`DateTime.Now` → `DateTimeOffset`/UTC.** Ya se nota la inconsistencia: los
@@ -319,16 +335,13 @@ test.
 - **La retención de `ExecutedCommands` va con `Outbox:RetentionDays`**, que ahora
   gobierna tres tablas. ⚠️ Ese plazo tiene que cubrir el peor reintento de un
   cliente: a partir de ahí, la misma clave vuelve a ejecutar de verdad.
-- **Documentos huérfanos.** El comprobante se escribe dentro de la transacción del inbox
-  y un fichero no se deshace con ella: si el commit falla, queda un PDF que ninguna orden
-  referencia. Es la dirección correcta del error (basura recolectable frente a un
-  comprobante perdido), pero falta el job que recolecte. Y desde el arreglo de `SaveAsync`
-  puede haber además alguno **truncado**, que el recolector tendría que distinguir. Hoy no
-  hay volumen que lo justifique.
-- **Nadie consume la DLQ.** El aviso de «agotado» ya marca la orden como `failed`, así que
-  el cliente deja de esperar; pero el mensaje se queda en la dead-letter y reemitir un
-  comprobante es una operación manual. Un endpoint de administración que lo reencole es lo
-  natural, y encaja con `RetryAttempts`, que ya permite el replay desde la DLQ.
+- ✅ **Documentos huérfanos y salida de la DLQ: cerrado** en `planning/21`. Hay recolector
+  (con periodo de gracia, porque el fichero existe antes que la fila que lo apunta) y
+  endpoint de administración para reemitir. Un PDF truncado **no** necesitaba caso especial:
+  como `SaveAsync` nunca devolvió clave, cae por la misma regla.
+- **Nadie ALERTA cuando la DLQ crece.** Ya se puede consultar y vaciar, pero hay que mirar.
+  La sonda `outbox-backlog` hace algo parecido para el outbox y sería su gemela; se deja
+  fuera porque alertar sin destinatario no es alertar.
 - **La transacción del inbox sigue abierta durante el render del PDF.** No sostiene locks
   (el `SELECT` los suelta al terminar la sentencia y el `UPDATE` viene después), así que hoy
   el coste es una conexión del pool ocupada. Vale la pena mirarlo si se sube el prefetch o

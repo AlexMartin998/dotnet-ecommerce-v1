@@ -283,6 +283,7 @@ Rutas **versionadas por segmento**: `[Route("api/v{version:apiVersion}/[controll
 | `AuthController` | `register`, `login`, `refresh`, `logout`, `logout-all`, `password`, `me` |
 | `UserController` | listado, detalle, roles, bloqueo — todo `admin` |
 | `OrderController` | `POST /order`, `GET /{id}`, `GET /paged`, **`GET /{id}/receipt`** (PDF) |
+| `DeadLetterController` | `GET /dead-letter`, `POST /{queue}/replay` — solo `admin` |
 | `HealthController` | `GET /health` — `[ApiVersionNeutral]` |
 
 - ⚠️ **Varios `[Authorize]` se COMBINAN (AND)**, no se sobreescriben. Solo
@@ -375,7 +376,16 @@ EventConsumer<TConsumer,TEvent>
   pone el mecanismo. Un consumidor nuevo declara su `EventSubscription` y la pasa a
   `AddEventConsumer<T>(config, subscription)`.
 - **El efecto vive fuera del `BackgroundService`** (`IProductPurchasedHandler`,
-  `IReceiptGenerator`) para que se pueda probar sin broker. Es la lección de `planning/18`.
+  `IReceiptGenerator`, `IOrphanReceiptCollector`) para que se pueda probar sin broker ni
+  esperar horas. Es la lección de `planning/18`.
+- **De la DLQ se sale**: `IDeadLetterAdmin` expone recuentos y reemisión
+  (`GET /api/v1/dead-letter`, `POST /{queue}/replay`, solo admin). ⚠️ El nombre de la cola
+  llega en la petición, así que se valida contra las suscripciones **registradas** —
+  allowlist por construcción; sin ella el endpoint movería mensajes de cualquier cola del
+  broker, que es compartido. Y al reemitir **el contador de intentos vuelve a cero**, o el
+  mensaje moriría en la primera entrega y la herramienta no recuperaría nada.
+- **Reemitir es una decisión humana, no un job**: si algo agotó sus intentos es porque
+  estaba roto de verdad, y automatizarlo esconde el incidente.
 
 ⚠️ **Un evento sin cola que lo acepte no falla, se pierde de vista**: el publicador usa
 `mandatory: true` con confirms, así que vuelve como **312 NO_ROUTE**, el outbox lo cuenta
@@ -415,6 +425,12 @@ mucho que las dos «guarden ficheros». La pregunta que las separa no es «¿qu�
 **«¿quién puede leerlo?»**.
 ⚠️ Lo que se persiste es **la clave, nunca la ruta**: guardar `/app/App_Data/…/x.pdf` ataría
 la base a la infraestructura de hoy, y migrar a S3 obligaría a reescribir todas las filas.
+⚠️ 🔴 **El documento se escribe DENTRO de la transacción que lo referencia**, así que existe
+un rato antes que la fila que lo apunta. Un commit fallido deja un huérfano —se acepta: es
+basura recolectable, frente a un comprobante perdido que no vuelve— y lo recoge
+`IOrphanReceiptCollector`. **Su periodo de gracia (`Documents:OrphanGraceHours`) es la única
+línea de todo eso que no se puede equivocar**: sin él, el recolector borraría comprobantes
+buenos a mitad de vuelo.
 
 ## 8. Errores
 
