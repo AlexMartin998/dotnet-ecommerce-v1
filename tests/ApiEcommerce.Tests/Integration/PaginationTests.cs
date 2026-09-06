@@ -107,4 +107,46 @@ public class PaginationTests(ApiFactory factory)
 
     return [.. page.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("id").GetInt32())];
   }
+
+  [Fact]
+  public async Task PagingThroughRowsCreatedInTheSameTickNeverRepeatsNorSkips()
+  {
+    // ⭐ ⚠️ El desempate estable del orden por defecto. `CreatedAt` NO es único —lo estampa
+    // `DateTime.Now` y varias filas creadas seguidas lo comparten—, así que sin un
+    // `ThenBy` por clave primaria el orden no es total: SQL Server puede devolver las
+    // empatadas en distinto orden en cada consulta y, como cada página es un OFFSET/FETCH
+    // independiente, una fila sale en DOS páginas y otra en NINGUNA.
+    //
+    // Lo destapó la verificación de la documentación: la regla estaba escrita a mano en los
+    // repositorios que paginan de verdad y faltaba justo en el camino genérico, que es el
+    // que sirve `GET /api/v1/category/paged`.
+    using var admin = await factory.AsAdminAsync();
+
+    var created = new List<int>();
+
+    // Sin await entre medias: se crean lo bastante seguidas como para compartir `CreatedAt`.
+    for (var i = 0; i < 12; i++)
+    {
+      var response = await admin.PostAsJsonAsync("/api/v1/category",
+          new { name = VersioningAndHealthTests.Unique($"Empate{i}") });
+
+      response.EnsureSuccessStatusCode();
+      created.Add(int.Parse(response.Headers.Location!.Segments[^1]));
+    }
+
+    var seen = new List<int>();
+
+    for (var page = 1; page <= 20; page++)
+    {
+      var ids = await Ids(factory.Anonymous(), $"/api/v1/category/paged?page={page}&pageSize=5");
+
+      if (ids.Count == 0) break;
+
+      seen.AddRange(ids);
+    }
+
+    // Ni duplicados en toda la travesía, ni ninguna de las nuestras perdida por el camino.
+    Assert.Equal(seen.Count, seen.Distinct().Count());
+    Assert.All(created, id => Assert.Contains(id, seen));
+  }
 }

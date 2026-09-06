@@ -15,7 +15,7 @@ Convención (`rules.md` §10): por tarea, un slug numerado `NN_<slug>`, con su c
 | 08 | Idempotencia | ✅ | `features/08_idempotencia.feature` |
 | 09 | Eventos de dominio | ✅ | `features/09_eventos-de-dominio.feature` |
 | 10 | Límites, salud y despliegue | ✅ | `features/10_limites-y-salud.feature` |
-| 11 | **Proyecto de tests** | ✅ (261 tests + CI) | — (los `.feature` de 01–10 SON su especificación) |
+| 11 | **Proyecto de tests** | ✅ (262 tests + CI) | — (los `.feature` de 01–10 SON su especificación) |
 | 12 | Deuda de la revisión multiagente | ✅ | §12.5 cerrada en `planning/18` |
 | 13 | Refresh tokens y revocación | ✅ | `features/13_refresh-tokens.feature` |
 | 14 | Administración de usuarios | ✅ | `features/14_admin-usuarios.feature` |

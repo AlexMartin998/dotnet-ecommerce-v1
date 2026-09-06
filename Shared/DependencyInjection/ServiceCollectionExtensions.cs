@@ -19,7 +19,13 @@ namespace ApiEcommerce.Shared.DependencyInjection;
 
 /// <summary>
 /// <b>Composition root</b>: compone en tres bloques lo que cada slice y cada pieza
-/// transversal registran por su cuenta. Este archivo <b>no registra nada</b>.
+/// transversal registran por su cuenta.
+/// <para>
+/// <b>No registra servicios de dominio ni de infraestructura</b>: cada uno vive en el
+/// <c>XxxExtensions.cs</c> de su carpeta. Las dos únicas excepciones son
+/// <c>AddControllers()</c> y <c>AddHsts()</c>, que son de la superficie HTTP y no tienen
+/// otra carpeta a la que pertenecer.
+/// </para>
 /// </summary>
 /// <remarks>
 /// <para>

@@ -3333,3 +3333,69 @@ publicador: BasicPublishAsync(mandatory: true) con publisher confirms
        `product-purchased.dlq` (0): la DLX por cola hace lo que promete
   - -- leccion: antes de escribir "no se pudo verificar", buscar **que otra dependencia
        puedes romper** para provocar el mismo camino. Casi siempre hay una mas barata
+
+
+
+
+<br>
+
+
+
+
+## 36. Regenerar la documentacion  <- y el bug que aparecio al verificarla
+
+- --- ⭐ **El problema: `CLAUDE.md` se carga en TODA sesion**
+```
+una afirmacion falsa ahi no confunde una vez: contamina TODAS las sesiones,
+y el agente la da por buena porque viene "del proyecto"
+```
+  - -- la auditoria contra el codigo encontro **~20 falsas**, entre ellas:
+       carpetas que no existen (`Models/Dtos/`, `Service/Crud/`, `Service/Auth/`),
+       nombres del composition root **inventados** (`AddApplication`/`AddInfrastructure`),
+       "`[Transactional]` esta aplicado a `POST /buy`" cuando **no lo lleva nadie**,
+       y la peor: **"no hay proyecto de tests"** con 261 tests y CI en verde
+  - -- ninguna se metio de mala fe: cada una **fue cierta** y el codigo se movio debajo
+
+- --- **Como se regenero: 4 agentes levantando inventario + 1 intentando refutar**
+  - -- cuatro en paralelo, cada uno con un eje (Shared / slices / configuracion y
+       despliegue / auditoria de lo que ya habia), devolviendo un **informe compacto** y no
+       volcados de codigo: asi el contexto principal no se llena de ruido
+  - -- y **un quinto con la instruccion contraria**: intentar demostrar que el archivo nuevo
+       miente. Cero falsas, cuatro imprecisiones — las cuatro reales y corregidas
+  - -- leccion: **verificar no es releer**. El que escribe el documento no puede ser el que
+       lo valida; hace falta alguien con el incentivo de encontrarle fallos
+
+- --- **La decision que evita la recaida: UNA fuente de verdad por dato**
+```
+CLAUDE.md    arquitectura, convenciones, trampas, comandos   (estable)
+rules.md     las reglas duras en su forma larga
+docs/01-05   el RAZONAMIENTO de diseno
+docs/06      qué está hecho y qué falta
+memory.md    punto de continuacion, decisiones del owner
+planning/NN  qué se decidió en una tarea
+notes.md     el aprendizaje, con el gotcha y la medicion
+```
+  - -- ⚠️ **los conteos volatiles NO van en `CLAUDE.md`** (tests, migraciones, endpoints):
+       quedan obsoletos y nadie lo nota. Van donde se actualizan en el mismo commit
+  - -- lo que se conserva **intacto** de `docs/01-05` es el porqué: composicion vs herencia,
+       los metodos no-`virtual`, `sealed`, `EF.Property` en el orden, `Condition` vs
+       `MapFrom`... eso es lo unico que un documento regenerado **no** sabe reproducir
+  - -- lo caduco era casi siempre **una ruta, un nombre de metodo de DI, o un numero**
+
+- --- 🔴 **Y verificar el documento destapo un BUG de codigo**
+```
+BaseRepository.ApplyDefaultOrder:  OrderByDescending(CreatedAt)   <- y nada mas
+```
+  - -- `CreatedAt` **no es unico**: lo estampa `DateTime.Now` y el seeding crea cinco
+       categorias en el mismo tick
+  - -- sin orden **total**, SQL Server puede devolver las empatadas en distinto orden en
+       cada consulta; y como cada pagina es un `OFFSET/FETCH` **independiente**, una fila
+       sale en DOS paginas y otra en NINGUNA
+  - -- la regla estaba escrita a mano en los repositorios que paginan de verdad
+       (`ProductRepository`, `OrderRepository`) y **faltaba justo en el generico**, que es
+       el que sirve `GET /api/v1/category/paged`
+  - -- arreglo: `.ThenByDescending(Id)`. Un test pagina 12 categorias creadas seguidas y
+       comprueba que no hay duplicados ni perdidas
+  - -- ⭐ **la moraleja**: la afirmacion del documento era correcta *como regla* y el codigo
+       no la cumplia. Escribir la regla obligo a comprobarla, y ahi salio. Documentar bien
+       es una forma barata de auditar

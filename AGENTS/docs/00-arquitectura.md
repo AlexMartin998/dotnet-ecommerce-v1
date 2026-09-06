@@ -66,8 +66,8 @@ GlobalExceptionHandler ──► ProblemDetails (400/401/403/404/409/422/500)
 Reglas duras del flujo:
 
 1. **Las entidades no salen de la capa de servicio.** El controller solo conoce
-   tipos de `Models/Dtos/`. Si un controller necesita `using ApiEcommerce.Models;`
-   para algo que no sea un enum, está mal diseñado.
+   tipos de `Features/<Slice>/Dtos/`. Si un controller necesita el namespace de
+   `Models` para algo que no sea un enum, está mal diseñado.
 2. **El repositorio no conoce DTOs.** Recibe y devuelve entidades, punto.
 3. **El repositorio no lanza excepciones de negocio.** Devuelve `null`,
    `false` o colección vacía; quien decide que "no encontrado" es un 404 es el
@@ -157,7 +157,7 @@ significa crear, dentro de su carpeta y en este orden:
 
 1. `Models/X.cs` — entidad + DataAnnotations + índices, implementando `IAuditable`.
 2. `dotnet ef migrations add ...` — migración.
-3. `Models/Dtos/XDto.cs`, `CreateXDto.cs`, `UpdateXDto.cs`.
+3. `Dtos/XDto.cs`, `CreateXDto.cs`, `UpdateXDto.cs`.
 4. `Mapping/XProfile.cs`.
 5. `Repository/IXRepository.cs` + `XRepository.cs` (heredan de `BaseRepository<X>`).
 6. `Service/XRules.cs` — las reglas de negocio de la entidad (o ninguna).
