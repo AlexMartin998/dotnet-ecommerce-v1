@@ -2,8 +2,10 @@ using ApiEcommerce.Features.Catalog.Dtos;
 using ApiEcommerce.Features.Catalog.Models;
 using ApiEcommerce.Features.Catalog.Repository;
 using ApiEcommerce.Features.Catalog.Service;
+using ApiEcommerce.Features.Catalog.Messaging;
 using ApiEcommerce.Shared.Caching;
 using ApiEcommerce.Shared.Crud;
+using ApiEcommerce.Shared.Messaging;
 using ApiEcommerce.Shared.Persistence;
 
 namespace ApiEcommerce.Features.Catalog;
@@ -27,7 +29,8 @@ namespace ApiEcommerce.Features.Catalog;
 /// </remarks>
 public static class CatalogExtensions
 {
-  public static IServiceCollection AddCatalogFeature(this IServiceCollection services)
+  public static IServiceCollection AddCatalogFeature(
+      this IServiceCollection services, IConfiguration configuration)
   {
     // ---- repositorios ------------------------------------------------------
     services.AddScoped<ICategoryRepository, CategoryRepository>();
@@ -61,6 +64,13 @@ public static class CatalogExtensions
     services.AddScoped<ICategoryService>(sp => new CachedCategoryService(
         sp.GetRequiredService<CategoryService>(),
         sp.GetRequiredService<ICacheService>()));
+
+    // ---- consumidores de eventos -------------------------------------------
+    // Quién reacciona a un evento del catálogo es asunto DEL CATÁLOGO. Shared/Messaging
+    // pone el mecanismo (conexión, outbox, publicador) y la condición de "hay broker";
+    // registrarlo allí obligaría a Shared a conocer este tipo e invertiría la dirección
+    // de dependencias declarada en el composition root.
+    services.AddEventConsumer<ProductPurchasedConsumer>(configuration);
 
     return services;
   }

@@ -95,6 +95,8 @@ es inocuo: es el *muxer*, y el del 10 sirve para ambos.
 Features/
   Catalog/       <- contexto: categorias y productos
     Models/ Dtos/ Repository/ Service/ Mapping/ Controllers/
+    Events/                     <- ProductPurchased (vocabulario del catalogo)
+    Messaging/                  <- ProductPurchasedConsumer (quien REACCIONA)
     CatalogExtensions.cs        <- AddCatalogFeature(): el DI del slice
   Accounts/      <- contexto: identidad, JWT, autorizacion
     Models/ Dtos/ Service/ Controllers/
@@ -102,7 +104,9 @@ Features/
 Shared/          <- transversal, de ningun dominio
   Persistence/   IEntity, IBaseRepository, BaseRepository, PersistenceExtensions
   Crud/          ICrudService, CrudService, IEntityRules, NoEntityRules
-  Caching/ Db/ Idempotency/ Messaging/ Paging/ Storage/ Mapping/ Auth/
+  Caching/ Db/ Idempotency/ Paging/ Storage/ Mapping/ Auth/
+  Messaging/     MECANISMO: outbox, RabbitMq/, IDomainEvent, AddEventConsumer<T>
+                 (los eventos y sus consumidores viven en el SLICE que los emite)
   Http/          GlobalExceptionHandler, Swagger, CORS, rate limit + Health/
   DependencyInjection/   composition root (NO registra nada)
 Data/            AppDbContext + DataSeeder
@@ -114,6 +118,12 @@ notes.md         <- el log de aprendizaje del autor. MUY importante, ver §6
 
 ⚠️ **Un slice es un contexto acotado, NO una entidad.** `UnitOfMeasurement` o `ProductTag`
 irían dentro de `Catalog/`; no crean carpeta propia.
+
+⚠️ **`Shared/` no nombra tipos de `Features/`.** La única excepción legítima es el
+composition root, que por definición conoce ambos lados. Si algo de `Shared/` necesita un
+tipo de un slice, o el tipo está en el sitio equivocado, o hay que **invertir** la
+dependencia y pasárselo desde el composition root (es lo que se hizo con el ensamblado
+que escanea AutoMapper).
 
 ---
 

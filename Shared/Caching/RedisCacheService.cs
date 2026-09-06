@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Options;
-using ApiEcommerce.Features.Catalog.Service;
 
 namespace ApiEcommerce.Shared.Caching;
 

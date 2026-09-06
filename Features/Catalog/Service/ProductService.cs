@@ -2,7 +2,7 @@ using ApiEcommerce.Exceptions;
 using ApiEcommerce.Shared.Paging;
 using ApiEcommerce.Shared.Db;
 using ApiEcommerce.Shared.Messaging;
-using ApiEcommerce.Shared.Messaging.Events;
+using ApiEcommerce.Features.Catalog.Events;
 using ApiEcommerce.Shared.Storage;
 using Microsoft.EntityFrameworkCore;
 using AutoMapper;

@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
-using ApiEcommerce.Features.Catalog.Models;
 
 namespace ApiEcommerce.Shared.Http;
 

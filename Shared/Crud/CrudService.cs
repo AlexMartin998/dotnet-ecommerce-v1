@@ -2,7 +2,6 @@ using ApiEcommerce.Exceptions;
 using ApiEcommerce.Shared.Paging;
 using AutoMapper;
 using ApiEcommerce.Shared.Persistence;
-using ApiEcommerce.Features.Catalog.Service;
 
 namespace ApiEcommerce.Shared.Crud;
 

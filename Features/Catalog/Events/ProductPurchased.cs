@@ -1,28 +1,24 @@
-namespace ApiEcommerce.Shared.Messaging.Events;
+using ApiEcommerce.Shared.Messaging.Events;
 
-
-/// <summary>
-/// Contrato de un evento de dominio publicable.
-/// </summary>
-/// <remarks>
-/// El <see cref="EventType"/> es el nombre estable que viaja al broker y se usa como
-/// routing key. Es parte del <b>contrato público</b> entre servicios: renombrar la
-/// clase C# no debe romper a los consumidores, así que el nombre va explícito y no se
-/// deriva de <c>typeof(T).Name</c>.
-/// </remarks>
-public interface IDomainEvent
-{
-  static abstract string EventType { get; }
-}
+namespace ApiEcommerce.Features.Catalog.Events;
 
 
 /// <summary>
 /// Se publica cuando una compra descontó stock con éxito.
 /// </summary>
 /// <remarks>
+/// <para>
+/// Vive en <b>Catalog</b> y no en <c>Shared/Messaging</c> porque es vocabulario del
+/// catálogo: habla de SKU, de stock y de producto. Lo que sí es de todos es el contrato
+/// <see cref="IDomainEvent"/> — el mecanismo—, y ese sí vive en <c>Shared</c>.
+/// La regla es la de siempre: <i>¿esto tiene lenguaje propio de un contexto, o es
+/// mecanismo de ninguno?</i>
+/// </para>
+/// <para>
 /// Lleva los datos que el consumidor necesita para actuar <b>sin volver a consultar</b>
 /// a este servicio: un evento que obliga a llamar de vuelta al emisor reintroduce el
 /// acoplamiento que la mensajería venía a quitar.
+/// </para>
 /// </remarks>
 public sealed record ProductPurchased(
     int ProductId,

@@ -96,6 +96,8 @@ ApiEcommerce/
 │   │   ├── Repository/             IXRepository + impl (heredan de BaseRepository<T>)
 │   │   ├── Service/                IXService + impl + XRules
 │   │   ├── Mapping/                un Profile de AutoMapper por entidad
+│   │   ├── Events/                 eventos de dominio del contexto (ProductPurchased)
+│   │   ├── Messaging/              quién REACCIONA a esos eventos (los consumidores)
 │   │   ├── Controllers/            capa HTTP. Solo DTOs.
 │   │   └── CatalogExtensions.cs    AddCatalogFeature(): el DI del slice
 │   └── Accounts/                   identidad, JWT, autorización
@@ -107,7 +109,7 @@ ApiEcommerce/
 │   ├── Crud/                 ICrudService, CrudService, IEntityRules, NoEntityRules
 │   ├── Caching/              ICacheService, RedisCacheService, NoCacheService, CacheKeys
 │   ├── Idempotency/          IIdempotencyStore, IdempotentAttribute
-│   ├── Messaging/            outbox, RabbitMq/, Consumers/, Events/
+│   ├── Messaging/            MECANISMO: outbox, RabbitMq/, IDomainEvent, AddEventConsumer<T>
 │   ├── Storage/              IFileStorage, LocalFileStorage
 │   ├── Paging/               PagedResult<T>, PageQuery
 │   ├── Db/                   TransactionalAttribute

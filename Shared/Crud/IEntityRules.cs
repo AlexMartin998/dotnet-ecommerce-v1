@@ -1,6 +1,5 @@
 
 using ApiEcommerce.Shared.Persistence;
-using ApiEcommerce.Features.Catalog.Models;
 namespace ApiEcommerce.Shared.Crud;
 
 

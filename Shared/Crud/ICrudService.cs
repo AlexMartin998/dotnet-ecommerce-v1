@@ -1,6 +1,4 @@
 using ApiEcommerce.Shared.Paging;
-using ApiEcommerce.Features.Catalog.Models;
-using ApiEcommerce.Features.Catalog.Service;
 
 namespace ApiEcommerce.Shared.Crud;
 

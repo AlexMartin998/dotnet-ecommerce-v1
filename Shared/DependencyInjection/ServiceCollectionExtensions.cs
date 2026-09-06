@@ -1,6 +1,7 @@
 using ApiEcommerce.Data;
 using ApiEcommerce.Features.Accounts;
 using ApiEcommerce.Features.Catalog;
+using ApiEcommerce.Features.Catalog.Mapping;
 using ApiEcommerce.Shared.Caching;
 using ApiEcommerce.Shared.Crud;
 using ApiEcommerce.Shared.Http;
@@ -54,7 +55,10 @@ public static class ServiceCollectionExtensions
       => services
           .AddPersistence(configuration)        // Shared/Persistence  — EF Core + SQL Server + ITransactionRunner
           .AddGenericCrud()                     // Shared/Crud         — genéricos abiertos del CRUD compuesto
-          .AddObjectMapping()                   // Shared/Mapping      — AutoMapper (escanea los Profile de los slices)
+          // El composition root es el ÚNICO sitio de Shared/ que puede nombrar tipos de
+          // Features/: es literalmente su trabajo. Por eso el ensamblado a escanear se
+          // pasa desde aquí y no se resuelve dentro de Shared/Mapping.
+          .AddObjectMapping(typeof(CategoryProfile).Assembly)  // Shared/Mapping — AutoMapper
           .AddDistributedCaching(configuration) // Shared/Caching      — Redis + idempotencia
           .AddFileStorage(configuration)        // Shared/Storage      — almacenamiento de archivos
           .AddMessaging(configuration);         // Shared/Messaging    — outbox + RabbitMQ
@@ -67,7 +71,7 @@ public static class ServiceCollectionExtensions
       this IServiceCollection services, IConfiguration configuration)
       => services
           .AddAccountsFeature(configuration)    // Features/Accounts — identidad, JWT, autorización
-          .AddCatalogFeature();                 // Features/Catalog  — categorías y productos
+          .AddCatalogFeature(configuration);    // Features/Catalog  — categorías y productos
 
 
   /// <summary>

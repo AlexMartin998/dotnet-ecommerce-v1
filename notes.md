@@ -1790,6 +1790,42 @@ builder.Services
       resultados IDENTICOS (10x200/5x409 stock 0 · 1x201/7x409 una fila · idempotencia 1 compra)
 
 
+- --- ⭐ La pregunta que decide DONDE va un archivo: **¿mecanismo o vocabulario?**
+  - -- lo aprendi con `ProductPurchased`, que estaba en `Shared/Messaging/Events/`
+       junto a `IDomainEvent`, y no cuadraba
+```
+IDomainEvent        -> CONTRATO, no habla de ningun dominio        -> Shared/Messaging/
+ProductPurchased    -> habla de SKU, stock, producto = catalogo    -> Features/Catalog/Events/
+ProductPurchasedConsumer -> QUIEN reacciona a un evento del catalogo -> Features/Catalog/Messaging/
+```
+  - -- ⭐ y el argumento que zanja la duda no es la simetria, es la **DIRECCION DE
+       DEPENDENCIAS**: con el evento y el consumidor en `Shared/`, `Shared` nombraba tipos
+       de `Catalog`. La direccion declarada es **Web -> Features -> Shared**, o sea al reves
+  - -- la costura para arreglarlo sin que `Shared` conozca al consumidor:
+```csharp
+// Shared/Messaging: el mecanismo y la POLITICA de "hay broker", una sola vez
+public static IServiceCollection AddEventConsumer<TConsumer>(this IServiceCollection, IConfiguration)
+    where TConsumer : class, IHostedService
+
+// Features/Catalog/CatalogExtensions.cs: el slice registra el SUYO
+services.AddEventConsumer<ProductPurchasedConsumer>(configuration);
+```
+
+- --- ⚠️ Al buscar mas fugas aparecio algo mas tonto: **`using` MUERTOS**
+  - -- 7 archivos de `Shared/` tenian `using ApiEcommerce.Features.Catalog...` que **no
+       usaba nadie**: los dejo el refactor a vertical slicing al mover archivos
+  - -- un using sin usar **no da warning**, asi que parecia que media `Shared/` dependia de
+       `Catalog` cuando no era verdad. Ruido que hace ilegible la dependencia REAL
+  - -- comprobarlo es trivial y no hay que fiarse de leer:
+```sh
+sed -i '/^using ApiEcommerce.Features.Catalog/d' <archivos> && dotnet build
+```
+  - -- la unica dependencia REAL era el escaneo de AutoMapper
+       (`typeof(CategoryProfile).Assembly`). Se **invirtio**: el ensamblado lo pasa ahora el
+       composition root, que es el unico sitio de `Shared/` que puede conocer ambos lados
+  - -- ⚠️ `Shared/Mapping/MappingProfile.cs` conserva los suyos a proposito: es el archivo
+       LEGACY comentado, y no se toca
+
 
 
 

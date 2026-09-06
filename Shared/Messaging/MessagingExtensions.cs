@@ -1,4 +1,3 @@
-using ApiEcommerce.Shared.Messaging.Consumers;
 using ApiEcommerce.Shared.Messaging.RabbitMq;
 
 namespace ApiEcommerce.Shared.Messaging;
@@ -36,7 +35,37 @@ public static class MessagingExtensions
     services.AddSingleton<IEventPublisher, RabbitMqEventPublisher>();
 
     services.AddHostedService<OutboxPublisher>();
-    services.AddHostedService<ProductPurchasedConsumer>();
+
+    return services;
+  }
+
+
+  /// <summary>
+  /// Registra un consumidor de eventos, <b>solo si hay broker configurado</b>.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Es la costura para que cada slice registre SUS consumidores sin que
+  /// <c>Shared/Messaging</c> tenga que conocerlos: aquí vive el mecanismo (la conexión,
+  /// el outbox, el publicador) y en <c>Features/&lt;Contexto&gt;/</c> vive quién reacciona
+  /// a qué. Si <c>ProductPurchasedConsumer</c> se registrara aquí, <c>Shared</c>
+  /// dependería de <c>Features</c> y la dirección declarada
+  /// <b>Web → Features → Shared</b> se invertiría.
+  /// </para>
+  /// <para>
+  /// La condición de "hay broker" se evalúa en ESTE método y no en cada slice: es la
+  /// misma decisión para todos, y duplicarla es garantizar que algún día un slice la
+  /// comprueba distinto.
+  /// </para>
+  /// </remarks>
+  public static IServiceCollection AddEventConsumer<TConsumer>(
+      this IServiceCollection services, IConfiguration configuration)
+      where TConsumer : class, IHostedService
+  {
+    var options = configuration.GetSection(RabbitMqOptions.SectionName).Get<RabbitMqOptions>()
+                  ?? new RabbitMqOptions();
+
+    if (options.IsEnabled) services.AddHostedService<TConsumer>();
 
     return services;
   }
