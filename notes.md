@@ -2808,3 +2808,77 @@ dotnet-version: |
   - -- provocarlo aqui exigia tumbar SQL Server, que es compartido
   - -- se cubre en dos mitades (4 tests del inbox + 6 del contador) y se deja escrito, en vez
        de dar por probado mas de lo que se probo
+
+
+---
+---
+
+
+## 32. Los "errores" que no eran errores
+
+- --- ⭐ **Un cliente que cuelga NO lanza `OperationCanceledException`**
+  - -- cuando el cliente corta, ASP.NET cancela `RequestAborted` -> EF cancela el
+       `SqlCommand` -> **SqlClient lanza un `SqlException`** ("A severe error occurred on
+       the current command" / "Operation cancelled by user", con un Win32 258 dentro)
+  - -- la OCE si estaba mapeada a 499; el SqlException no, asi que salia **500 con traza**
+  - -- medido: 27 "errores" en una sola prueba de carga que no eran errores de nadie
+  - -- el coste no es la respuesta (no hay nadie al otro lado): es el **ruido**. Las
+       metricas de error y el log se llenan de incidentes falsos justo cuando hace falta
+       leerlos, y un fallo real queda sepultado
+
+- --- ⭐ **Decidir por el ESTADO de la peticion, no por el TIPO de la excepcion**
+```csharp
+catch (Exception ex) when (context.RequestAborted.IsCancellationRequested)
+```
+  - -- la cancelacion se propaga distinto segun donde pille: EF, el cliente AMQP,
+       `HttpClient`, Kestrel leyendo el cuerpo... perseguir cada tipo es una lista que
+       **nunca esta completa**
+  - -- sintoma de que el enfoque por tipos era malo: **`SqlException` ni se puede construir
+       en un test** (no tiene constructor publico)
+
+- --- ⚠️ **EL detalle que lo hace funcionar: el ORDEN en el pipeline**
+```
+app.UseExceptionHandler();                      <- el diagnostico del framework
+app.UseMiddleware<ClientAbortMiddleware>();     <- DEBAJO, o llega tarde
+```
+  - -- `ExceptionHandlerMiddleware` escribe su "An unhandled exception has occurred" a
+       nivel **Error ANTES** de llamar a ningun `IExceptionHandler`
+  - -- lo puse primero dentro de `GlobalExceptionHandler` y **no servia**: la linea de
+       Error ya estaba escrita. Hay que interceptar antes de que le llegue
+  - -- 499 (Client Closed Request) no es del RFC pero es la convencion de nginx, y es lo
+       que hace que estas peticiones **no cuenten como 5xx** en las metricas
+
+- --- **Un timeout de base tampoco es un 500**
+  - -- `SqlException.Number == -2` es el timeout de comando (el Win32 258 de dentro es
+       WAIT_TIMEOUT). No es un bug nuestro ni una peticion mal formada
+  - -- **503 + `Retry-After`**, porque ES reintentable y un 500 le dice al cliente lo
+       contrario. Misma idea que la cabecera `transient-error` de Adyen: no basta con
+       rechazar, hay que decir si el rechazo es transitorio
+
+- --- ⚠️ **"≥500 -> mensaje generico" era una regla demasiado gruesa**
+  - -- existe para no filtrar el mensaje de una excepcion NO controlada
+  - -- pero un 503 que escribes tu no revela nada y su texto es accionable: censurarlo
+       dejaba al cliente sin saber si podia reintentar
+  - -- el corte correcto es **"¿lo mapeamos nosotros?"**, no "¿es 5xx?"
+  - -- ⚠️ al cambiarlo rompi el `Detail` de los 4xx —donde el mensaje de dominio
+       ("Insufficient stock for SKU 'X'") es JUSTO el util— y **lo cazo un test que ya
+       existia**. Es exactamente para lo que estan
+
+- --- ✏️ **Y un error de metodo mio, que vale mas que el hallazgo**
+```sh
+grep -c "\[ERR\]" api.log      # 0 SIEMPRE: Serilog escribe "[18:55:27 ERR]"
+grep -cE "^\[[0-9:]+ ERR\]"    # el bueno
+```
+  - -- di por buenos varios "0 errores" que eran un **falso negativo del patron**
+  - -- leccion: antes de celebrar un cero, comprobar que el patron casa con algo cuando
+       **deberia** casar. Un grep que nunca acierta y un sistema que nunca falla se ven
+       exactamente igual
+
+- --- **Lo que se deja a proposito**
+  - -- EF Core sigue escribiendo a nivel Error sus "An error occurred using the connection
+       to database..." (7 lineas), cada una seguida de nuestra Information y su 499 con el
+       mismo id de correlacion
+  - -- bajar esa categoria a Warning escondería tambien **las caidas reales de base**, que
+       es lo ultimo que uno quiere no ver
+  - -- un error correlado con su explicacion en la linea siguiente es mucho mejor que una
+       categoria silenciada

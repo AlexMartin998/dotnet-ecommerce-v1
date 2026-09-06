@@ -94,7 +94,7 @@ respuesta HTTP, el replay vuelve a pasar por el mismo formateador de MVC.
 | **Token de propiedad de la reserva** | ✅ Sigue, ahora solo protege la puerta |
 | **¿Fallar en cerrado con 503?** | ✅ **No hace falta.** Con la garantía en la base, ejecutar cuando Redis no responde ya no relaja nada |
 | **Redis compartido con `allkeys-lru`** | ✅ **Deja de importar** para la corrección |
-| `SqlException` escapando como 500 bajo carga | ❌ Sigue abierta, es adyacente |
+| `SqlException` escapando como 500 bajo carga | ✅ Cerrada en [`planning/19`](19_errores-bajo-carga.md) |
 
 ---
 
@@ -110,6 +110,7 @@ respuesta HTTP, el replay vuelve a pasar por el mismo formateador de MVC.
       DTO; si algún día se memoriza algo grande, conviene medirlo.
 - [ ] **La retención vive en `Outbox:RetentionDays`**, que ahora gobierna tres tablas con
       criterios distintos. Cuando una necesite su propio plazo, hay que separarlas.
-- [ ] **`SqlException` escapando como 500 bajo carga** (viene de `planning/16` §16.6):
-      «Operation cancelled by user» cuando el cliente cuelga, y Win32 258 por timeout.
-      Ensucia las métricas de error. Pide su propio planning.
+- [x] ✅ **`SqlException` escapando como 500 bajo carga** → **[`planning/19`](19_errores-bajo-carga.md)**:
+      un cliente que cuelga se absorbe en `ClientAbortMiddleware` (499, Information, sin
+      traza) y un timeout de base pasa a 503 con `Retry-After`. Medido: de 27 «unhandled
+      exception» a 0.

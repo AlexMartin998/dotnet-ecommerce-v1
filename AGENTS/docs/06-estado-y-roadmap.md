@@ -209,6 +209,20 @@ la CI instalando los dos SDK.
 de espera ligadas a un exchange, cada reintento se copiaba a todas. Se publica al
 exchange por defecto con el nombre de la cola como routing key.
 
+### Paso 8.quinquies — Los «errores» que no eran errores — ✅ **cerrado** (2026-09-06)
+
+Detalle en [`planning/19`](../planning/19_errores-bajo-carga.md).
+
+Un cliente que cuelga hacía que EF cancelara el `SqlCommand` y SqlClient lanzara un
+**`SqlException`** —no una `OperationCanceledException`— así que salía como 500 con
+traza completa: 27 «errores» que no lo eran en una sola prueba de carga.
+`ClientAbortMiddleware` lo absorbe (**499**, Information, sin traza), y un timeout
+de base (`SqlException` −2) pasa a **503 + `Retry-After`** porque es reintentable.
+
+⚠️ El middleware va **por debajo** de `UseExceptionHandler`: el diagnóstico del
+framework escribe su línea de Error **antes** de llamar a ningún `IExceptionHandler`,
+así que decidirlo en `GlobalExceptionHandler` llega tarde.
+
 ### Paso 9 — Partir en proyectos (cuando duela, no antes)
 
 Los tres bloques del composition root (`AddApplication` / `AddInfrastructure` /

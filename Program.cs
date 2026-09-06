@@ -97,6 +97,14 @@ app.UseSerilogRequestLogging();
 // Lo más arriba posible: solo captura lo que ocurre DESPUÉS de él.
 app.UseExceptionHandler();
 
+// ⚠️ Justo DEBAJO del anterior, y el orden es lo único que lo hace funcionar. Absorbe las
+// excepciones que solo ocurren porque el cliente colgó (EF cancela el SqlCommand y
+// SqlClient lanza un SqlException, no una OperationCanceledException). El middleware de
+// diagnóstico del framework escribe su "unhandled exception" a nivel Error ANTES de
+// llamar a ningún IExceptionHandler, así que decidirlo en GlobalExceptionHandler llega
+// tarde: la línea de Error ya está escrita. Hay que interceptar antes de que le llegue.
+app.UseMiddleware<ClientAbortMiddleware>();
+
 // Convierte los 401/403/404 "vacíos" que emite el framework (los que no pasan por
 // una excepción) en ProblemDetails, para que el cliente reciba SIEMPRE el mismo
 // formato de error venga de donde venga.

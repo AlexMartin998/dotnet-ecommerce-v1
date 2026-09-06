@@ -23,6 +23,11 @@ public sealed class GlobalExceptionHandler(
   public async ValueTask<bool> TryHandleAsync(
       HttpContext httpContext, Exception exception, CancellationToken cancellationToken)
   {
+    // Nota: aquí NO se comprueba si el cliente colgó. Se hace en ClientAbortMiddleware,
+    // que va por debajo de UseExceptionHandler, porque el middleware de diagnóstico del
+    // framework escribe su "unhandled exception" a nivel Error ANTES de llamar a este
+    // handler: comprobarlo aquí llega tarde, la línea de Error ya está en el log.
+
     var (status, code, title) = Map(exception);
 
     if ((int)status >= 500)
@@ -34,12 +39,34 @@ public sealed class GlobalExceptionHandler(
 
     httpContext.Response.StatusCode = (int)status;
 
+    // Un 503 sin `Retry-After` obliga al cliente a adivinar si puede reintentar y cuándo.
+    // Es la misma idea que la cabecera `transient-error` de Adyen: no basta con rechazar,
+    // hay que decir si el rechazo es transitorio.
+    if (status == HttpStatusCode.ServiceUnavailable)
+      httpContext.Response.Headers.RetryAfter = "1";
+
     var problem = new ProblemDetails
     {
       Status = (int)status,
       Title = title,
-      // nunca se filtra el mensaje real de una excepción no controlada
-      Detail = (int)status >= 500 ? "An unexpected error occurred." : exception.Message,
+      // Nunca se filtra el mensaje real de una excepción NO CONTROLADA. Pero un 5xx que
+      // sí está mapeado —el 503 por timeout de base— trae un texto que escribimos
+      // nosotros, es accionable ("reintenta") y no revela nada del servidor: censurarlo
+      // por el simple hecho de ser 5xx dejaba al cliente sin saber si podía reintentar.
+      // El corte es "¿lo mapeamos nosotros?", no "¿es 5xx?".
+      Detail = code switch
+      {
+        // Excepción NO controlada: nunca se filtra su mensaje real.
+        "internal_error" => "An unexpected error occurred.",
+        // 5xx que SÍ mapeamos (el 503 por timeout de base): el texto lo escribimos
+        // nosotros, es accionable ("reintenta") y no revela nada del servidor.
+        // Censurarlo por el simple hecho de ser 5xx dejaba al cliente sin saber si podía
+        // reintentar. El corte es "¿lo mapeamos nosotros?", no "¿es 5xx?".
+        _ when (int)status >= 500 => title,
+        // 4xx: el mensaje de la excepción de dominio es EL útil ("Insufficient stock for
+        // SKU 'X'"). Es parte del contrato de la API, no una fuga.
+        _ => exception.Message
+      },
       Type = $"https://httpstatuses.io/{(int)status}",
       Instance = $"{httpContext.Request.Method} {httpContext.Request.Path}",
       Extensions =
@@ -101,6 +128,15 @@ public sealed class GlobalExceptionHandler(
     // validación y la escritura).
     _ when FindSqlException(ex) is { Number: 547 }
         => (HttpStatusCode.Conflict, "fk_violation", "A related resource constraint was violated."),
+
+    // -2: timeout de comando (el Win32 258 que se ve dentro es WAIT_TIMEOUT). No es un
+    // bug nuestro ni una petición mal formada: es que la base no llegó a tiempo, casi
+    // siempre por contención o por saturación. 503 y no 500 porque **es reintentable**, y
+    // el cliente necesita saberlo: un 500 le dice "no lo vuelvas a intentar así".
+    // Medido en las pruebas de carga: 83 de estos salían como error interno.
+    _ when FindSqlException(ex) is { Number: -2 }
+        => (HttpStatusCode.ServiceUnavailable, "database_timeout",
+            "The database did not respond in time. Retry the operation."),
 
     // BCL: red de seguridad mientras quede código viejo sin migrar.
     // NO es una alternativa válida en código nuevo: los servicios lanzan AppException.
