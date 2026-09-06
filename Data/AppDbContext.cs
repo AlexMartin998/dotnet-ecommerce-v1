@@ -6,6 +6,7 @@ using ApiEcommerce.Shared.Persistence;
 using ApiEcommerce.Features.Accounts.Models;
 using ApiEcommerce.Features.Catalog.Models;
 using ApiEcommerce.Features.Catalog.Repository;
+using ApiEcommerce.Shared.Idempotency;
 
 namespace ApiEcommerce.Data;
 
@@ -39,6 +40,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
   /// <summary>Mensajes ya consumidos, para que el consumidor sea idempotente.</summary>
   public DbSet<ProcessedMessage> ProcessedMessages { get; set; }
+
+  /// <summary>
+  /// Comandos ya ejecutados. Es la GARANTÍA de idempotencia de las operaciones de
+  /// negocio: se escribe en la misma transacción que el efecto.
+  /// </summary>
+  public DbSet<ExecutedCommand> ExecutedCommands { get; set; }
 
 
   /// <summary>
@@ -86,6 +93,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     modelBuilder.Entity<ProcessedMessage>()
         .HasIndex(m => m.ProcessedAt)
         .HasDatabaseName("IX_ProcessedMessages_ProcessedAt");
+
+    // Misma razón que en ProcessedMessages: la purga borra por fecha, y sin índice cada
+    // pasada del recolector sería un scan de una tabla que solo crece.
+    modelBuilder.Entity<ExecutedCommand>()
+        .HasIndex(c => c.ExecutedAt)
+        .HasDatabaseName("IX_ExecutedCommands_ExecutedAt");
   }
 
 

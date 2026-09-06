@@ -10,6 +10,7 @@ using ApiEcommerce.Shared.Crud;
 using ApiEcommerce.Features.Catalog.Dtos;
 using ApiEcommerce.Features.Catalog.Models;
 using ApiEcommerce.Features.Catalog.Repository;
+using ApiEcommerce.Shared.Idempotency;
 
 namespace ApiEcommerce.Features.Catalog.Service;
 
@@ -31,6 +32,7 @@ public class ProductService : IProductService
   private readonly IFileStorage _storage;
   private readonly IEventOutbox _outbox;
   private readonly ITransactionRunner _tx;
+  private readonly ICommandLog _commands;
   private readonly IMapper _mapper;
 
   public ProductService(
@@ -40,9 +42,11 @@ public class ProductService : IProductService
       IFileStorage storage,
       IEventOutbox outbox,
       ITransactionRunner tx,
+      ICommandLog commands,
       IMapper mapper)
   {
     _tx = tx;
+    _commands = commands;
     _crud = crud;
     _repository = repository;
     _categoryRepository = categoryRepository;
@@ -143,47 +147,81 @@ public class ProductService : IProductService
     return _mapper.Map<ProductDto>(await _repository.GetByIdWithCategoryAsync(id, ct) ?? product);
   }
 
-  public async Task<ProductDto> BuyAsync(
-      BuyProductDto dto, string? buyerUserId = null, CancellationToken ct = default)
+  public async Task<CommandOutcome<ProductDto>> BuyAsync(
+      BuyProductDto dto, CommandIntent intent, string? buyerUserId = null,
+      CancellationToken ct = default)
   {
     ArgumentNullException.ThrowIfNull(dto);
 
-    // La atomicidad "descontar stock + emitir el evento" es una regla de NEGOCIO, así
-    // que la transacción vive aquí y no en un atributo del controller. Antes dependía
-    // de que alguien no olvidara poner [Transactional] en la acción: llamar a BuyAsync
-    // desde un job o desde otro endpoint descontaba stock sin emitir el evento, en
-    // silencio y sin error.
-    //
-    // La lambda es REPLAYABLE (relee todo lo que necesita), que es lo que exige
-    // ITransactionRunner para poder reintentar ante un fallo transitorio.
-    return await _tx.ExecuteAsync(async token =>
+    try
     {
-      var product = await _repository.GetBySkuAsync(dto.SKU, token)
-          ?? throw new NotFoundAppException("Product", dto.SKU);
+      // La atomicidad "descontar stock + emitir el evento + dejar constancia de que este
+      // intento ya se ejecutó" es una regla de NEGOCIO, así que la transacción vive aquí
+      // y no en un atributo del controller. Antes dependía de que alguien no olvidara
+      // poner [Transactional] en la acción: llamar a BuyAsync desde un job o desde otro
+      // endpoint descontaba stock sin emitir el evento, en silencio y sin error.
+      //
+      // La lambda es REPLAYABLE (relee todo lo que necesita), que es lo que exige
+      // ITransactionRunner para poder reintentar ante un fallo transitorio.
+      return await _tx.ExecuteAsync(async token =>
+      {
+        // ⚠️ Esta comprobación va DENTRO de la transacción, y ahí está toda la diferencia
+        // con la versión que vivía en Redis. La marca y el efecto se confirman juntos o
+        // no se confirman: no existe la ventana en la que la compra ocurrió y nadie la
+        // recuerda (proceso muerto entre el commit y el guardado), ni la de "el almacén
+        // no contestó, ejecuto sin garantía". Si la base no está, tampoco hay compra.
+        if (await _commands.FindResultAsync<ProductDto>(intent, dto, token) is { } already)
+          return new CommandOutcome<ProductDto>(already, WasReplayed: true);
 
-      // El descuento y la comprobación de stock ocurren en la MISMA sentencia SQL.
-      // Comprobar aquí `product.Stock < dto.Quantity` y descontar después sería
-      // read-then-write: entre las dos cosas cabe otra compra y se vende dos veces
-      // la última unidad.
-      if (!await _repository.TryDecrementStockAsync(product.Id, dto.Quantity, token))
-        throw new ConflictAppException(
-            $"Insufficient stock for SKU '{product.SKU}': requested {dto.Quantity}.");
+        var product = await _repository.GetBySkuAsync(dto.SKU, token)
+            ?? throw new NotFoundAppException("Product", dto.SKU);
 
-      // Relectura para devolver el estado real: ExecuteUpdate no toca el change
-      // tracker, así que la instancia que ya teníamos sigue con el stock anterior.
-      var updated = await _repository.GetByIdWithCategoryAsync(product.Id, token) ?? product;
+        // El descuento y la comprobación de stock ocurren en la MISMA sentencia SQL.
+        // Comprobar aquí `product.Stock < dto.Quantity` y descontar después sería
+        // read-then-write: entre las dos cosas cabe otra compra y se vende dos veces
+        // la última unidad.
+        if (!await _repository.TryDecrementStockAsync(product.Id, dto.Quantity, token))
+          throw new ConflictAppException(
+              $"Insufficient stock for SKU '{product.SKU}': requested {dto.Quantity}.");
 
-      // El evento se ESCRIBE aquí y se PUBLICA después (OutboxPublisher). Publicar
-      // directo a RabbitMQ en esta línea ataría la compra a que el broker esté vivo,
-      // y dejaría anunciada una compra que todavía podría no confirmarse.
-      await _outbox.EnqueueAsync(new ProductPurchased(
-          updated.Id, updated.SKU, updated.Name, dto.Quantity, updated.Stock,
-          updated.Price, buyerUserId, DateTime.Now), token);
+        // Relectura para devolver el estado real: ExecuteUpdate no toca el change
+        // tracker, así que la instancia que ya teníamos sigue con el stock anterior.
+        var updated = await _repository.GetByIdWithCategoryAsync(product.Id, token) ?? product;
 
-      // Confirma la fila del outbox dentro de la transacción que abrió el runner.
-      await _repository.SaveChangesAsync(token);
+        // El evento se ESCRIBE aquí y se PUBLICA después (OutboxPublisher). Publicar
+        // directo a RabbitMQ en esta línea ataría la compra a que el broker esté vivo,
+        // y dejaría anunciada una compra que todavía podría no confirmarse.
+        await _outbox.EnqueueAsync(new ProductPurchased(
+            updated.Id, updated.SKU, updated.Name, dto.Quantity, updated.Stock,
+            updated.Price, buyerUserId, DateTime.Now), token);
 
-      return _mapper.Map<ProductDto>(updated);
-    }, ct);
+        var result = _mapper.Map<ProductDto>(updated);
+
+        // Deja constancia del intento. Tampoco hace SaveChanges: lo confirma el
+        // SaveChangesAsync de abajo, junto al evento y al descuento de stock.
+        _commands.Record(intent, dto, result);
+
+        // Confirma la fila del outbox y la del comando dentro de la transacción que
+        // abrió el runner. El choque de clave primaria de ExecutedCommands sale AQUÍ.
+        await _repository.SaveChangesAsync(token);
+
+        return new CommandOutcome<ProductDto>(result, WasReplayed: false);
+      }, ct);
+    }
+    catch (Exception ex) when (_commands.IsDuplicateIntent(ex))
+    {
+      // Otra réplica ejecutó el MISMO intento a la vez y confirmó primero. Nuestra
+      // transacción entera se deshizo —incluido el descuento de stock—, así que no hay
+      // nada que compensar: basta con devolver lo que hizo el ganador.
+      //
+      // ⚠️ Esto no es una carrera que haya que evitar, es la carrera resolviéndose. La
+      // base bloquea a la segunda inserción en la clave hasta que la primera confirma;
+      // por eso no hacen falta ni reserva, ni TTL, ni un estado "en curso".
+      var winner = await _commands.FindResultAsync<ProductDto>(intent, dto, ct)
+          ?? throw new ConflictAppException(
+              "A concurrent request with the same idempotency key is still in progress.");
+
+      return new CommandOutcome<ProductDto>(winner, WasReplayed: true);
+    }
   }
 }

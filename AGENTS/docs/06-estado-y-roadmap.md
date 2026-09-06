@@ -167,13 +167,27 @@ que un `Release` tardío no puede borrar la reserva de otro; la huella del cuerp
 compara en **todos** los caminos, no sólo en el secuencial; los plazos pasan a
 `IdempotencyOptions`; y la clave del cliente tiene límite.
 
-⚠️ **Lo que NO se cerró y es lo importante**: bajo carga el almacén **degrada en
-abierto y ejecuta sin garantía** — 174 de 14 400 peticiones (1,21 %) con Redis
-sano, porque el timeout de 1000 ms se eligió para el caso «Redis caído». Bajar los
-viajes mueve el umbral pero no elimina el modo de fallo. Las salidas —fallar en
-cerrado, un multiplexer propio para la idempotencia, o más de una conexión— son
-decisión del owner: `rules.md` §8 exige invertir el fail-open explícitamente y en
-todas las implementaciones a la vez.
+Lo que quedó abierto —el almacén degradaba en abierto bajo carga y ejecutaba sin
+garantía, 174 de 14 400— lo cierra el paso siguiente.
+
+### Paso 8.ter — La idempotencia, de optimización a garantía — ✅ **cerrado** (2026-09-06)
+
+Detalle en [`planning/17`](../planning/17_idempotencia-transaccional.md).
+
+La pregunta que dejó el paso anterior («¿fallamos en cerrado con 503?») **estaba mal
+planteada**. La marca de que un comando ya se ejecutó pasa a `ExecutedCommands`,
+escrita en la **misma transacción que el efecto** y arbitrada por su clave primaria —
+el *inbox pattern* que documenta Azure, lo que hace Stripe, y lo que este repo ya
+hacía bien en `ProductPurchasedConsumer`. Con eso, «el almacén no está» y «la
+operación no puede ocurrir» son el mismo evento.
+
+`BuyAsync` recibe una `CommandIntent` **obligatoria**: la garantía deja de depender
+de que el controller lleve un atributo, igual que se hizo con la transacción.
+`[Idempotent]` se queda en **puerta de admisión** para duplicados en vuelo.
+
+Verificado con Redis apuntando a un puerto muerto: 40 simultáneas con la misma clave
+descuentan **1** y todas reciben 200. Antes era imposible por diseño. Y la identidad
+byte a byte del replay se arregló sola al memorizar el DTO en vez de la respuesta HTTP.
 
 ### Paso 9 — Partir en proyectos (cuando duela, no antes)
 
@@ -211,13 +225,11 @@ admin). Hoy el único camino para tener un admin es el seeder.
   cambio a blob storage sea de una clase.
 - **`UseForwardedHeaders`.** El rate limiting particiona por IP remota; detrás de
   un proxy hará falta activarlo o todos los clientes compartirán partición.
-- **La idempotencia es *best effort*, no una garantía.** El almacén degrada en
-  abierto cuando Redis no contesta a tiempo, y bajo carga eso pasa con Redis sano.
-  Se cuenta (`apiecommerce.idempotency.requests{outcome=unguaranteed}`) y se avisa
-  al cliente (`Idempotency-Guaranteed: false`), pero no se impide. Decisión
-  pendiente en `planning/16` §16.6.
-- **La reserva es un lease sin renovación.** Una operación más lenta que
-  `Idempotency:ReservationTtlSeconds` libera su propia clave.
+- **Solo `POST /product/buy` declara intención de comando.** El mecanismo es
+  general; aplicarlo a otra operación es añadir el parámetro y dos líneas.
+- **La retención de `ExecutedCommands` va con `Outbox:RetentionDays`**, que ahora
+  gobierna tres tablas. ⚠️ Ese plazo tiene que cubrir el peor reintento de un
+  cliente: a partir de ahí, la misma clave vuelve a ejecutar de verdad.
 - **Rotación de `Jwt:SecretKey` en caliente.** `JwtTokenService` es singleton y
   materializa las `SigningCredentials` en el constructor, así que rotar la clave
   exige reiniciar. Se resuelve cambiando `IOptions` por `IOptionsMonitor`.

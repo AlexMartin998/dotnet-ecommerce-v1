@@ -2,6 +2,7 @@ using ApiEcommerce.Data;
 using ApiEcommerce.Shared.Auth;
 using ApiEcommerce.Shared.Db;
 using Microsoft.EntityFrameworkCore;
+using ApiEcommerce.Shared.Idempotency;
 
 namespace ApiEcommerce.Shared.Persistence;
 
@@ -65,6 +66,12 @@ public static class PersistenceExtensions
     // Scoped: comparte el AppDbContext del request, que es lo que hace que la
     // transacción cubra al repositorio y al outbox a la vez.
     services.AddScoped<ITransactionRunner, TransactionRunner>();
+
+    // Scoped y aquí, no en AddDistributedCaching: es la GARANTÍA de idempotencia y vive
+    // en la base de datos, no en la cache. Registrarla junto a Redis daría a entender que
+    // se apaga cuando no hay Redis — y es justo al revés: la marca se escribe en la misma
+    // transacción que el efecto, así que no hay nada que apagar.
+    services.AddScoped<ICommandLog, CommandLog>();
 
     return services;
   }

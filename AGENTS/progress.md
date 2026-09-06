@@ -4,7 +4,7 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-06** (idempotencia validada bajo carga real).
+Última actualización: **2026-09-06** (la idempotencia pasa a ser una garantía transaccional).
 
 ---
 
@@ -27,7 +27,8 @@
 | 13 | Refresh tokens y revocación | ❌ | [`planning/13`](planning/13_refresh-tokens.md) | — |
 | 14 | Administración de usuarios | ❌ | [`planning/14`](planning/14_admin-usuarios.md) | — |
 | 15 | Partir en proyectos | ❌ diferido | [`planning/15`](planning/15_partir-en-proyectos.md) | — |
-| 16 | Idempotencia bajo carga | ✅ | [`features/16`](features/16_idempotencia-bajo-carga.feature) · [`planning/16`](planning/16_idempotencia-bajo-carga.md) | — |
+| 16 | Idempotencia bajo carga | ✅ | [`features/16`](features/16_idempotencia-bajo-carga.feature) · [`planning/16`](planning/16_idempotencia-bajo-carga.md) | `7f120a2` |
+| 17 | Idempotencia transaccional | ✅ | [`features/17`](features/17_idempotencia-transaccional.feature) · [`planning/17`](planning/17_idempotencia-transaccional.md) | — |
 
 **Ya no queda ningún ⚠️.** El 09 se cerró el 2026-09-05 contra un RabbitMQ real, y esa
 verificación destapó un bug que el build y el smoke test no veían (abajo).
@@ -35,6 +36,55 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 ---
 
 ## 2. Bitácora
+
+### 2026-09-06 — La idempotencia deja de ser una optimización
+
+`planning/16` dejó una pregunta abierta: ¿fallar en cerrado con 503 cuando Redis está vivo
+pero lento? **Estaba mal planteada.** Se resolvió con cuatro frentes en paralelo —un
+abogado por cada postura, investigación de qué hace la industria, y una lectura DDD/Clean—
+y los cuatro llevaron al mismo sitio.
+
+**Lo que decidió el asunto:**
+
+- Los **dos abogados** llegaron por su cuenta a la misma conclusión: el 503 sobre Redis es
+  una media medida que compra riesgo de disponibilidad sin comprar corrección.
+- La **investigación** encontró que **nadie ejecuta sin garantía**: Adyen devuelve 503 con
+  `transient-error: true` y deja que sea *el cliente* quien renuncie omitiendo la cabecera;
+  AWS Powertools falla cerrado por construcción. Y Azure documenta el patrón bueno —
+  marcador y efectos **en la misma transacción**, con una restricción de unicidad como
+  árbitro—, que es donde Stripe guarda sus claves: su misma base de negocio, no una cache.
+- El **análisis DDD** señaló que no había que mover la idempotencia entera sino
+  **partirla**: el protocolo es adaptador, «este intento no se ejecuta dos veces» es
+  invariante de negocio. Y que un `catch` de un adaptador no puede relajar una invariante.
+- Y el repo **ya lo hacía bien** en `ProductPurchasedConsumer`: marca y efecto en una
+  transacción, arbitrados por una clave primaria. La misma pregunta tenía dos respuestas
+  distintas, y la débil estaba en el camino que toca el dinero.
+
+**Lo hecho**: `ExecutedCommands` (PK = la intención) escrita dentro de la transacción del
+servicio vía `ICommandLog`, gemelo de `IEventOutbox`; `BuyAsync` recibe una
+`CommandIntent` **obligatoria** —renunciar hay que escribirlo— y devuelve un
+`CommandOutcome<T>` que reporta si ya estaba ejecutado, que el controller traduce a la
+cabecera; el 422 pasa a ser una excepción de dominio; y `[Idempotent]` se queda en **puerta
+de admisión**: ya no memoriza respuestas, solo frena duplicados en vuelo con 409 para que
+no se apilen bloqueados sobre la misma fila.
+
+**Verificado ejecutando, y esto es lo que importa**: con Redis apuntando a un puerto
+muerto, 40 peticiones simultáneas con la misma clave descuentan **1** (3/3) y **todas
+reciben 200**; el reintento secuencial descuenta 3 y no 6; el reuso con otro cuerpo sigue
+dando 422. Antes eso era **imposible por diseño**, porque el almacén *era* Redis. Con
+Redis arriba: ráfagas de 350 y dos réplicas, descuento 1 en 4/4, y 2,00 viajes a Redis.
+
+⭐ **La identidad byte a byte del replay se arregló sola** (deuda desde `planning/12`
+§12.2). Al memorizar el DTO en vez de la respuesta HTTP, el replay vuelve a pasar por el
+mismo formateador de MVC: el `+` del base64 ya no sale como `\u002B`. El test pasó de
+comparar JSON parseado a comparar bytes.
+
+`rules.md` §8 reescrita: la idempotencia **no** era una optimización, y meterla en la misma
+frase que la cache costó el agujero medido en `planning/16`. La regla ahora distingue lo
+que tiene fuente de verdad alternativa de lo que no.
+
+171 tests en verde, build sin warnings, migración revisada antes de aplicar
+(`CREATE TABLE` limpio, sin recrear nada).
 
 ### 2026-09-06 — La idempotencia, validada con carga de verdad
 

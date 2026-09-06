@@ -13,32 +13,30 @@
 nunca hace push (`rules.md` §12).
 
 ### Qué se hizo en la última sesión
-1. **`planning/16` — la idempotencia validada bajo carga real** (SQL Server, Redis 7.0.15
-   y RabbitMQ en `192.168.3.82`; la IP del host cambió, `172.17.0.1` sigue valiendo por ser
-   la puerta del bridge de Docker). Es una fase de **revisión**, no una feature.
-2. **Aguantó**: exactamente-una-vez con ráfagas de 350 simultáneas y —comprobado por
-   primera vez— **entre dos réplicas** contra el mismo Redis.
-3. **Se corrigió**: `SET NX GET` (3,00 → 2,00 viajes por petición), **token de propiedad**
-   en la reserva (un `Release` tardío borraba la reserva viva de otro), la huella del
-   cuerpo comparada en **todos** los caminos, `IdempotencyOptions`, límite de longitud de
-   la clave, y el fail-open ahora deja rastro (cabecera + métrica).
-4. **169 tests** (eran 160), build sin warnings.
-
-### 🔴 Lo que quedó ABIERTO y es lo importante
-Bajo carga el store **degrada en abierto y ejecuta sin garantía de idempotencia**: 174 de
-14 400 peticiones (1,21 %) con **Redis sano**. La causa es que `SyncTimeout`/`AsyncTimeout`
-están en 1000 ms —elegidos para el caso «Redis caído»— sobre un único multiplexer. Bajar
-los viajes movió el umbral pero **no eliminó el modo de fallo**.
-Las tres salidas están en `planning/16` §16.6 y **ninguna se puede tomar sin el owner**,
-porque `rules.md` §8 exige invertir el fail-open explícitamente y en todas las
-implementaciones a la vez.
+1. **`planning/16`** — la idempotencia validada bajo carga real contra infraestructura de
+   verdad (`192.168.3.82`; la IP del host cambió, `172.17.0.1` sigue valiendo por ser la
+   puerta del bridge de Docker). Aguantó exactamente-una-vez con ráfagas de 350 y **entre
+   dos réplicas**; se destapó que el store **se apagaba solo** bajo carga (174 de 14 400
+   sin garantía, con Redis sano).
+2. **`planning/17`** — y eso se cerró **cambiando dónde vive la garantía**, no eligiendo
+   entre degradar o devolver 503. La marca del comando pasa a `ExecutedCommands`, escrita
+   en la **misma transacción que el efecto** y arbitrada por su clave primaria. Es el
+   *inbox pattern* (Azure), es lo que hace Stripe, y es lo que este repo **ya hacía bien**
+   en `ProductPurchasedConsumer`.
+3. `BuyAsync` recibe una **`CommandIntent` obligatoria**: la garantía deja de depender de
+   que el controller lleve un atributo. `[Idempotent]` se queda en **puerta de admisión**.
+4. ⭐ Verificado **con Redis apuntando a un puerto muerto**: 40 simultáneas con la misma
+   clave descuentan 1 y todas dan 200. Antes era **imposible por diseño**.
+5. La **identidad byte a byte** del replay se arregló sola (deuda desde `planning/12`).
+6. **171 tests**, build sin warnings, `rules.md` §8 reescrita.
 
 ### Por dónde seguir (en este orden)
-1. **Decidir el §16.6**: ¿la idempotencia falla en cerrado (503) cuando Redis está vivo
-   pero lento? Se distingue con `IConnectionMultiplexer.IsConnected`.
-2. **`AGENTS/planning/12` §12.5** — la deuda que sigue abierta. Lo primero: el **test del
-   P0 del consumidor** (marca + efecto atómicos), que pide extraer `ProcessAsync` a una
-   interfaz para poder hacer fallar el efecto.
+1. **`AGENTS/planning/12` §12.5** — lo primero: el **test del P0 del consumidor** (marca +
+   efecto atómicos), que pide extraer `ProcessAsync` a una interfaz para poder hacer
+   fallar el efecto.
+2. **`SqlException` escapando como 500 bajo carga** (`planning/17` §17.4): «Operation
+   cancelled by user» cuando el cliente cuelga, y Win32 258 por timeout. Ensucia las
+   métricas de error. Pide su propio planning.
 3. **`planning/13`** refresh tokens · **`planning/14`** administración de usuarios.
 4. `planning/15` (partir en proyectos) sigue **diferido a propósito**.
 
@@ -329,11 +327,12 @@ gh auth login            # o pasar el remoto a SSH
 
 Category y Product tienen el slice vertical completo. Hay auth con Identity+JWT,
 versionado, CORS, cache Redis con decorador, paginación, subida de imágenes, seeding,
-rate limiting, Serilog, health checks, protección de carreras, idempotencia y outbox +
+rate limiting, Serilog, health checks, protección de carreras, idempotencia **transaccional** (`ExecutedCommands`, en la
+misma transacción que el efecto) y outbox +
 RabbitMQ — este último **verificado de punta a punta contra un broker real** el
 2026-09-05, incluidos deduplicación y DLQ.
 
-**Tests y CI hechos**: `tests/ApiEcommerce.Tests`, **169** (unitarios + integración +
+**Tests y CI hechos**: `tests/ApiEcommerce.Tests`, **171** (unitarios + integración +
 concurrencia + degradación y arranque) y `.github/workflows/ci.yml`. **`planning/12`
 cerrado** salvo la licencia de AutoMapper. Lo siguiente es `planning/12` §12.5 (la deuda
 nueva) y luego refresh tokens y administración de usuarios.
