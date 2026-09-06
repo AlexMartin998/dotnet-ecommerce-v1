@@ -35,6 +35,32 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 
 ## 2. Bitácora
 
+### 2026-09-06 — Deuda 12.3: observabilidad y operación. **`planning/12` cerrado**
+
+- **OpenTelemetry**: trazas (ASP.NET Core, HttpClient, SqlClient) y métricas (+ runtime).
+  `ParentBasedSampler` para no partir las trazas distribuidas, y las sondas `/health`
+  filtradas —se ejecutan cada pocos segundos y ahogarían cualquier traza que importe.
+  ⚠️ Se **instrumenta siempre y se exporta solo si hay `OtlpEndpoint`**: la observabilidad
+  no puede ser el motivo de que la API no arranque. Y el **texto** de las consultas SQL no
+  se captura: llevaría correos, nombres y precios al backend de trazas.
+- **`CorrelationIdMiddleware`**: respeta el `X-Correlation-Id` entrante (para que una
+  cadena de servicios comparta uno de punta a punta), lo devuelve en la respuesta y lo
+  empuja —con el `TraceId`— a todas las líneas de log. Va **arriba del pipeline**: más
+  abajo dejaría sin identificar justo los fallos tempranos.
+- **`UseHsts()`** fuera de Development. En Development no, porque la cabecera queda
+  cacheada para `localhost` y rompe otros proyectos servidos en claro por ese host.
+- **Tercera conexión a Redis unificada** (el health check). Con la cadena de conexión la
+  sonda abría la suya: podía decir `Healthy` con una conexión sana mientras la que sirve
+  el tráfico estaba rota.
+
+Verificado ejecutando: id generado por el servidor, id del cliente **respetado**, ambos en
+el log junto al `TraceId`, un id de 500 caracteres **ignorado**, y sin colector OTLP ni un
+solo intento de exportación ni un error. 159 tests en verde, build **sin warnings** (que
+importa: la CI va con `-warnaserror`).
+
+**`planning/12` queda cerrado** salvo 12.4, que es una decisión de producto del owner
+(licencia de AutoMapper).
+
 ### 2026-09-06 — Deuda 12.2: `ETag`/`If-Match` y hash del cuerpo en la idempotencia
 
 **`ETag` / `If-Match`.** Cierra el *lost update* entre dos administradores, que

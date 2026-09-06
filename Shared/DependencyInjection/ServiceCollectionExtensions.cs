@@ -8,6 +8,7 @@ using ApiEcommerce.Shared.Http;
 using ApiEcommerce.Shared.Http.Health;
 using ApiEcommerce.Shared.Mapping;
 using ApiEcommerce.Shared.Messaging;
+using ApiEcommerce.Shared.Observability;
 using ApiEcommerce.Shared.Persistence;
 using ApiEcommerce.Shared.Storage;
 
@@ -61,7 +62,8 @@ public static class ServiceCollectionExtensions
           .AddObjectMapping(typeof(CategoryProfile).Assembly)  // Shared/Mapping — AutoMapper
           .AddDistributedCaching(configuration) // Shared/Caching      — Redis + idempotencia
           .AddFileStorage(configuration)        // Shared/Storage      — almacenamiento de archivos
-          .AddMessaging(configuration);         // Shared/Messaging    — outbox + RabbitMQ
+          .AddMessaging(configuration)          // Shared/Messaging    — outbox + RabbitMQ
+          .AddObservability(configuration);     // Shared/Observability — trazas y métricas
 
 
   /// <summary>

@@ -1,5 +1,6 @@
 using ApiEcommerce.Shared.DependencyInjection;
 using ApiEcommerce.Shared.Http;
+using ApiEcommerce.Shared.Observability;
 using Asp.Versioning.ApiExplorer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -74,6 +75,12 @@ using (var scope = app.Services.CreateScope())
 // datos reales del cliente y no los del proxy.
 app.UseForwardedHeaders();
 
+// Justo después de resolver la IP real y ANTES de todo lo demás: cualquier línea de log
+// que se emita a partir de aquí —incluida la del handler de errores— lleva el
+// CorrelationId. Ponerlo más abajo dejaría sin identificar justamente los fallos
+// tempranos, que son los peores de diagnosticar.
+app.UseMiddleware<CorrelationIdMiddleware>();
+
 // Una línea por request con método, ruta, código y duración, en vez de las tres
 // del logger por defecto.
 app.UseSerilogRequestLogging();
@@ -101,6 +108,17 @@ if (app.Environment.IsDevelopment())
                 description.GroupName.ToUpperInvariant());
     });
 }
+
+// HSTS: le dice al navegador "a este dominio, solo HTTPS" durante N meses, así que la
+// PRIMERA petición en claro de la siguiente visita ni siquiera sale. UseHttpsRedirection
+// por sí solo no lo evita: redirige, pero esa primera petición ya viajó con la cookie o
+// el token dentro.
+//
+// ⚠️ Fuera de Development a propósito. En local se sirve HTTP y una cabecera HSTS queda
+// cacheada en el navegador para `localhost`, rompiendo cualquier otro proyecto que use
+// ese host en claro — y cuesta de diagnosticar porque el fallo aparece en otra app.
+if (!app.Environment.IsDevelopment())
+    app.UseHsts();
 
 app.UseHttpsRedirection();
 

@@ -50,15 +50,21 @@
       parsee JSON; byte-identidad exigiría capturar lo que MVC escribe.
 
 ## 12.3 Observabilidad y operación
-- [ ] **OpenTelemetry**: trazas y métricas, más un correlation id por request. Es lo primero
-      que se pide en un incidente y no se puede añadir *después* del incidente.
+- [x] **OpenTelemetry**: trazas (ASP.NET Core, HttpClient, SqlClient) y métricas
+      (+ runtime), con `ParentBasedSampler` para no partir las trazas distribuidas, y
+      `CorrelationIdMiddleware` que respeta el `X-Correlation-Id` entrante, lo devuelve y
+      lo mete —junto al `TraceId`— en **todas** las líneas de log.
+      ⚠️ **Se instrumenta siempre, se exporta solo si hay `OtlpEndpoint`**: misma decisión
+      que con Redis y RabbitMQ, la observabilidad no puede ser el motivo de que la API no
+      arranque. Y el **texto** de las consultas SQL NO se captura: llevaría los valores de
+      los parámetros al backend de trazas.
 - [x] **CI**: `.github/workflows/ci.yml` (build con `-warnaserror` + 153 tests en cada push y PR).
 - [x] **Construir la imagen**: job `docker-build` en la CI.
-- [ ] `UseHsts()` en no-Development.
-- [~] Unificar las conexiones a Redis. **Hecho** para `AddStackExchangeRedisCache` y el
-      `IConnectionMultiplexer` propio (un solo multiplexer vía `ConnectionMultiplexerFactory`);
-      lo destapó medir la degradación: el de la cache se quedaba con los timeouts de
-      fábrica y esperaba 5 s. **Falta** el health check.
+- [x] `UseHsts()` en no-Development. (En Development no: la cabecera queda cacheada para `localhost` y rompe otros proyectos servidos en claro por ese host.)
+- [x] Unificar las **tres** conexiones a Redis. Un solo multiplexer para
+      `AddStackExchangeRedisCache` (vía `ConnectionMultiplexerFactory`), para el propio y
+      para el health check. ⚠️ Con la cadena de conexión, la sonda abría la SUYA: podía
+      decir `Healthy` con una conexión sana mientras la que sirve el tráfico estaba rota.
 
 ## 12.4 Decisión de producto pendiente
 - [ ] **Licencia de AutoMapper.** La 15.1.1 exige licencia comercial en producción y lo avisa

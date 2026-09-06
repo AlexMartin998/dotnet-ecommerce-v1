@@ -1,5 +1,6 @@
 using ApiEcommerce.Data;
 using ApiEcommerce.Shared.Caching;
+using StackExchange.Redis;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using ApiEcommerce.Shared.Messaging;
@@ -27,8 +28,15 @@ public static class HealthCheckExtensions
     // Solo se comprueba Redis si está configurado: si no lo está, la app funciona
     // sin cache y exigirlo en readiness dejaría el servicio fuera de rotación por
     // una dependencia que ni siquiera usa.
+    // ⚠️ Se le pasa el multiplexer del contenedor, NO la cadena de conexión. Con la cadena,
+    // el health check abría su PROPIA conexión: una tercera, con sus propios timeouts de
+    // fábrica. Además de duplicar conexiones al broker, la sonda podía decir "Healthy"
+    // usando una conexión sana mientras la que usa la aplicación estaba rota — que es
+    // exactamente lo que una sonda no puede hacer. Ahora comprueba **la misma** conexión
+    // que sirve el tráfico.
     if (redis is not null && redis.IsEnabled)
-      checks.AddRedis(redis.Configuration, name: "redis", tags: ["ready"]);
+      checks.AddRedis(
+          sp => sp.GetRequiredService<IConnectionMultiplexer>(), name: "redis", tags: ["ready"]);
 
     // Eventos que agotaron sus reintentos y quedaron sin publicar. Sin esta sonda, un
     // broker caído el tiempo suficiente entierra eventos en silencio y el servicio
