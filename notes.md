@@ -2155,3 +2155,94 @@ fuerte en     enrutado y reintentos finos      volumen bruto y REPLAY historico
        verdad importa— es agnostico. Migrar seria reimplementar `IEventPublisher` y el
        consumidor; ni el servicio de negocio, ni la tabla, ni la transaccion se enteran.
        Por eso no merece la pena elegir Kafka "por si acaso"
+
+
+
+
+
+
+## 25. El primer proyecto de tests  <- y como saber si un test sirve
+```sh
+dotnet new xunit -o tests/ApiEcommerce.Tests   # ojo: la plantilla del SDK 10 solo ofrece net10.0
+dotnet sln add tests/ApiEcommerce.Tests/ApiEcommerce.Tests.csproj
+dotnet test tests/ApiEcommerce.Tests
+```
+
+- --- ⚠️ **`tests/**` hay que EXCLUIRLO del .csproj de la API**, igual que `AGENTS/**`
+```xml
+<Compile Remove="tests/**" />
+```
+  - -- el glob implicito del SDK compila TODO el .cs que cuelgue de la carpeta del csproj
+  - -- sin esto: xunit y Moq acaban dentro de la imagen de produccion, y ademas hay
+       referencia circular (la API compila los tests, que referencian a la API)
+  - -- la raiz de este repo ES la carpeta del proyecto, por eso `tests/` va dentro y no en
+       `../ApiEcommerce.Tests` como suele ponerse
+
+- --- ⚠️ El TFM del proyecto de tests se pone **a mano**
+  - -- la plantilla del SDK 10 solo ofrece `net10.0` y la API es `net9.0`
+  - -- un test que corre sobre un runtime distinto del que se despliega no prueba lo que crees
+
+- --- ⚠️ **FluentAssertions NO** (aunque la skill dotnet-best-practices la pida)
+  - -- desde la **v8 exige licencia comercial**. Ya tenemos ese problema abierto con
+       AutoMapper 15; no hacen falta dos
+  - -- con `Assert` de xunit sobra. Alternativa MIT si se quiere fluidez: Shouldly
+
+- --- ⭐ `MockBehavior.Strict` convierte "no llamar" en una ASERCION
+```csharp
+private readonly Mock<ICategoryRepository> _repository = new(MockBehavior.Strict);
+// en un PATCH sin nombre, CUALQUIER llamada al repositorio hace fallar el test
+// -> eso es exactamente lo que se quiere probar: que no consulta la base
+```
+  - -- con el modo Loose por defecto, "no se llamo" hay que verificarlo aparte y se olvida
+
+- --- ⭐ Verificar el **ORDEN**, no solo que se llamo
+```csharp
+var order = new List<string>();
+_rules.Setup(...).Callback(() => order.Add("rules"));
+_repo.Setup(...).Callback(() => order.Add("repository"));
+Assert.Equal(["rules", "repository"], order);
+```
+  - -- media arquitectura de este repo son invariantes de ORDEN: las reglas ANTES de
+       escribir, el mapeo DESPUES de las reglas (para que la regla vea el estado previo),
+       la invalidacion de cache DESPUES de que la escritura vaya bien
+  - -- `Times.Once` sobre cada uno pasa igual aunque el orden este invertido
+
+- --- ⚠️ `SqlException` **no tiene constructor publico**: la crea el driver
+```csharp
+// hay que llegar por reflexion al CreateException interno
+Activator.CreateInstance(typeof(SqlError), BindingFlags.NonPublic | BindingFlags.Instance, ...)
+typeof(SqlException).GetMethod("CreateException", BindingFlags.Static | BindingFlags.NonPublic)
+```
+  - -- es feo y es fragil ante un cambio de version de Microsoft.Data.SqlClient
+  - -- pero la alternativa es no poder probar el mapeo 2601/2627/1205/547 sin levantar SQL
+       Server, **y ese mapeo ya se rompio una vez aqui**
+  - -- si un dia el helper falla al actualizar el paquete, el fallo es DEL HELPER y no del
+       handler: se arregla en un sitio
+
+- --- ⚠️ **Identity no expone interfaces**: `UserManager` y `SignInManager` son clases
+      concretas con constructores enormes
+```csharp
+new Mock<UserManager<ApplicationUser>>(Mock.Of<IUserStore<ApplicationUser>>(),
+    null!, null!, null!, null!, null!, null!, null!, null!);
+```
+  - -- Moq las puede simular porque sus metodos son `virtual`; hay que pasar los
+       argumentos posicionales y tragarse los `null!`
+
+- --- ⭐⭐ **Como saber si un test SIRVE: prueba de mutacion**
+  - -- un test que pasa contra el codigo roto no vale nada, y eso no se nota nunca
+  - -- se reintroducen bugs REALES ya corregidos y se mira si la suite los caza
+```sh
+# 1) quitar el MapFrom explicito de CategoryId  (el bug del 500 por FK)
+# 2) volver FindSqlException a mirar solo el InnerException directo (el 500 en TryDecrementStock)
+dotnet test    # -> Failed: 7, y son EXACTAMENTE los 4 metodos que debian caer
+```
+  - -- si la suite sigue verde con el bug dentro, el test estaba probando otra cosa
+  - -- hacerlo con cada bloque nuevo de tests, no una sola vez
+
+- --- Lo que los unitarios NO cubren, que es donde han salido TODOS los bugs de este repo
+```
+concurrencia   -> Task.WhenAll de peticiones REALES (secuencialmente pasaba con el bug dentro)
+degradacion    -> con Redis o el broker CAIDOS
+arranque       -> ASPNETCORE_ENVIRONMENT=Production con la config minima
+```
+  - -- eso es la fase 3 en adelante: WebApplicationFactory + Testcontainers
