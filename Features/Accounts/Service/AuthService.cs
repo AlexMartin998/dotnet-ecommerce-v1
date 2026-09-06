@@ -113,6 +113,37 @@ public sealed class AuthService(
     return await ToDtoAsync(user);
   }
 
+  public async Task ChangePasswordAsync(
+      string userId, ChangePasswordDto dto, CancellationToken ct = default)
+  {
+    ArgumentNullException.ThrowIfNull(dto);
+
+    var user = await userManager.FindByIdAsync(userId)
+        ?? throw new NotFoundAppException("User", userId);
+
+    var result = await userManager.ChangePasswordAsync(user, dto.CurrentPassword, dto.NewPassword);
+
+    if (result.Succeeded)
+    {
+      logger.LogInformation("User {UserId} changed their password", userId);
+      return;
+    }
+
+    // Se distingue "la actual no es correcta" de "la nueva no cumple la política": son dos
+    // errores muy distintos para quien está delante, y devolver siempre lo mismo obliga a
+    // adivinar cuál de las dos casillas hay que corregir.
+    //
+    // ⚠️ No es un oráculo: para llegar aquí ya hay que estar autenticado como ESE usuario,
+    // así que no revela nada que quien pregunta no supiera.
+    if (result.Errors.Any(e => e.Code == "PasswordMismatch"))
+      throw new UnauthorizedAppException("The current password is not correct.");
+
+    throw new ValidationAppException(new Dictionary<string, string[]>
+    {
+      ["newPassword"] = [.. result.Errors.Select(e => e.Description)]
+    });
+  }
+
   // ---- helpers privados ---------------------------------------------------
 
   private async Task<AuthResponseDto> BuildAuthResponseAsync(ApplicationUser user)

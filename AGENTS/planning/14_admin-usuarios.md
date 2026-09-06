@@ -67,11 +67,11 @@ rato ya no pueden renovar. Es consecuencia de que un JWT sea autocontenido.
 
 ## Lo que queda abierto
 
-- [ ] **Cambiar la contraseña no revoca las sesiones.** Debería —es la expectativa de
-      cualquiera que cambia su contraseña porque sospecha— y ya es una sola llamada a
-      `RevokeAllSessionsAsync`. Falta el endpoint de cambio de contraseña, que no existe.
-- [ ] **No hay «cerrar sesión en todos mis dispositivos»** para el propio usuario. El
-      mecanismo está entero; falta exponerlo en `auth`.
+- [x] ✅ **Cambiar la contraseña revoca las sesiones.** `POST /api/v1/auth/password`
+      exige la contraseña ACTUAL —un access token demuestra que alguien entró hace un rato,
+      no que quien está delante sea el dueño— y al cambiarla corta todas las sesiones,
+      abriendo una nueva para este dispositivo.
+- [x] ✅ **«Cerrar sesión en todos mis dispositivos»**: `POST /api/v1/auth/logout-all`.
 - [ ] **El listado hace una consulta de roles por usuario** (N+1). Se acepta: la página está
       acotada a 100 y es un panel de administración. Si molesta, la salida es un JOIN contra
       `UserRoles`, no subir el `pageSize`.
