@@ -6,6 +6,7 @@ using ApiEcommerce.Shared.Storage;
 using Asp.Versioning;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Net.Http.Headers;
 using ApiEcommerce.Features.Catalog.Dtos;
 using ApiEcommerce.Features.Catalog.Service;
 
@@ -104,6 +105,9 @@ public class ProductController : ControllerBase
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
+    // La respuesta central de If-Match, y el 400 del token ilegible. Sin declararlas,
+    // Swagger no documenta lo único que un cliente necesita saber para usar la feature.
+    [ProducesResponseType(StatusCodes.Status412PreconditionFailed)]
     public async Task<IActionResult> UpdateProduct(int id, [FromBody] UpdateProductDto dto, CancellationToken ct)
     {
         if (!ModelState.IsValid)
@@ -112,7 +116,7 @@ public class ProductController : ControllerBase
         // La versión viaja por cabecera, no en el cuerpo: es una precondición de HTTP.
         // Se rellena aquí para que el servicio y las reglas no tengan que conocer
         // HttpContext. Es OPCIONAL: sin If-Match, el PATCH se comporta como siempre.
-        dto.RowVersion = IfMatch();
+        dto.IfMatch = IfMatchTags();
 
         await _service.UpdateAsync(id, dto, ct);
         return NoContent();
@@ -213,12 +217,27 @@ public class ProductController : ControllerBase
     /// <c>If-Match</c> devolvería 412 — un fallo especialmente desagradable porque parece
     /// un conflicto real.
     /// </remarks>
-    private string? IfMatch()
+    private IReadOnlyList<string>? IfMatchTags()
     {
-        var header = Request.Headers.IfMatch.ToString();
+        // ⚠️ Se parsea con el tipo del framework y no a mano. `If-Match` admite una LISTA
+        // (`If-Match: "a", "b"`) y la precondición se cumple si ALGUNA casa; tratarlo como
+        // un token único devolvía 400 a un cliente conforme —y a cualquiera que mandara la
+        // cabecera dos veces, porque StringValues las une con coma—.
+        //
+        // El `TrimStart('W', '/')` anterior además era una trampa latente: con un ETag sin
+        // comillas que empezara por 'W' o '/' se comía caracteres del token. Hoy no podía
+        // pasar (el base64 de un rowversion empieza siempre por 'A'), pero dependía de un
+        // detalle del formato del dato, no del código.
+        if (!EntityTagHeaderValue.TryParseList(Request.Headers.IfMatch, out var tags) || tags is null)
+            return null;
 
-        if (string.IsNullOrWhiteSpace(header) || header == "*") return null;
+        var strong = tags
+            // El RFC 9110 §13.1.1 exige comparación FUERTE en If-Match: un validador débil
+            // (`W/"..."`) no puede satisfacer la precondición. Antes se aceptaba.
+            .Where(tag => !tag.IsWeak && tag.Tag.HasValue && tag.Tag != "*")
+            .Select(tag => tag.Tag.Value!.Trim('"'))
+            .ToList();
 
-        return header.Trim().TrimStart('W', '/').Trim('"');
+        return strong.Count > 0 ? strong : null;
     }
 }

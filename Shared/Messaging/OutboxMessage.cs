@@ -45,12 +45,26 @@ public class OutboxMessage
   /// Orden de inserción, asignado por la BASE (columna <c>IDENTITY</c>).
   /// </summary>
   /// <remarks>
-  /// ⚠️ El publicador ordena por esto y <b>no</b> por <see cref="OccurredAt"/>.
-  /// <c>OccurredAt</c> es <c>DateTime.Now</c> del proceso que escribió la fila: con dos
-  /// réplicas, el orden de publicación dependía del reloj de cada máquina, y dos eventos
-  /// del mismo agregado podían salir invertidos. Un <c>IDENTITY</c> lo asigna un único
-  /// árbitro —el servidor SQL— y además desempata las filas del mismo milisegundo, que
-  /// con inserciones en lote es lo normal.
+  /// <para>
+  /// El publicador ordena por esto y <b>no</b> por <see cref="OccurredAt"/>, que es
+  /// <c>DateTime.Now</c> del proceso que escribió la fila: con dos réplicas dependía del
+  /// reloj de cada máquina y no desempataba las filas del mismo milisegundo. Un
+  /// <c>IDENTITY</c> lo asigna un único árbitro, el servidor SQL, y es <b>determinista y
+  /// repetible</b>.
+  /// </para>
+  /// <para>
+  /// ⚠️ <b>Pero NO garantiza el orden de publicación, y conviene decirlo claro.</b> El
+  /// <c>IDENTITY</c> se asigna al <c>INSERT</c>; la fila se hace visible al <c>COMMIT</c>.
+  /// Bajo READ COMMITTED, una transacción lenta con secuencia 54 puede confirmar
+  /// <i>después</i> de que el publicador ya haya publicado la 55 — verificado: la 54 salió
+  /// después de la 55. Los huecos en la tabla (transacciones que hacen rollback tras
+  /// consumir el IDENTITY) son la otra cara del mismo hecho.
+  /// </para>
+  /// <para>
+  /// Hoy da igual: hay un evento por compra y ningún consumidor exige orden entre
+  /// agregados. Si algún día importa, hace falta un <i>watermark</i> que espere a las
+  /// transacciones abiertas, no una columna. Queda anotado en <c>planning/12</c>.
+  /// </para>
   /// </remarks>
   public long Sequence { get; set; }
 

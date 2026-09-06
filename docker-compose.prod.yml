@@ -64,6 +64,13 @@ services:
       # que estuviera en el fichero base seguiría permitido aquí.
       Cors__AllowedOrigins__0: "${CORS_ORIGIN_0:-http://localhost:3000}"
 
+      # Observabilidad: VACÍO = se instrumenta pero no se exporta. Apuntar a un colector
+      # OTLP (`http://otel-collector:4317`) es lo único que hace falta para tener trazas.
+      Observability__ServiceName: "apiecommerce"
+      Observability__OtlpEndpoint: "${OTLP_ENDPOINT:-}"
+      # Trazar el 100% del tráfico es caro; en producción se suele bajar.
+      Observability__SamplingRatio: "${OTLP_SAMPLING_RATIO:-1.0}"
+
       # Apagado fuera de desarrollo: crearía un admin con una contraseña conocida.
       # Y con el seeding apagado NO hace falta Seed__AdminPassword — esa validación
       # es condicional (`.Validate(...)`), no un [Required] que reventaba el arranque.

@@ -32,5 +32,19 @@ public sealed class ObservabilityOptions
   [Range(0d, 1d)]
   public double SamplingRatio { get; init; } = 1d;
 
-  public bool ExportsTraces => !string.IsNullOrWhiteSpace(OtlpEndpoint);
+  /// <summary>
+  /// Endpoint válido y utilizable. <b>Comprueba que sea un URI absoluto</b>, no solo que
+  /// no esté vacío.
+  /// </summary>
+  /// <remarks>
+  /// ⚠️ Sin esto, un valor mal escrito (un espacio de más en una variable de entorno)
+  /// hacía que <c>new Uri(...)</c> lanzara <c>UriFormatException</c> <b>en el arranque</b>,
+  /// y encima <i>después</i> de migrar y sembrar: con <c>restart: unless-stopped</c>, un
+  /// crash-loop por un endpoint de métricas. Es exactamente el mismo error de fondo que el
+  /// <c>[Required]</c> de <c>SeedOptions.AdminPassword</c>: una pieza opcional decidiendo
+  /// si la API arranca.
+  /// </remarks>
+  public bool ExportsTraces
+      => !string.IsNullOrWhiteSpace(OtlpEndpoint)
+         && Uri.TryCreate(OtlpEndpoint, UriKind.Absolute, out _);
 }

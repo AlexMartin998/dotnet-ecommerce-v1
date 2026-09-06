@@ -31,7 +31,7 @@ public sealed class ProductRules(
   public async Task EnsureCanUpdateAsync(
       int id, UpdateProductDto dto, Product existing, CancellationToken ct = default)
   {
-    EnsureVersionMatches(dto.RowVersion, existing);
+    EnsureVersionMatches(dto.IfMatch, existing);
 
     // PATCH: solo se valida lo que el cliente envía.
     if (dto.CategoryId is int categoryId)
@@ -65,24 +65,30 @@ public sealed class ProductRules(
   /// <c>DbUpdateConcurrencyException</c> → 409. Dos redes, cada una para su carrera.
   /// </para>
   /// </remarks>
-  private static void EnsureVersionMatches(string? clientVersion, Product existing)
+  private static void EnsureVersionMatches(IReadOnlyList<string>? clientVersions, Product existing)
   {
-    if (string.IsNullOrWhiteSpace(clientVersion)) return;
+    if (clientVersions is null || clientVersions.Count == 0) return;
 
-    byte[] expected;
+    var expected = new List<byte[]>(clientVersions.Count);
 
-    try
+    foreach (var version in clientVersions)
     {
-      expected = Convert.FromBase64String(clientVersion);
-    }
-    catch (FormatException)
-    {
-      // 400 y no 412: no es que la precondición falle, es que ni siquiera es un token.
-      throw new BadOperationAppException("The If-Match header is not a valid entity tag.");
+      try
+      {
+        expected.Add(Convert.FromBase64String(version));
+      }
+      catch (FormatException)
+      {
+        // 400 y no 412: no es que la precondición falle, es que ni siquiera es un token.
+        throw new BadOperationAppException("The If-Match header is not a valid entity tag.");
+      }
     }
 
-    if (existing.RowVersion is null || !expected.SequenceEqual(existing.RowVersion))
-      throw new PreconditionFailedAppException();
+    // El RFC 9110 dice que basta con que UNA case.
+    if (existing.RowVersion is not null && expected.Any(e => e.SequenceEqual(existing.RowVersion)))
+      return;
+
+    throw new PreconditionFailedAppException();
   }
 
   private async Task EnsureCategoryExistsAsync(int categoryId, CancellationToken ct)

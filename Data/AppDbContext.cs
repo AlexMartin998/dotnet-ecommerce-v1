@@ -63,8 +63,17 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     // real de drenaje; indexar OccurredAt ordenaba por un valor que ya no manda.
     // El filtro es lo que lo mantiene pequeño: la tabla crece sin parar, pero las filas
     // pendientes son siempre unas pocas.
+    // ⚠️ `Attempts` va en el INCLUDE. El publicador filtra por `Attempts < MaxPublishAttempts`,
+    // que no estaba en el índice: el plan real hacía un key lookup a la tabla por CADA fila
+    // recorrida para evaluarlo. Y los mensajes agotados siguen con `ProcessedAt IS NULL`
+    // (el recolector no los borra, a propósito), así que se quedan en el índice PARA
+    // SIEMPRE, a la cabeza del escaneo, y cada vuelta —cada 5 s, eternamente— paga un
+    // lookup por cada uno antes de llegar a los frescos. Basta un despliegue con la
+    // routing key mal para llenarlo de zombis: medido, dos mensajes sin cola destino
+    // pasaron de 0 a 5 intentos en ~14 s.
     modelBuilder.Entity<OutboxMessage>()
         .HasIndex(m => m.Sequence)
+        .IncludeProperties(m => m.Attempts)
         .HasFilter("[ProcessedAt] IS NULL")
         .HasDatabaseName("IX_OutboxMessages_Pending");
 

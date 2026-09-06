@@ -18,7 +18,16 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseSerilog((context, configuration) => configuration
     .ReadFrom.Configuration(context.Configuration)
     .Enrich.FromLogContext()
-    .WriteTo.Console());
+    // ⚠️ La plantilla NO es cosmética. La de fábrica de Serilog es
+    // `[{Timestamp} {Level}] {Message}{NewLine}{Exception}`: **no renderiza las propiedades
+    // del LogContext**, así que el CorrelationId y el TraceId se empujaban correctamente y
+    // no aparecían en ninguna línea — o sea, la única razón de existir del middleware no
+    // se cumplía. Un fallo silencioso: el mecanismo funciona, el sink no lo enseña.
+    .WriteTo.Console(outputTemplate:
+        "[{Timestamp:HH:mm:ss} {Level:u3}] [{CorrelationId}/{TraceId}] {Message:lj}{NewLine}{Exception}"));
+
+// ⚠️ El sink se declara AQUÍ y no en `Serilog:WriteTo` de appsettings. Declararlo en los
+// dos sitios NO sustituye: Serilog los suma y cada línea sale DUPLICADA.
 
 
 // // // Add SERVICES to the container ---------------------------------
@@ -118,7 +127,7 @@ if (app.Environment.IsDevelopment())
 // cacheada en el navegador para `localhost`, rompiendo cualquier otro proyecto que use
 // ese host en claro — y cuesta de diagnosticar porque el fallo aparece en otra app.
 if (!app.Environment.IsDevelopment())
-    app.UseHsts();
+    app.UseHsts();   // max-age configurado en AddWebApi; el de fábrica son 30 días
 
 app.UseHttpsRedirection();
 

@@ -63,7 +63,11 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
   private static string ConnectionString =>
       $"Server={SqlHost},{SqlPort};Database=ApiEcommerceNET8_Tests;User ID=sa;Password={SqlPassword};" +
-      "TrustServerCertificate=true;MultipleActiveResultSets=true";
+      // Sin MultipleActiveResultSets: MARS hace que EF Core DESACTIVE los savepoints y
+      // suelte un warning en cada transacción ("If 'SaveChanges' fails, the transaction
+      // cannot be automatically rolled back"). EF Core no lo necesita —es herencia de
+      // EF6— y con él los tests corrían en un modo transaccional distinto del real.
+      "TrustServerCertificate=true";
 
   /// <summary>
   /// Ajustes que una subclase puede pisar para probar un entorno distinto (Redis caído,

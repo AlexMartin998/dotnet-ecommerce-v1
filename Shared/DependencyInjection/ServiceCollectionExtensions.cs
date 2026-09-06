@@ -85,6 +85,16 @@ public static class ServiceCollectionExtensions
   {
     services.AddControllers();
 
+    // HSTS. El valor de fábrica de ASP.NET Core son **30 días**, que no sirve de mucho:
+    // la recomendación operativa es un año, porque la protección solo vale mientras el
+    // navegador recuerde la política.
+    //
+    // ⚠️ SIN `Preload` ni `IncludeSubDomains` a propósito. `Preload` es una **puerta de
+    // un solo sentido**: entrar en la lista de los navegadores lleva meses y salir, más;
+    // e `IncludeSubDomains` rompe cualquier subdominio que aún se sirva en claro. Las dos
+    // se activan cuando alguien lo decida a sabiendas, no por defecto.
+    services.AddHsts(options => options.MaxAge = TimeSpan.FromDays(365));
+
     return services
         .AddApiVersioningAndDocs()        // Shared/Http/ApiDocumentationExtensions
         .AddCorsPolicy(configuration)     // Shared/Http/CorsPolicies

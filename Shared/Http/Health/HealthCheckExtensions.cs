@@ -34,9 +34,20 @@ public static class HealthCheckExtensions
     // usando una conexión sana mientras la que usa la aplicación estaba rota — que es
     // exactamente lo que una sonda no puede hacer. Ahora comprueba **la misma** conexión
     // que sirve el tráfico.
+    // ⚠️ `Degraded`, NO `Unhealthy` (que es el valor por defecto). Redis es una
+    // OPTIMIZACIÓN y la aplicación degrada en abierto (rules §8): con Redis caído las
+    // lecturas se sirven de la base y las compras funcionan. Marcarlo `Unhealthy` hacía
+    // que `/health/ready` respondiera **503**, y como la caída de Redis la ven TODAS las
+    // réplicas a la vez, el orquestador las sacaba de rotación todas: una dependencia
+    // opcional provocando una caída total. Medido: con Redis muerto,
+    // `GET /api/v1/category` respondía 200 y `/health/ready` respondía 503.
+    //
+    // `Degraded` responde 200 y sigue apareciendo en el detalle de la sonda, que es
+    // exactamente lo que se quiere: visible para quien mira, invisible para el balanceador.
     if (redis is not null && redis.IsEnabled)
       checks.AddRedis(
-          sp => sp.GetRequiredService<IConnectionMultiplexer>(), name: "redis", tags: ["ready"]);
+          sp => sp.GetRequiredService<IConnectionMultiplexer>(),
+          name: "redis", failureStatus: HealthStatus.Degraded, tags: ["ready"]);
 
     // Eventos que agotaron sus reintentos y quedaron sin publicar. Sin esta sonda, un
     // broker caído el tiempo suficiente entierra eventos en silencio y el servicio

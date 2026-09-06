@@ -1,6 +1,7 @@
 using System.Net;
 using ApiEcommerce.Exceptions;
 using ApiEcommerce.Shared.Http;
+using ApiEcommerce.Shared.Observability;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -165,13 +166,33 @@ public class GlobalExceptionHandlerTests
   }
 
   [Fact]
-  public async Task EveryProblemCarriesTheTraceIdAndTheInstance()
+  public async Task EveryProblemCarriesTheCorrelationIdAndTheInstance()
   {
-    // Sin traceId, un 500 en producción es un ticket sin forma de correlacionarlo con
-    // la línea del log.
+    // Sin un id, un 500 en producción es un ticket sin forma de correlacionarlo con la
+    // línea del log. Y tiene que ser EL MISMO que viaja en la cabecera X-Correlation-Id:
+    // antes era `TraceIdentifier`, así que el cuerpo y la cabecera llevaban dos ids
+    // distintos para la misma petición.
     var context = await HandleAsync(new Exception("boom"));
 
-    Assert.Equal(context.TraceIdentifier, _written!.Extensions["traceId"]);
+    Assert.Equal(context.TraceIdentifier, _written!.Extensions["correlationId"]);
     Assert.Equal("POST /api/v1/product", _written.Instance);
+  }
+
+  [Fact]
+  public async Task TheProblemUsesTheCorrelationIdChosenByTheMiddleware()
+  {
+    // Cuando el middleware ya decidió uno (el del cliente, o el generado), el cuerpo debe
+    // llevar ESE y no el identificador interno del framework.
+    var context = new DefaultHttpContext();
+    context.Request.Method = "POST";
+    context.Request.Path = "/api/v1/product";
+    context.Items[CorrelationIdMiddleware.HeaderName] = "CID-DEL-CLIENTE";
+
+    var sut = new GlobalExceptionHandler(
+        NullLogger<GlobalExceptionHandler>.Instance, _problemDetails.Object);
+
+    await sut.TryHandleAsync(context, new Exception("boom"), CancellationToken.None);
+
+    Assert.Equal("CID-DEL-CLIENTE", _written!.Extensions["correlationId"]);
   }
 }

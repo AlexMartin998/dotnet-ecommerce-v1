@@ -1,5 +1,6 @@
 using System.Net;
 using ApiEcommerce.Exceptions;
+using ApiEcommerce.Shared.Observability;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
@@ -44,7 +45,13 @@ public sealed class GlobalExceptionHandler(
       Extensions =
       {
         ["code"] = code,
-        ["traceId"] = httpContext.TraceIdentifier
+        // El MISMO id que viaja en la cabecera X-Correlation-Id, que es el que el cliente
+        // ve y el que va a citar al abrir el ticket. Antes se ponía `TraceIdentifier`, que
+        // además el escritor de ProblemDetails del framework machaca con `Activity.Id`:
+        // el cuerpo y la cabecera llevaban DOS ids distintos para la misma petición, que
+        // es justo la confusión que la correlación viene a quitar.
+        ["correlationId"] = httpContext.Items[CorrelationIdMiddleware.HeaderName] as string
+                            ?? httpContext.TraceIdentifier
       }
     };
 
