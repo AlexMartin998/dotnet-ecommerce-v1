@@ -1821,10 +1821,40 @@ curl -u guest:guest -X POST http://172.17.0.1:15672/api/exchanges/%2F/apiecommer
   -d '{"properties":{"message_id":"<guid>","type":"product.created"},"routing_key":"product.purchased","payload":"{...}","payload_encoding":"string"}'
 ```
 
-- --- ⚠️ El dev container ya solo trae **.NET 10** y el proyecto es `net9.0`
+- --- ⚠️ El dev container ya solo traia **.NET 10** y el proyecto es `net9.0`
   - -- `dotnet build` va (el SDK 10 compila para net9.0), pero `dotnet run` **no arranca**:
        "You must install or update .NET... The following frameworks were found: 10.0.11"
-  - -- parche para seguir trabajando: `DOTNET_ROLL_FORWARD=Major`
-  - -- ojo con lo que eso implica: se esta probando sobre el runtime **10**, no sobre el
-       **9** que usa el `Dockerfile` (`aspnet:9.0`). Hay que decidir: instalar el runtime 9
-       o migrar el proyecto a net10.0
+  - -- parche de emergencia: `DOTNET_ROLL_FORWARD=Major`. Pero entonces estas probando
+       sobre el runtime **10** y el `Dockerfile` despliega sobre el **9**: no vale como
+       verificacion
+
+- --- La solucion: **los runtimes de .NET conviven side-by-side**
+```sh
+curl -sSL -o /tmp/dotnet-install.sh https://dot.net/v1/dotnet-install.sh && chmod +x /tmp/dotnet-install.sh
+sudo /tmp/dotnet-install.sh --channel 9.0 --runtime aspnetcore --install-dir /usr/share/dotnet --no-path
+dotnet --list-runtimes   # 9.0.19 Y 10.0.11
+```
+  - -- cada app carga el runtime de SU `TargetFramework`, asi que instalar el 9 **no le
+       cambia nada** a lo que apunta a net10.0. "Instalar el 9 solo para este proyecto" es
+       exactamente esto, no hace falta aislar nada
+  - -- `--runtime aspnetcore` (no el SDK): el SDK 10 ya compila net9.0. Un SDK por version
+       no hace falta; un RUNTIME por version si
+  - -- ⚠️ `cp: '/usr/share/dotnet/dotnet': Text file busy` si tienes una app corriendo. Es
+       el *muxer* y es inocuo: el del 10 sirve para los dos
+  - -- comprobar QUE runtime cargo de verdad, sin fiarse:
+```sh
+tr '\0' '\n' < /proc/<pid>/maps | grep -oE "Microsoft.NETCore.App/[0-9.]+" | sort -u
+```
+  - -- ⚠️ no sobrevive a recrear el dev container
+
+- --- Revivir los eventos que el bug habia enterrado
+```sql
+UPDATE OutboxMessages SET Attempts = 0, LastError = NULL
+WHERE ProcessedAt IS NULL AND Attempts >= 5;
+```
+  - -- 14 filas -> publicadas y consumidas en la vuelta siguiente -> `/health/ready` de
+       `Degraded` a `Healthy`
+  - -- ⚠️ con `pymssql` hay que hacer `conn.commit()`: sin autocommit el UPDATE se pierde
+       en silencio y el `SELECT` posterior te dice que no paso nada
+  - -- purgar la DLQ: `DELETE /api/queues/%2F/<cola>/contents` (204). Las metricas de la UI
+       tardan unos segundos en refrescarse: no te asustes si sigue diciendo 1
