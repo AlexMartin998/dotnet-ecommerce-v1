@@ -69,6 +69,22 @@ de direccionar lo mismo: desde el dev container es `172.17.0.1` + puerto **publi
 **Credenciales de desarrollo**: `admin` / `Admin123!` (rol `admin`, sembrado por
 `DataSeeder` cuando `Seed:Enabled` es `true`).
 
+### Runtime — el dev container solo trae el SDK 10
+
+El SDK 10 compila `net9.0`, pero **ejecutar** necesita el runtime 9 instalado aparte. Los
+runtimes de .NET conviven *side-by-side* y cada app carga el de su TFM, así que instalar el
+9 **no cambia nada** para lo que apunta a `net10.0` fuera de este proyecto. Si se recrea el
+contenedor, hay que repetirlo:
+
+```sh
+curl -sSL -o /tmp/dotnet-install.sh https://dot.net/v1/dotnet-install.sh && chmod +x /tmp/dotnet-install.sh
+sudo /tmp/dotnet-install.sh --channel 9.0 --runtime aspnetcore --install-dir /usr/share/dotnet --no-path
+dotnet --list-runtimes   # deben salir 9.0.x y 10.0.x
+```
+
+⚠️ El `cp: '/usr/share/dotnet/dotnet': Text file busy` que aparece si hay una app corriendo
+es inocuo: es el *muxer*, y el del 10 sirve para ambos.
+
 ---
 
 ## 3. Mapa del repo
@@ -143,7 +159,7 @@ Piezas que conviene conocer antes de tocar nada:
 | Editar con scripts | Una sustitución global se cuela en los **bloques comentados** de aprendizaje. Ya pasó dos veces. |
 | Rate limiter propio | 100 req/min global y 10/min en `auth`. Al hacer pruebas de carga te limita **a ti**: reinicia el proceso para resetear la ventana. |
 | Lockout de Identity | 5 logins fallidos bloquean la cuenta 5 min. Probar con un usuario nuevo, no con el de siempre. |
-| **Runtime .NET** | El dev container ya solo tiene **.NET 10** (SDK 10.0.400) y el proyecto es `net9.0`: **compila pero NO arranca**. Hace falta `DOTNET_ROLL_FORWARD=Major`, y entonces se está probando sobre el runtime 10, no sobre el 9 del `Dockerfile`. |
+| **Runtime .NET** | El SDK del dev container es **10.0.400** y el proyecto es `net9.0`: compila, pero necesita el **runtime 9** instalado o no arranca. Ya está (9.0.19 y 10.0.11 conviven). Si el contenedor se recrea, se pierde: reinstalar con el comando de abajo. |
 | `pkill -f ApiEcommerce` | **Se mata a sí mismo**: el cwd y la propia línea de comando contienen esa cadena. Guardar el PID (`echo $! > api.pid`) y `kill` por PID. Ya ha pasado dos veces. |
 | Arrancar la app | `dotnet run` deja un proceso hijo que no muere con el padre. Mejor `dotnet bin/Debug/net9.0/ApiEcommerce.dll`, que sí da el PID real. |
 | `POST /api/v1/category` | Devuelve **201 sin cuerpo** (`CreatedAtRoute(..., null)`): el id sale de la cabecera `Location`, no del JSON. No es un fallo. |

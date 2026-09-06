@@ -35,6 +35,24 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 
 ## 2. Bitácora
 
+### 2026-09-06 — Runtime .NET 9 instalado y outbox drenado del todo
+
+Cerradas las dos decisiones que quedaban abiertas del día anterior:
+
+- **Runtime**: instalado **ASP.NET Core 9.0.19** *side-by-side* con el 10.0.11
+  (`dotnet-install.sh --channel 9.0 --runtime aspnetcore`). El SDK sigue siendo solo el
+  10.0.400, que es lo correcto: compila `net9.0` sin problema. Los runtimes conviven y cada
+  app carga el de su TFM, así que **lo que apunta a `net10.0` fuera de este proyecto sigue
+  usando el 10**, que era la condición del owner. La app arranca ya **sin
+  `DOTNET_ROLL_FORWARD`** y se comprobó en `/proc/<pid>/maps` que carga `9.0.19`.
+- **Outbox**: republicados los 14 eventos que había enterrado el bug de reintentos
+  (`UPDATE … SET Attempts = 0 … WHERE Attempts >= 5`). Los 14 se publicaron y consumieron;
+  **29 procesados, 0 pendientes**, y `/health/ready` vuelve a **`Healthy`**. Purgada también
+  la DLQ, que solo tenía el mensaje sintético de la prueba del tipo inesperado.
+
+⚠️ La instalación del runtime **no sobrevive a recrear el dev container**; el comando queda
+en `memory.md` §2.
+
 ### 2026-09-05 — Slice 09 verificado contra RabbitMQ real, y el bug que destapó
 
 El owner levantó `rabbitmq_generic`. Ejercitado por fin el camino completo del broker:
@@ -160,10 +178,11 @@ Medido contra SQL Server y Redis **reales**:
 | Evento con `type` inesperado | `nack` sin reencolar → **1 mensaje en la DLQ** |
 | Broker caído 25 s (**antes del fix**) | evento enterrado con `Attempts=5`, **nunca republicado** |
 | Broker caído 45 s (**después del fix**) | `Attempts=0`; al volver el broker, publicado y consumido |
+| Republicación de los 14 enterrados | 29 procesados, 0 pendientes, `/health/ready` → `Healthy` |
+| Arranque sobre el runtime **9.0.19** | sin `DOTNET_ROLL_FORWARD`; verificado en `/proc/<pid>/maps` |
 
-**No verificado**: el `Dockerfile` construido y `docker-compose.prod.yml` levantado (no hay
-Docker en el dev container), y **nada sobre el runtime .NET 9**: todo lo de arriba corrió
-sobre .NET 10 con `DOTNET_ROLL_FORWARD=Major`.
+**No verificado**: el `Dockerfile` construido y `docker-compose.prod.yml` levantado — no hay
+Docker en el dev container, los ejecuta el owner en el host.
 
 ---
 
@@ -191,5 +210,4 @@ sobre .NET 10 con `DOTNET_ROLL_FORWARD=Major`.
 | **Licencia de AutoMapper** | La 15.1.1 exige licencia comercial en producción (avisa por log). ¿Comprar, fijar ≤13.x (última MIT), o migrar a Mapperly? |
 | **Política de commits** | `rules.md` §12 dice que el agente commitea (práctica de este repo). En el repo de frontend del owner la regla es la contraria. ¿Se confirma? |
 | **Secretos de desarrollo** | `appsettings.Development.json` está commiteado con la clave JWT y la password de SQL. Aceptable en local; hay que moverlo a user-secrets antes de que el repo salga de la máquina. |
-| **14 eventos enterrados** | Los abandonó el bug de reintentos, no son mensajes malos. ¿Se republican (`UPDATE OutboxMessages SET Attempts = 0 WHERE ProcessedAt IS NULL AND Attempts >= 5`) o se descartan? Hasta entonces `/health/ready` = `Degraded`. |
-| **Runtime .NET 9** | El dev container ya solo trae .NET 10 y el proyecto es `net9.0`. ¿Instalar el runtime 9 en el contenedor, o **migrar el proyecto a `net10.0`** (con EF Core 10 y el `Dockerfile` a `aspnet:10.0`)? Mientras tanto solo arranca con `DOTNET_ROLL_FORWARD=Major`. |
+| **Migrar a `net10.0`** | Resuelto por ahora instalando el runtime 9 (el owner quiso mantener el 10 para lo demás). Sigue abierto a futuro: alinearía el proyecto con el SDK y con `dotnet-ef` 10, hoy desalineados. |
