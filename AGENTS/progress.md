@@ -35,6 +35,36 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 
 ## 2. Bitácora
 
+### 2026-09-06 — El evento de dominio vuelve a su slice (pregunta del owner)
+
+El owner preguntó por qué `ProductPurchased` vivía en `Shared/Messaging/Events/` junto a
+`IDomainEvent`, si el repo es de vertical slicing. Tenía razón, y el argumento que zanja la
+duda no es la simetría sino la **dirección de dependencias**: con el evento —y sobre todo
+con su consumidor— en `Shared/`, era `Shared` quien nombraba tipos de `Catalog`, justo al
+revés de la dirección declarada **Web → Features → Shared**.
+
+- `IDomainEvent` se queda en `Shared/Messaging/` (contrato, de ningún dominio) y el fichero
+  pasa a llamarse como el único tipo que contiene.
+- `ProductPurchased` → `Features/Catalog/Events/`: habla de SKU, stock y producto.
+- `ProductPurchasedConsumer` → `Features/Catalog/Messaging/`: quién reacciona a un evento
+  del catálogo es asunto del catálogo.
+- Costura nueva `AddEventConsumer<T>(configuration)` en `Shared/Messaging`: mantiene en un
+  solo sitio la política de "solo si hay broker configurado" y deja que cada slice registre
+  los suyos. `AddCatalogFeature` pasa a recibir `IConfiguration`.
+
+Buscando más fugas apareció otra cosa: **7 archivos de `Shared/` tenían `using` a
+`Features.Catalog` que no usaba nadie**, dejados por el refactor a vertical slicing. Un
+`using` sin usar no da warning, así que parecía que media `Shared/` dependía de `Catalog`.
+Eliminados y verificado con el compilador. La única dependencia **real** era el escaneo de
+AutoMapper (`typeof(CategoryProfile).Assembly`): se **invirtió**, ahora el ensamblado lo
+pasa el composition root. `Shared/Mapping/MappingProfile.cs` conserva los suyos a propósito
+—es el fichero legacy comentado— y no se toca.
+
+Verificado ejecutando (no solo compilando, que es donde se esconden estos): arranque con la
+validación del contenedor, topología del broker declarada, compra → outbox → publicación →
+consumo, y los listados paginados de producto y categoría trayendo el mapeo bien (el cambio
+del escaneo de AutoMapper compila igual y se rompería en runtime). 0 errores en el log.
+
 ### 2026-09-06 — Runtime .NET 9 instalado y outbox drenado del todo
 
 Cerradas las dos decisiones que quedaban abiertas del día anterior:
