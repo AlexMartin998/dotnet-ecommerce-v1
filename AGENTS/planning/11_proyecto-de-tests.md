@@ -1,4 +1,4 @@
-# 11 — Proyecto de tests `ApiEcommerce.Tests`  🟡 **EN CURSO** (fases 1 y 2 hechas)
+# 11 — Proyecto de tests `ApiEcommerce.Tests`  🟡 **EN CURSO** (fases 1–5 hechas; falta la 6, CI)
 
 > **Por qué es el siguiente y no es opcional**: casi todos los bugs que encontró la revisión
 > multiagente (`progress.md` §2) compilaban limpio y pasaban el smoke test manual. Solo
@@ -49,25 +49,48 @@ ya corregidos** y la suite los cazó:
 - volver `FindSqlException` a mirar solo el `InnerException` directo → caen los 2 del
   `SqlException` desnudo y el anidado en profundidad.
 
-## Fase 3 — Integración (`WebApplicationFactory` + Testcontainers)
-- [ ] SQL Server y Redis reales y efímeros por corrida
-- [ ] Autorización: la matriz completa de `features/02`
-- [ ] Versionado: `/api/category` → 404, `Location` con versión, `/health` neutral
-- [ ] Paginación: tope de `pageSize`, página fuera de rango → 200 con `[]`
-- [ ] Idempotencia: replay, concurrencia, liberación en error
+## Fase 3 — Integración (`WebApplicationFactory` + base de datos dedicada)
+> ⚠️ **Sin Testcontainers**, a diferencia del plan: el entorno de trabajo es un dev
+> container **sin Docker dentro**. Se usa la infraestructura ya levantada en el host, con
+> una base propia (`ApiEcommerceNET8_Tests`, borrada y migrada en cada corrida) y un
+> prefijo propio de Redis (`apiecommerce-tests:`). Testcontainers entra en la fase 6, donde
+> el runner de CI sí tiene Docker y es donde de verdad aporta aislamiento.
+- [x] SQL Server y Redis reales y efímeros por corrida
+- [x] Autorización: la matriz completa de `features/02`
+- [x] Versionado: `/api/category` → 404, `Location` con versión, `/health` neutral
+- [x] Paginación: tope de `pageSize`, página fuera de rango → 200 con `[]`
+- [x] Idempotencia: replay, concurrencia, liberación en error
 
 ## Fase 4 — Concurrencia (los que más valen)
 ⚠️ **Con `Task.WhenAll` de peticiones reales**, no secuencial: secuencialmente pasaban
 también con la implementación defectuosa.
-- [ ] 15 compras simultáneas sobre stock 10 → 10×200, 5×409, stock 0
-- [ ] 8 POST simultáneos de la misma categoría → 1×201, 7×409, 1 fila
-- [ ] 6 compras concurrentes con la misma `Idempotency-Key` → una sola compra
+- [x] 15 compras simultáneas sobre stock 10 → 10×200, 5×409, stock 0
+- [x] 8 POST simultáneos de la misma categoría → 1×201, 7×409, 1 fila
+- [x] 6 compras concurrentes con la misma `Idempotency-Key` → una sola compra
 
 ## Fase 5 — Degradación y arranque
-- [ ] Con Redis caído: las lecturas responden y la compra no falla
-- [ ] Con el broker caído: la compra responde 200 y el evento queda en el outbox
-- [ ] Arranque en `Production` con `Seed:Enabled=false` y sin `AdminPassword` → arranca
-- [ ] Arranque sin `Jwt:SecretKey` → **falla**
+- [x] Con Redis caído: las lecturas responden y la compra no falla
+- [x] Con el broker caído: la compra responde 200 y el evento queda en el outbox
+- [x] Arranque en `Production` con `Seed:Enabled=false` y sin `AdminPassword` → arranca
+- [x] Arranque sin `Jwt:SecretKey` → **falla**
+
+### Lo que destaparon las fases 3–5 (2026-09-06)
+Tres cosas que ni el build ni los 105 unitarios veían:
+1. 🔴 **Los tests de idempotencia pasaban sin probar nada.** Con
+   `ConfigureAppConfiguration`, el host arrancaba con `NoIdempotencyStore` y
+   `NoCacheService`: un no-op no rompe una aserción de "dos operaciones distintas dan dos
+   resultados", así que solo cayeron los dos tests que exigían un replay real. La causa es
+   que `AddDistributedCaching` lee la configuración **eager** para decidir qué implementación
+   registra, y eso ocurre **antes** de que se apliquen esos callbacks. Con `UseSetting` sí
+   entra. Queda `TestHostGuardTests` como red permanente.
+2. 🟠 **La degradación de Redis era correcta pero inservible.** Medido con Redis
+   inalcanzable: un GET del catálogo tardaba **11 s** y una compra con `Idempotency-Key`
+   **34 s**. Acotados los timeouts y **unificados los dos multiplexers** (el de
+   `AddStackExchangeRedisCache` se quedaba con los de fábrica): 3 s y 7 s.
+3. 🟠 **El P0 del crash-loop seguía vivo en otro atributo.** `[EmailAddress]` sobre
+   `SeedOptions.AdminEmail` es incondicional igual que lo era el `[Required]` de
+   `AdminPassword`: con el seeding apagado y `Seed__AdminEmail=` vacío, el arranque moría.
+   Movido a `.Validate(...)`.
 
 ## Fase 6 — CI
 - [ ] GitHub Actions: `dotnet build` + `dotnet test` en cada push

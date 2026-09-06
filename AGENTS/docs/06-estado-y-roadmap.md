@@ -92,25 +92,31 @@ perfiles de AutoMapper y `GlobalExceptionHandler`. Viven en `tests/ApiEcommerce.
 (dentro del repo, con `tests/**` excluido del `.csproj` de la API) y usan xunit +
 Moq, **sin FluentAssertions** — desde la v8 exige licencia comercial.
 
-**Lo que falta, y es lo que más vale**, porque es donde han aparecido todos los
-bugs reales de este proyecto:
+**Integración, concurrencia y degradación hechas** (2026-09-06, 153 tests en
+total). Levantan la API entera con `WebApplicationFactory` contra SQL Server y Redis
+reales, con base (`ApiEcommerceNET8_Tests`) y prefijo de Redis propios.
+⚠️ **Sin Testcontainers**: no hay Docker en el dev container. Entra en CI.
 
-1. **Integración** con `WebApplicationFactory` + Testcontainers (SQL Server y Redis
-   efímeros): la matriz de autorización, el versionado, la paginación y la
-   idempotencia de punta a punta.
-2. **Concurrencia** con `Task.WhenAll` de peticiones reales — ⚠️ **secuencialmente
-   pasaban también con la implementación defectuosa**: 15 compras sobre stock 10,
-   8 POST simultáneos de la misma categoría, 6 compras con la misma
-   `Idempotency-Key`.
-3. **Degradación y arranque**: con Redis caído, con el broker caído, en
-   `Production` con `Seed:Enabled=false`, y sin `Jwt:SecretKey` (debe **fallar**).
-4. **CI**: hoy no existe pipeline; nada corre `dotnet build` ni `dotnet test`
-   antes de un merge.
+Cubren la matriz de autorización de `features/02`, el versionado, la paginación, la
+idempotencia, las **tres carreras** con `Task.WhenAll` (que secuencialmente pasaban
+también con la implementación defectuosa), la degradación con Redis caído y el
+arranque en `Production` y sin clave de firma.
+
+**Falta la CI**: hoy no existe pipeline; nada corre `dotnet build` ni `dotnet test`
+antes de un merge, así que la red está tendida pero nadie obliga a usarla. Y ahí
+sí conviene migrar la integración a Testcontainers, porque el runner tiene Docker.
 
 ⚠️ **Un test que pasa contra el código roto no vale nada.** La suite unitaria se
 validó por mutación: reintroducidos dos bugs reales ya corregidos (el `MapFrom`
 explícito de `CategoryId` y el `FindSqlException` que solo miraba un nivel), cayeron
 exactamente los tests que debían. Conviene repetir el ejercicio con cada bloque nuevo.
+
+⚠️ Y no es teórico: los primeros tests de idempotencia **pasaban sin probar nada**
+porque el host de tests arrancaba con `NoIdempotencyStore`. La causa es que las
+piezas que leen configuración de forma *eager* para decidir **qué implementación
+registran** no ven lo que inyecta `ConfigureAppConfiguration` — hay que usar
+`UseSetting`. Es el precio del patrón que este documento bendice en otro sitio, y
+conviene tenerlo presente al añadir otra decisión de registro por configuración.
 
 ### Paso 8 — Deuda conocida de la revisión de 2026-08-30 (no cerrada)
 

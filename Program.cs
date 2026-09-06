@@ -137,3 +137,12 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
 });
 
 app.Run();
+
+
+/// <summary>
+/// Program es una clase <b>generada</b> por las instrucciones de nivel superior, y por
+/// eso nace <c>internal</c>: <c>WebApplicationFactory&lt;Program&gt;</c> no la ve y el
+/// proyecto de tests no compila. Declararla <c>public partial</c> aquí es la forma
+/// oficial de abrirla sin tocar nada más.
+/// </summary>
+public partial class Program;

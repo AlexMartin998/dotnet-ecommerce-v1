@@ -18,7 +18,16 @@ public sealed class SeedOptions
 
   public string AdminUsername { get; init; } = "admin";
 
-  [EmailAddress]
+  /// <summary>Email del admin sembrado.</summary>
+  /// <remarks>
+  /// <b>Sin <c>[EmailAddress]</c>, por el mismo motivo que <see cref="AdminPassword"/> no
+  /// lleva <c>[Required]</c>.</b> Una anotación incondicional se evalúa al leer
+  /// <c>.Value</c>, antes de que nadie pueda mirar <see cref="Enabled"/>: un despliegue
+  /// con el seeding APAGADO que definiera <c>Seed__AdminEmail=</c> (vacío) moría al
+  /// arrancar, en bucle con <c>restart: unless-stopped</c>. Lo destapó el test de
+  /// arranque de la fase 5, y es exactamente la misma trampa que ya se corrigió una vez
+  /// en <c>AdminPassword</c>: si la regla es condicional, va en <c>.Validate(...)</c>.
+  /// </remarks>
   public string AdminEmail { get; init; } = "admin@apiecommerce.local";
 
   /// <summary>Contraseña del admin sembrado. Nunca hardcodeada: user-secrets o <c>Seed__AdminPassword</c>.</summary>
