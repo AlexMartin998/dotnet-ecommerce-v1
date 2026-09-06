@@ -2,6 +2,7 @@ using Microsoft.Extensions.Options;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using ApiEcommerce.Shared.Idempotency;
 
 namespace ApiEcommerce.Shared.Observability;
 
@@ -89,7 +90,12 @@ public static class ObservabilityExtensions
               .AddHttpClientInstrumentation()
               // Las cuatro que se miran primero en un incidente: peticiones en curso,
               // latencia, GC y memoria.
-              .AddRuntimeInstrumentation();
+              .AddRuntimeInstrumentation()
+              // La nuestra: cómo se resuelve cada petición con Idempotency-Key. La
+              // dimensión que importa es `outcome=unguaranteed` — si deja de ser cero,
+              // la protección contra el doble cobro está apagada para esa parte del
+              // tráfico aunque todas las respuestas sean 200.
+              .AddMeter(IdempotencyMetrics.MeterName);
 
           if (options.ExportsTraces)
             metrics.AddOtlpExporter(exporter => exporter.Endpoint = new Uri(options.OtlpEndpoint));

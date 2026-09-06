@@ -34,6 +34,16 @@ public static class CachingExtensions
         .ValidateDataAnnotations()
         .ValidateOnStart();   // configuración inválida = no arranca, no falla en la primera petición
 
+    // Los plazos de la idempotencia se registran SIEMPRE, haya Redis o no: el filtro los
+    // lee aunque el store sea el Null Object, y una opción que sólo existe en una de las
+    // dos ramas es un fallo que aparece únicamente en el entorno sin infraestructura.
+    services.AddOptions<IdempotencyOptions>()
+        .Bind(configuration.GetSection(IdempotencyOptions.SectionName))
+        .ValidateDataAnnotations()
+        .ValidateOnStart();
+
+    services.AddSingleton<IdempotencyMetrics>();
+
     var options = configuration.GetSection(CacheOptions.SectionName).Get<CacheOptions>()
                   ?? new CacheOptions();
 

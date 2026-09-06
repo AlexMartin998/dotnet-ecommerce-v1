@@ -34,6 +34,20 @@ public sealed class IdempotentAttribute : Attribute, IAsyncActionFilter, IOrdere
 {
   public const string HeaderName = "Idempotency-Key";
 
+  /// <summary>Marca una respuesta reproducida desde el almacén.</summary>
+  public const string ReplayedHeader = "Idempotency-Replayed";
+
+  /// <summary>
+  /// Avisa al cliente de que la operación se ejecutó <b>sin</b> garantía de idempotencia.
+  /// </summary>
+  /// <remarks>
+  /// El almacén degrada en abierto: si no contesta, la petición se ejecuta igual en vez
+  /// de devolver un 500 por una compra que sí se cobró. Pero el cliente no tenía forma
+  /// de saberlo, y "reintentar es seguro" dejaba de ser cierto sin que nadie se enterara.
+  /// Sólo se emite cuando la garantía NO se aplicó, así que su mera presencia es la señal.
+  /// </remarks>
+  public const string UnguaranteedHeader = "Idempotency-Guaranteed";
+
   /// <summary>
   /// Orden explícito para quedar POR FUERA de <c>[Transactional]</c> (Order 0).
   /// </summary>
@@ -45,22 +59,6 @@ public sealed class IdempotentAttribute : Attribute, IAsyncActionFilter, IOrdere
   /// desempataba por el orden de reflexión de los atributos, que no está garantizado.
   /// </remarks>
   public int Order => -100;
-
-  /// <summary>
-  /// Ventana en la que se recuerda la RESPUESTA de una operación ya completada.
-  /// </summary>
-  private static readonly TimeSpan ResponseTtl = TimeSpan.FromHours(24);
-
-  /// <summary>
-  /// Vida de la RESERVA mientras la operación está en curso.
-  /// </summary>
-  /// <remarks>
-  /// Corto a propósito, y distinto del anterior: si el proceso muere entre la reserva
-  /// y el guardado (deploy, OOM-kill), con un TTL de 24 h la clave quedaba bloqueada
-  /// un día entero devolviendo 409 por una operación que <b>nunca llegó a ejecutarse</b>,
-  /// y el cliente no tenía forma de salir del bucle. Con 60 s se libera sola.
-  /// </remarks>
-  private static readonly TimeSpan ReservationTtl = TimeSpan.FromSeconds(60);
 
   private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
@@ -87,40 +85,70 @@ public sealed class IdempotentAttribute : Attribute, IAsyncActionFilter, IOrdere
       return;
     }
 
-    var store = context.HttpContext.RequestServices.GetRequiredService<IIdempotencyStore>();
+    var services = context.HttpContext.RequestServices;
+    var store = services.GetRequiredService<IIdempotencyStore>();
+    var metrics = services.GetRequiredService<IdempotencyMetrics>();
+    var options = services.GetRequiredService<IOptions<IdempotencyOptions>>().Value;
+
+    var clientKey = header.ToString();
+
+    // La clave la elige el cliente y acaba entera dentro de una clave de Redis que vive
+    // 24 h, en una instancia compartida con otros proyectos. Sin este límite se aceptaban
+    // claves de 7000 caracteres (medido).
+    if (clientKey.Length > options.MaxKeyLength)
+    {
+      metrics.InvalidKey();
+
+      context.Result = new BadRequestObjectResult(new ProblemDetails
+      {
+        Status = StatusCodes.Status400BadRequest,
+        Title = "Invalid idempotency key",
+        Detail = $"The {HeaderName} must not exceed {options.MaxKeyLength} characters.",
+        Extensions = { ["code"] = "idempotency_key_invalid" }
+      });
+
+      return;
+    }
 
     // Se incluye el QueryString: `request.Path` no lo lleva, así que `POST /x?page=1`
     // y `POST /x?page=2` con la misma clave colisionaban. Y se normaliza a minúsculas
     // para que `/Product/buy` y `/product/buy` no generen dos claves.
     var route = $"{request.Method}:{request.Path.Value?.ToLowerInvariant()}{request.QueryString.Value}";
-    var key = $"{user}:{route}:{header!}";
+    var key = $"{user}:{route}:{clientKey}";
 
     var requestHash = HashOf(context);
 
-    // 1) ¿Ya existe esta clave? Puede estar en curso o ya terminada.
-    if (await store.GetAsync(key, context.HttpContext.RequestAborted) is { } existing)
+    // Reservar PRIMERO, y leer sólo lo que la reserva devuelva.
+    //
+    // Antes esto era un GetAsync seguido de un TryAcquireAsync, y el orden importaba de
+    // dos maneras. Costaba un viaje de más a Redis por petición —la presión que hace que
+    // una ráfaga agote el timeout y la garantía se apague sola— y, sobre todo, dejaba un
+    // camino que reproducía la respuesta SIN comparar la huella del cuerpo: el de quien
+    // perdía la reserva por poco. Ahora el estado existente sólo puede llegar por aquí,
+    // así que la comprobación de más abajo lo cubre TODO.
+    var acquisition = await store.TryAcquireAsync(
+        key, requestHash, options.ReservationTtl, context.HttpContext.RequestAborted);
+
+    if (acquisition.Outcome is IdempotencyOutcome.Existing)
     {
-      if (MismatchedBody(context, existing, requestHash)) return;
+      var existing = acquisition.Entry!;
+
+      // Misma clave, otro cuerpo: 422, tanto si la primera terminó como si sigue en curso.
+      if (MismatchedBody(context, existing, requestHash))
+      {
+        metrics.BodyMismatch();
+        return;
+      }
 
       // Terminada: se reproduce su respuesta.
       if (existing.Response is { } cached)
       {
+        metrics.Replayed();
         Replay(context, cached);
         return;
       }
-    }
 
-    // 2) Reserva atómica. Si falla, hay otra petición idéntica EN CURSO ahora mismo.
-    if (!await store.TryAcquireAsync(key, requestHash, ReservationTtl, context.HttpContext.RequestAborted))
-    {
-      // Puede que la otra petición haya terminado entre el GET de arriba y esta
-      // reserva. Se vuelve a mirar antes de dar 409: si ya hay respuesta, lo correcto
-      // es reproducirla, no decirle al cliente que su operación sigue en curso.
-      if (await store.GetAsync(key, context.HttpContext.RequestAborted) is { Response: { } justFinished })
-      {
-        Replay(context, justFinished);
-        return;
-      }
+      metrics.InProgress();
 
       // 409 y no 429: no es exceso de tráfico, es la misma operación duplicada.
       context.Result = new ConflictObjectResult(new ProblemDetails
@@ -130,7 +158,18 @@ public sealed class IdempotentAttribute : Attribute, IAsyncActionFilter, IOrdere
         Detail = $"Another request with the same {HeaderName} is still being processed.",
         Extensions = { ["code"] = "idempotency_in_progress" }
       });
+
       return;
+    }
+
+    // El almacén no contestó. Se ejecuta igual —degradar en abierto es la decisión del
+    // proyecto y no cambia aquí— pero deja de ser invisible: se cuenta y se avisa.
+    var guaranteed = acquisition.Outcome is IdempotencyOutcome.Acquired;
+
+    if (!guaranteed)
+    {
+      metrics.Unguaranteed();
+      context.HttpContext.Response.Headers[UnguaranteedHeader] = "false";
     }
 
     var executed = await next();
@@ -149,9 +188,11 @@ public sealed class IdempotentAttribute : Attribute, IAsyncActionFilter, IOrdere
 
     if (executed.Exception is not null || status is null or (< 200) or (>= 300))
     {
-      await store.ReleaseAsync(key, CancellationToken.None);
+      await store.ReleaseAsync(key, acquisition.Fence, CancellationToken.None);
       return;
     }
+
+    metrics.Executed();
 
     string? body = null;
     string? contentType = null;
@@ -171,18 +212,28 @@ public sealed class IdempotentAttribute : Attribute, IAsyncActionFilter, IOrdere
       contentType = "application/json";
     }
 
-    // El Location de un 201 se captura aquí: sin él, el replay de un create devolvía
-    // un 201 sin decir qué recurso se había creado.
-    var headers = new Dictionary<string, string>();
-
-    if (context.HttpContext.Response.Headers.TryGetValue("Location", out var location))
-      headers["Location"] = location.ToString();
+    // ⚠️ Aquí NO se puede capturar el `Location` de un 201, aunque durante un tiempo
+    // hubo código que lo intentaba y documentación que lo daba por resuelto.
+    //
+    // Cuando un IAsyncActionFilter recupera el control tras `await next()`, MVC todavía
+    // no ha EJECUTADO el IActionResult: `CreatedAtRouteResult` escribe la cabecera en
+    // `ExecuteResultAsync`, que corre después de todos los filtros de acción. Leer
+    // `Response.Headers["Location"]` en este punto devuelve siempre vacío, así que se
+    // memorizaba `Headers = null` y el replay de un create nunca llevaba Location.
+    //
+    // Hoy no afecta a nadie: el único uso de [Idempotent] es POST /product/buy, que
+    // devuelve `Ok(...)`. Se deja escrito para que la próxima acción idempotente con
+    // `CreatedAtRoute` no reintroduzca el fallo creyéndolo cubierto. Hacerlo bien pide
+    // memorizar desde un IAsyncResultFilter, guardando clave y token en
+    // `HttpContext.Items` — anotado en planning/16 §16.6.
+    Dictionary<string, string>? headers = null;
 
     await store.SaveAsync(
         key,
+        acquisition.Fence,
         requestHash,
-        new IdempotentResponse(status.Value, body, contentType, headers.Count > 0 ? headers : null),
-        ResponseTtl,
+        new IdempotentResponse(status.Value, body, contentType, headers),
+        options.ResponseTtl,
         CancellationToken.None);
   }
 
@@ -261,7 +312,7 @@ public sealed class IdempotentAttribute : Attribute, IAsyncActionFilter, IOrdere
   {
     var response = context.HttpContext.Response;
 
-    response.Headers["Idempotency-Replayed"] = "true";
+    response.Headers[ReplayedHeader] = "true";
 
     if (cached.Headers is not null)
       foreach (var (name, value) in cached.Headers)

@@ -97,9 +97,16 @@ ejecutando). Lo que se corrigió en el acto está en la bitácora; esto es lo qu
       redeclarar la cola. Ya se distingue del "broker caído" y se loguea como error
       accionable, pero la solución real es versionar el nombre de la cola o poner el TTL
       en el mensaje (⚠️ eso introduce head-of-line blocking).
-- [ ] **`IdempotentAttribute.ReservationTtl` es un *lease* sin renovación.** Una operación
+- [~] **`IdempotentAttribute.ReservationTtl` es un *lease* sin renovación.** Una operación
       que tarde más de 60 s libera la clave y una duplicada puede ejecutarse de verdad.
-- [ ] **El replay de idempotencia no es idéntico byte a byte** (viene de 12.2).
+      → El plazo pasa a configuración (`Idempotency:ReservationTtlSeconds`) y hay un test
+      que **fija** el comportamiento; la renovación sigue sin hacerse. `planning/16` §16.6.
+      ⚠️ `planning/16` encontró además que la reserva **no tenía dueño**: un `Release` de
+      una petición ya caducada borraba la reserva viva de otra, así que la ventana de
+      duplicación no estaba acotada por el TTL sino que se reabría en cada vuelta.
+      **Eso sí queda cerrado**, con un token de propiedad.
+- [ ] **El replay de idempotencia no es idéntico byte a byte** (viene de 12.2). Confirmado
+      el 2026-09-06 ejecutando: el `+` del base64 de `rowVersion` sale como `\u002B`.
 - [ ] **Un canal AMQP por mensaje** en `RabbitMqEventPublisher`: funciona, pero es caro en
       una tanda de 50.
 - [ ] **CI y entorno de trabajo compilan con SDK distintos** (9.0.x vs 10.0.400) sin

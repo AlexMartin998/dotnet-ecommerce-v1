@@ -2517,3 +2517,105 @@ using (LogContext.PushProperty("TraceId", Activity.Current?.TraceId.ToString()))
 - --- ⚠️ `dotnet add package` escribe `Version="*"`
   - -- en CI eso significa que dos builds del MISMO commit pueden no ser el mismo binario
   - -- fijar siempre la version resuelta (`obj/project.assets.json` la dice)
+
+
+---
+---
+
+
+## 29. La idempotencia bajo carga  <- validar es tambien medir lo que aguanta
+
+- --- ⭐ **Lo primero que hay que entender: el mecanismo era correcto, y aun asi fallaba**
+  - -- exactamente-una-vez aguanto rafagas de 350 simultaneas con la misma clave (baja 1)
+  - -- y aguanto **entre DOS REPLICAS**, dos procesos contra el mismo Redis. Es la razon
+       por la que el store no esta en memoria, y no se habia comprobado nunca
+  - -- lo que falla no es la logica: es que **se apaga sola** cuando hay carga
+
+- --- 🔴 **Una decision buena para un caso, mala para el otro**
+```
+SyncTimeout = AsyncTimeout = 1000 ms   <- se eligio para "Redis CAIDO"
+                                          (con los 5 s de fabrica, una compra tardaba 34 s)
+```
+  - -- pero con Redis **vivo y sano** una rafaga tambien agota 1000 ms: un solo multiplexer,
+       3 operaciones por peticion, y el `SET NX` expira
+  - -- el `catch` degrada en abierto y **devuelve "eres el primero"** -> la peticion se
+       ejecuta SIN garantia, en silencio
+  - -- medido: 26 de 1000 peticiones (2,6 %) a 64 conexiones; 174 de 14 400 (1,21 %) con
+       carga sostenida sobre dos replicas
+  - -- ⚠️ **el caso patologico se muerde la cola**: la API va lenta -> el cliente reintenta
+       -> el reintento cae en la ventana saturada -> y justo ahi la proteccion contra el
+       doble cobro esta apagada
+  - -- la leccion general: **"degradar en abierto" no es una decision, son dos**. Una cosa
+       es la dependencia caida (mantener la API viva) y otra la dependencia sana pero lenta
+       por tu propia carga. Se defendian con el mismo argumento y no son lo mismo
+
+- --- **`SET clave valor EX ttl NX GET`: reservar y leer en UN viaje** (Redis >= 7.0)
+```
+1er SET -> (nil)    y reserva            <- la clave era mia, ejecutar
+2do SET -> "uno"    y NO pisa, TTL intacto <- ya existia, aqui esta lo que hay
+```
+  - -- quita el `GET` previo: **3,00 -> 2,00 viajes por peticion**
+  - -- ⚠️ hasta la 6.2, combinar `NX` con `GET` era un error de sintaxis. Si esto corriera
+       contra una version vieja, el `catch` lo tomaria por "Redis no responde" y **la
+       idempotencia se apagaria entera, en silencio**
+  - -- ⚠️ `INFO commandstats` **cuenta comandos, no viajes**: lo que corre dentro de un
+       script Lua aparece ahi. Medido mal daba 4,00 ops/peticion cuando eran 2 idas y venidas
+
+- --- ⭐ **Una reserva sin dueño: `Release` borrando la reserva de OTRO**
+```
+A reserva (60 s) -> la accion de A se eterniza -> la reserva CADUCA
+B reserva y ejecuta  <- duplicado, hasta aqui es la deuda ya conocida del lease
+A termina en error y hace Release -> BORRA la reserva VIVA de B
+un tercer reintento vuelve a pasar el SET NX -> ejecuta OTRA VEZ
+```
+  - -- lo grave no es el duplicado: es que la ventana **deja de estar acotada por el TTL**
+       y se reabre en cada vuelta
+  - -- se arregla con un token de propiedad y un CAS; el token va de PREFIJO del valor:
+```lua
+local v = redis.call('GET', KEYS[1])
+if v and string.sub(v, 1, #ARGV[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
+return 0
+```
+  - -- ⚠️ meter el token DENTRO del JSON y buscarlo con `string.find` **no es exacto**: el
+       cuerpo memorizado podria contener esa misma subcadena. Por eso prefijo y `string.sub`
+  - -- y sin token (camino degradado, no reservamos nada) **no se borra nada**: un `DEL`
+       incondicional ahi es justo el bug
+
+- --- ⚠️ **La comprobacion de la huella tiene que estar en TODOS los caminos**
+  - -- habia un `Replay` —el de quien pierde la reserva por poco— que reproducia **sin
+       comparar el cuerpo**: te devolvia la compra de 1 unidad cuando pediste 5
+  - -- dos disparadores distintos, y el segundo ni siquiera necesita simultaneidad: basta
+       con que el `GET` inicial degrade por un timeout (devuelve `null`, se salta el 422)
+  - -- con una sola operacion el estado existente **solo puede llegar por un sitio**, asi
+       que la comprobacion ya no se puede esquivar. Arreglar la forma > añadir un `if`
+
+- --- ⚠️ **Un filtro de accion NO ve el `Location`**
+  - -- habia codigo para memorizar esa cabecera y reproducirla en un 201. Nunca funciono
+  - -- cuando un `IAsyncActionFilter` recupera el control tras `await next()`, MVC **aun no
+       ha ejecutado el `IActionResult`**: `CreatedAtRouteResult` escribe `Location` en
+       `ExecuteResultAsync`, que corre despues de todos los filtros de accion
+  - -- captura vacia -> `Headers = null` siempre. Codigo muerto que la documentacion daba
+       por resuelto, que es peor que no tenerlo
+
+- --- **Los plazos como constantes hacen el codigo INTESTABLE**
+  - -- `ReservationTtl` era un `private static readonly` de 60 s: el unico test posible
+       tardaba un minuto, asi que no existia
+  - -- pasarlo a `IdempotencyOptions` no es burocracia de la regla §5: es lo que permite
+       bajarlo a 1 s y **fijar con un test** una limitacion conocida, para que nadie la
+       descubra creyendo que es un bug nuevo
+
+- --- ⚠️ **Medir con el arnes equivocado inventa hallazgos**
+  - -- primera medicion, 200 hilos de `urllib`: «con `Idempotency-Key` el throughput cae
+       13x, de 234 a 18 rps». Lo iba a apuntar como hallazgo
+  - -- con un cliente asyncio sobre sockets crudos: el filtro **no se mide** por encima del
+       ruido, y el pico de 20 s aparecia tambien en la columna SIN clave
+  - -- el cuello era el GIL de Python, no la API. **Antes de apuntar un numero, comprobar
+       que el que mide no es el que estorba**
+
+- --- **Y lo que NO se consiguio**, que tambien se anota
+  - -- no se logro provocar una duplicacion REAL en ~20 tandas: hace falta que el timeout
+       caiga sobre el duplicado, y los duplicados son una fraccion minuscula del trafico
+  - -- se reporta como es —camino de codigo confirmado y contado, probabilidad baja,
+       impacto alto— y no como un bug reproducido
+  - -- bajar los viajes **movio el umbral, no elimino el modo de fallo**: sigue habiendo
+       1,21 % sin garantia. Decir "arreglado" habria sido falso
