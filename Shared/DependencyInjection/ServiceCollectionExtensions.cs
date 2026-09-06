@@ -86,7 +86,7 @@ public static class ServiceCollectionExtensions
     return services
         .AddApiVersioningAndDocs()        // Shared/Http/ApiDocumentationExtensions
         .AddCorsPolicy(configuration)     // Shared/Http/CorsPolicies
-        .AddRateLimiting()                // Shared/Http/RateLimitPolicies
+        .AddRateLimiting(configuration)   // Shared/Http/RateLimitPolicies
         .AddErrorHandling()               // Shared/Http/ErrorHandlingExtensions
         .AddHealthProbes(configuration);  // Shared/Http/Health/HealthCheckExtensions
   }

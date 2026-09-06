@@ -52,6 +52,9 @@ public static class PersistenceExtensions
         .Validate(o => !o.Enabled
                        || (!string.IsNullOrWhiteSpace(o.AdminPassword) && o.AdminPassword.Length >= 8),
                   "Seed:AdminPassword is required (min 8 chars) when Seed:Enabled is true")
+        .Validate(o => !o.Enabled
+                       || (!string.IsNullOrWhiteSpace(o.AdminEmail) && o.AdminEmail.Contains('@')),
+                  "Seed:AdminEmail must be a valid address when Seed:Enabled is true")
         .ValidateOnStart();
 
     // Genérico ABIERTO: permite inyectar IBaseRepository<X> sin escribir un repositorio

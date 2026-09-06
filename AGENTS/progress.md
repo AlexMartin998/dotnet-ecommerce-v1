@@ -22,7 +22,7 @@
 | 08 | Idempotencia de peticiones | ✅ | [`features/08`](features/08_idempotencia.feature) · [`planning/08`](planning/08_idempotencia.md) | `63269ac` |
 | 09 | Eventos de dominio (outbox + RabbitMQ) | ✅ | [`features/09`](features/09_eventos-de-dominio.feature) · [`planning/09`](planning/09_eventos-de-dominio.md) | `63269ac` + fix |
 | 10 | Límites, salud y despliegue | ✅ | [`features/10`](features/10_limites-y-salud.feature) · [`planning/10`](planning/10_limites-y-salud.md) | `63269ac` |
-| 11 | **Tests** | 🟡 fases 1–2 (105 tests) | [`planning/11`](planning/11_proyecto-de-tests.md) | `14c9e76` + |
+| 11 | **Tests** | 🟡 fases 1–5 (**153 tests**); falta CI | [`planning/11`](planning/11_proyecto-de-tests.md) | `14c9e76` + |
 | 12 | Deuda de la revisión 2026-08-30 | ❌ | [`planning/12`](planning/12_deuda-revision-multiagente.md) | — |
 | 13 | Refresh tokens y revocación | ❌ | [`planning/13`](planning/13_refresh-tokens.md) | — |
 | 14 | Administración de usuarios | ❌ | [`planning/14`](planning/14_admin-usuarios.md) | — |
@@ -34,6 +34,50 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 ---
 
 ## 2. Bitácora
+
+### 2026-09-06 — Paso 11: fases 3, 4 y 5. **153 tests**, y tres bugs que destaparon
+
+Integración con `WebApplicationFactory` sobre SQL Server y Redis **reales**, concurrencia
+con `Task.WhenAll`, y degradación y arranque. Solo falta la fase 6 (CI).
+
+**Sin Testcontainers**, a diferencia del plan: no hay Docker dentro del dev container. Se
+usa la infraestructura del host con una base propia (`ApiEcommerceNET8_Tests`, borrada y
+migrada en cada corrida) y prefijo propio en Redis (`apiecommerce-tests:`). Testcontainers
+queda para la fase 6, donde el runner sí tiene Docker.
+
+**Lo que encontraron, que es para lo que están:**
+
+- 🔴 **Los tests de idempotencia pasaban sin probar nada.** El host arrancaba con
+  `NoIdempotencyStore` y `NoCacheService` pese a que la configuración final sí traía Redis.
+  ⚠️ La causa es estructural: `AddDistributedCaching` (y `AddMessaging`, y
+  `AddHealthProbes`) leen la configuración **eager** para decidir *qué implementación
+  registrar*, y eso ocurre mientras corre `Program` — **antes** de que se apliquen los
+  callbacks de `ConfigureAppConfiguration`. **`UseSetting` sí entra antes.** Un no-op no
+  rompe casi ninguna aserción, así que solo cayeron los dos tests que exigían un replay
+  real: el resto daba falsa tranquilidad. Queda `TestHostGuardTests` como red permanente.
+- 🟠 **La degradación de Redis era correcta pero inservible.** Medido con Redis
+  inalcanzable: GET del catálogo **11 s**, compra con `Idempotency-Key` **34 s** — la
+  petición acababa bien, pero a esa latencia el cliente ya cortó y los hilos se acumulan.
+  Acotados los timeouts (`ConnectTimeout`/`SyncTimeout`/`AsyncTimeout` a 1 s,
+  `ConnectRetry` 1) y **unificados los dos multiplexers**: `AddStackExchangeRedisCache`
+  creaba el suyo y se quedaba con los timeouts de fábrica, así que la mitad del sistema
+  seguía esperando 5 s. Resultado: **3 s y 7 s**. Cierra de paso una deuda de `planning/12`.
+- 🟠 **El P0 del crash-loop seguía vivo en otro atributo.** `[EmailAddress]` sobre
+  `SeedOptions.AdminEmail` es tan incondicional como lo era el `[Required]` de
+  `AdminPassword`: con el seeding apagado y `Seed__AdminEmail=` vacío, el arranque moría.
+  Movido a `.Validate(...)`, igual que su hermano.
+
+Además, cambios de producción para poder testear: los **límites de tasa pasan a
+configuración** (`RateLimit:*`) — con ellos fijos la suite se limitaba a sí misma a los
+100 requests y devolvía 429 por un motivo ajeno a lo que probaba — y `Program` se declara
+`public partial` para que `WebApplicationFactory` lo vea.
+
+⚠️ Y una lección de aislamiento: `DegradationTests` y `StartupTests` levantan su **propio**
+host y **pasaban en aislado pero fallaban en la suite completa**, chocando con
+`Database 'ApiEcommerceNET8_Tests' already exists`. Van en la misma colección sin
+paralelismo que el resto aunque no usen su fixture.
+
+Verificado: suite completa **dos veces seguidas** en verde (153/153, ~18 s) y build limpio.
 
 ### 2026-09-06 — Paso 11: fases 1 y 2 completas, 105 tests
 
@@ -233,6 +277,14 @@ Medido contra SQL Server y Redis **reales**:
 | Republicación de los 14 enterrados | 29 procesados, 0 pendientes, `/health/ready` → `Healthy` |
 | Arranque sobre el runtime **9.0.19** | sin `DOTNET_ROLL_FORWARD`; verificado en `/proc/<pid>/maps` |
 | **105 tests unitarios** | verdes; y en rojo al reintroducir dos bugs reales (prueba de mutación) |
+| **153 tests** (unit + integración) | verdes dos corridas seguidas, ~18 s, contra SQL Server y Redis reales |
+| 15 compras simultáneas, stock 10 (**automatizado**) | 10×200, 5×409, stock 0 — idéntico a la medición manual |
+| 8 POST simultáneos misma categoría (**automatizado**) | 1×201, 7×409, 1 fila, ni un 500 |
+| 6 compras concurrentes misma clave (**automatizado**) | una sola compra |
+| GET del catálogo con Redis caído | 11 s **antes** del fix de timeouts → **3 s** después |
+| Compra con `Idempotency-Key` y Redis caído | 34 s → **7 s**; y responde 200, no 500 |
+| Arranque con seeding apagado y sin admin | 200 (destapó que `[EmailAddress]` lo rompía) |
+| Arranque sin `Jwt:SecretKey` | **falla al arrancar**, que es lo correcto |
 
 **No verificado**: el `Dockerfile` construido y `docker-compose.prod.yml` levantado — no hay
 Docker en el dev container, los ejecuta el owner en el host.
@@ -241,11 +293,11 @@ Docker en el dev container, los ejecuta el owner en el host.
 
 ## 4. Pendientes, en orden
 
-1. **Tests** ([`planning/11`](planning/11_proyecto-de-tests.md)) — fases 1 y 2 hechas
-   (105 unitarios). **Falta lo que más vale**: fase 3 (integración con
-   `WebApplicationFactory` + Testcontainers), fase 4 (concurrencia con `Task.WhenAll`),
-   fase 5 (degradación y arranque) y fase 6 (CI). Los bugs que ha dado este proyecto
-   aparecen justo ahí, no en los unitarios.
+1. **Tests** ([`planning/11`](planning/11_proyecto-de-tests.md)) — fases 1–5 hechas
+   (153 tests). Falta la **fase 6, CI**: hoy nada corre `dotnet build` ni `dotnet test`
+   antes de un merge, así que la red existe pero nadie la obliga a estar tendida.
+   Pendiente también migrar la fase 3 a Testcontainers **en el runner**, donde sí hay
+   Docker.
 2. **Deuda de la revisión** ([`planning/12`](planning/12_deuda-revision-multiagente.md)) —
    reintentos del consumidor sin contador real, outbox sin claim para multi-réplica, purga
    de tablas, `ETag`/`If-Match`, hash del cuerpo en la clave de idempotencia.

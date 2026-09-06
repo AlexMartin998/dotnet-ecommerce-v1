@@ -1,5 +1,6 @@
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Options;
 
 namespace ApiEcommerce.Shared.Http;
 
@@ -19,8 +20,14 @@ public static class RateLimitPolicies
   /// <summary>Política estricta para login y registro.</summary>
   public const string Auth = "auth";
 
-  public static IServiceCollection AddRateLimiting(this IServiceCollection services)
+  public static IServiceCollection AddRateLimiting(
+      this IServiceCollection services, IConfiguration configuration)
   {
+    services.AddOptions<RateLimitOptions>()
+        .Bind(configuration.GetSection(RateLimitOptions.SectionName))
+        .ValidateDataAnnotations()
+        .ValidateOnStart();
+
     services.AddRateLimiter(options =>
     {
       // 429 con ProblemDetails, no un cuerpo vacío.
@@ -28,28 +35,45 @@ public static class RateLimitPolicies
 
       // Global: ventana fija por IP.
       options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
-          RateLimitPartition.GetFixedWindowLimiter(
-              partitionKey: ClientKey(context),
-              factory: _ => new FixedWindowRateLimiterOptions
-              {
-                PermitLimit = 100,
-                Window = TimeSpan.FromMinutes(1),
-                QueueLimit = 0
-              }));
+      {
+        var limits = Limits(context);
+
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: ClientKey(context),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+              PermitLimit = limits.GlobalPermitLimit,
+              Window = TimeSpan.FromSeconds(limits.GlobalWindowSeconds),
+              QueueLimit = 0
+            });
+      });
 
       options.AddPolicy(Auth, context =>
-          RateLimitPartition.GetFixedWindowLimiter(
-              partitionKey: ClientKey(context),
-              factory: _ => new FixedWindowRateLimiterOptions
-              {
-                PermitLimit = 10,
-                Window = TimeSpan.FromMinutes(1),
-                QueueLimit = 0
-              }));
+      {
+        var limits = Limits(context);
+
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: ClientKey(context),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+              PermitLimit = limits.AuthPermitLimit,
+              Window = TimeSpan.FromSeconds(limits.AuthWindowSeconds),
+              QueueLimit = 0
+            });
+      });
     });
 
     return services;
   }
+
+  /// <summary>
+  /// Los límites se resuelven del contenedor por petición y no se capturan en un
+  /// <c>IConfiguration</c> leído al registrar: la regla del proyecto es que los servicios
+  /// reciban <c>IOptions&lt;T&gt;</c>, y así un cambio de configuración en caliente se
+  /// respeta en la siguiente partición que se cree.
+  /// </summary>
+  private static RateLimitOptions Limits(HttpContext context)
+      => context.RequestServices.GetRequiredService<IOptions<RateLimitOptions>>().Value;
 
   /// <summary>
   /// Partición por IP remota. Detrás de un proxy hay que activar

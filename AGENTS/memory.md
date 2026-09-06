@@ -31,10 +31,26 @@ autoridad**: se trajo la *feature*, nunca el *código*.
 ## 2. Cómo se levanta
 
 ```sh
-dotnet build                                          # único check automático (no hay tests)
+dotnet build                                          # build de la solución (API + tests)
+dotnet test tests/ApiEcommerce.Tests                  # 153 tests, ~18 s
 dotnet watch run --urls "http://0.0.0.0:8021"         # dev
 ASPNETCORE_ENVIRONMENT=Development dotnet ef database update
 ```
+
+### Los tests (paso 11, fases 1–5; falta la 6, CI)
+
+`tests/ApiEcommerce.Tests` — xunit + Moq, TFM `net9.0`, estructura espejo del slicing.
+Los de integración levantan la API entera con `WebApplicationFactory` contra **SQL Server
+y Redis reales**, con recursos propios que **no pisan los de desarrollo**:
+
+| | |
+|---|---|
+| Base de datos | `ApiEcommerceNET8_Tests` — **se borra y se migra en cada corrida** |
+| Prefijo en Redis | `apiecommerce-tests:` |
+| Broker | desactivado (`RabbitMq:ConnectionString` vacío) |
+
+**No hay Testcontainers**: no hay Docker dentro del dev container. Entra en la fase 6 (CI),
+donde el runner sí lo tiene.
 
 Swagger (solo en Development): `http://localhost:8021/swagger/index.html` — un documento
 por versión de API. Sondas: `GET /health` (liveness) y `GET /health/ready` (SQL + Redis +
@@ -169,6 +185,10 @@ Piezas que conviene conocer antes de tocar nada:
 | Editar con scripts | Una sustitución global se cuela en los **bloques comentados** de aprendizaje. Ya pasó dos veces. |
 | Rate limiter propio | 100 req/min global y 10/min en `auth`. Al hacer pruebas de carga te limita **a ti**: reinicia el proceso para resetear la ventana. |
 | Lockout de Identity | 5 logins fallidos bloquean la cuenta 5 min. Probar con un usuario nuevo, no con el de siempre. |
+| **Tests: `UseSetting`, NO `ConfigureAppConfiguration`** | Varias piezas (`AddDistributedCaching`, `AddMessaging`, `AddHealthProbes`) leen la config **eager** para decidir QUÉ implementación registran, y eso pasa **antes** de que corran esos callbacks. Con `ConfigureAppConfiguration` el host arrancaba con `NoIdempotencyStore` y **los tests de idempotencia pasaban sin probar nada**. `TestHostGuardTests` es la red. |
+| **Tests de integración: sin paralelismo** | Todos van en `[Collection(IntegrationCollection.Name)]`, **incluidos los que levantan su propio host** (degradación, arranque): comparten base de datos y en paralelo chocan con `Database ... already exists`. Pasaban en aislado y fallaban en la suite completa. |
+| `tests/**` en el `.csproj` | Está **excluido** igual que `AGENTS/**`. Sin eso el glob del SDK Web compila los tests dentro de la API (xunit y Moq en la imagen de producción, y referencia circular). **No quitar.** |
+| FluentAssertions | **No se usa**, aunque la skill la pida: desde la v8 exige licencia comercial. `Assert` de xunit basta. |
 | **Runtime .NET** | El SDK del dev container es **10.0.400** y el proyecto es `net9.0`: compila, pero necesita el **runtime 9** instalado o no arranca. Ya está (9.0.19 y 10.0.11 conviven). Si el contenedor se recrea, se pierde: reinstalar con el comando de abajo. |
 | `pkill -f ApiEcommerce` | **Se mata a sí mismo**: el cwd y la propia línea de comando contienen esa cadena. Guardar el PID (`echo $! > api.pid`) y `kill` por PID. Ya ha pasado dos veces. |
 | Arrancar la app | `dotnet run` deja un proceso hijo que no muere con el padre. Mejor `dotnet bin/Debug/net9.0/ApiEcommerce.dll`, que sí da el PID real. |
@@ -205,6 +225,9 @@ Capítulos 15–20 son la referencia de estilo más reciente.
   El stock usa un UPDATE condicional atómico.
 - **`DateTime.Now` local** (no UTC) en todo el modelo. Es una decisión ya tomada; migrar a
   `DateTimeOffset` está en el roadmap como cambio de todo a la vez.
+- **Testcontainers, no todavía.** Los tests de integración usan la infraestructura del
+  host con base y prefijo propios, porque **no hay Docker en el dev container**. No es
+  pereza: es la única opción aquí. En CI sí se usarán.
 - **La web no es offline-first** — no aplica: esto es una API.
 
 ---
@@ -215,6 +238,11 @@ Category y Product tienen el slice vertical completo. Hay auth con Identity+JWT,
 versionado, CORS, cache Redis con decorador, paginación, subida de imágenes, seeding,
 rate limiting, Serilog, health checks, protección de carreras, idempotencia y outbox +
 RabbitMQ — este último **verificado de punta a punta contra un broker real** el
-2026-09-05, incluidos deduplicación y DLQ. **No hay tests: es el paso 7 y el siguiente.**
+2026-09-05, incluidos deduplicación y DLQ.
+
+**Ya hay tests**: `tests/ApiEcommerce.Tests`, **153** (unitarios + integración +
+concurrencia + degradación y arranque), verdes en dos corridas seguidas. Falta **CI**
+(fase 6 del `planning/11`): la red existe, pero nadie obliga a que esté tendida antes de
+un merge.
 
 Ver `progress.md` para el detalle de qué está hecho, qué está a medias y qué falta.

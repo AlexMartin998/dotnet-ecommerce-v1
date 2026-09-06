@@ -39,10 +39,22 @@ public static class CachingExtensions
 
     if (options.IsEnabled)
     {
+      // UNA sola conexión para las dos cosas que hablan con Redis.
+      //
+      // Antes había dos multiplexers: el que crea AddStackExchangeRedisCache por su
+      // cuenta a partir del string de conexión, y el nuestro. Además de duplicar
+      // conexiones al broker, el de la cache se quedaba con los timeouts POR DEFECTO,
+      // así que los de abajo solo protegían la mitad del sistema — medido: acortarlos
+      // bajó la compra con Idempotency-Key de 34 s a 11 s, y esos 11 s que quedaban
+      // eran justamente la cache esperando con sus 5 s de fábrica.
+      var multiplexer = new Lazy<IConnectionMultiplexer>(() => Connect(options.Configuration));
+
       services.AddStackExchangeRedisCache(redis =>
       {
-        redis.Configuration = options.Configuration;
         redis.InstanceName = options.InstanceName;
+        // Con ConnectionMultiplexerFactory, `Configuration` se ignora: la conexión la
+        // ponemos nosotros, con nuestros timeouts.
+        redis.ConnectionMultiplexerFactory = () => Task.FromResult(multiplexer.Value);
       });
 
       services.AddSingleton<ICacheService, RedisCacheService>();
@@ -51,20 +63,7 @@ public static class CachingExtensions
       // necesita `SET NX` (reservar si no existe) y esa primitiva no existe en
       // IDistributedCache. El multiplexer es thread-safe y caro de crear: se
       // comparte como singleton, que es como lo recomienda StackExchange.Redis.
-      services.AddSingleton<IConnectionMultiplexer>(_ =>
-      {
-        var config = ConfigurationOptions.Parse(options.Configuration);
-
-        // AbortOnConnectFail es `true` por defecto, y la fábrica es PEREZOSA: se
-        // ejecuta en la primera petición que necesite el store, no al arrancar. Con
-        // Redis caído en ese instante, la fábrica lanzaba, el contenedor NO cachea
-        // instancias fallidas, y cada petición siguiente reintentaba una conexión
-        // bloqueante de 5 s. Con `false`, conecta en segundo plano y se recupera solo.
-        config.AbortOnConnectFail = false;
-        config.ConnectRetry = 3;
-
-        return ConnectionMultiplexer.Connect(config);
-      });
+      services.AddSingleton<IConnectionMultiplexer>(_ => multiplexer.Value);
 
       services.AddSingleton<IIdempotencyStore, RedisIdempotencyStore>();
     }
@@ -76,5 +75,34 @@ public static class CachingExtensions
     }
 
     return services;
+  }
+
+  private static IConnectionMultiplexer Connect(string configuration)
+  {
+        var config = ConfigurationOptions.Parse(configuration);
+
+        // AbortOnConnectFail es `true` por defecto, y la fábrica es PEREZOSA: se
+        // ejecuta en la primera petición que necesite el store, no al arrancar. Con
+        // Redis caído en ese instante, la fábrica lanzaba, el contenedor NO cachea
+        // instancias fallidas, y cada petición siguiente reintentaba una conexión
+        // bloqueante de 5 s. Con `false`, conecta en segundo plano y se recupera solo.
+        config.AbortOnConnectFail = false;
+
+        // ⚠️ Los timeouts POR DEFECTO convierten "degradar en abierto" en una caída.
+        // Medido con los tests de degradación y Redis inalcanzable: con los valores de
+        // fábrica (ConnectTimeout 5 s × ConnectRetry 3, SyncTimeout 5 s) un GET del
+        // catálogo tardaba **11 s** y una compra con Idempotency-Key **34 s**. La
+        // petición acababa respondiendo bien, pero a esa latencia el cliente ya ha
+        // cortado, los hilos se acumulan y la caída de una OPTIMIZACIÓN se lleva por
+        // delante toda la API.
+        //
+        // Con estos valores el peor caso por operación queda acotado a ~1 s. La cache
+        // es un atajo: si no contesta rápido, no sirve para nada esperarla.
+        config.ConnectRetry = 1;
+        config.ConnectTimeout = 1000;
+        config.SyncTimeout = 1000;
+        config.AsyncTimeout = 1000;
+
+    return ConnectionMultiplexer.Connect(config);
   }
 }

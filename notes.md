@@ -2246,3 +2246,98 @@ degradacion    -> con Redis o el broker CAIDOS
 arranque       -> ASPNETCORE_ENVIRONMENT=Production con la config minima
 ```
   - -- eso es la fase 3 en adelante: WebApplicationFactory + Testcontainers
+
+
+
+
+
+
+## 26. Tests de integracion  <- y el test que pasaba sin probar NADA
+```sh
+dotnet test tests/ApiEcommerce.Tests            # 153 tests, ~18 s
+```
+
+- --- Montaje: `WebApplicationFactory<Program>` contra SQL Server y Redis **reales**
+```
+base de datos   ApiEcommerceNET8_Tests    <- se BORRA y se migra en cada corrida
+prefijo Redis   apiecommerce-tests:       <- no pisa las claves de desarrollo
+broker          desactivado (RabbitMq:ConnectionString vacio)
+```
+  - -- ⚠️ **sin Testcontainers**, que es lo que dice todo el mundo: no hay Docker dentro
+       del dev container. Se usa la infra del host con recursos propios. Testcontainers
+       en CI, que si tiene Docker
+  - -- las migraciones y el seeding los aplica el propio `Program` al arrancar el host:
+       asi el test cubre TAMBIEN ese camino, que ya rompio produccion una vez
+
+- --- ⚠️ `Program` de instrucciones de nivel superior nace `internal`
+```csharp
+public partial class Program;   // al final de Program.cs, o WebApplicationFactory<Program> no compila
+```
+
+- --- ⚠️⚠️ **`UseSetting`, NO `ConfigureAppConfiguration`**  <- lo que mas me costo ver
+```csharp
+// MAL: los callbacks se aplican DESPUES de que Program haya hecho sus registros
+builder.ConfigureAppConfiguration((_, c) => c.AddInMemoryCollection(...));
+
+// BIEN: entra antes de que corra Program
+foreach (var (k, v) in settings) builder.UseSetting(k, v);
+```
+  - -- varias piezas (`AddDistributedCaching`, `AddMessaging`, `AddHealthProbes`) leen la
+       configuracion **eager** para decidir QUE implementacion registran
+  - -- con `ConfigureAppConfiguration` la config FINAL era correcta (`Redis:Configuration`
+       tenia el valor bueno) pero el contenedor ya tenia registrado `NoIdempotencyStore`
+  - -- ⭐ **y el sintoma es lo peor de todo: los tests de idempotencia pasaban en VERDE
+       sin probar nada.** Un no-op no rompe "dos operaciones distintas dan dos
+       resultados": solo cayeron los DOS que exigian un replay de verdad
+  - -- leccion: cuando un test de integracion pasa, preguntarse si pasaria igual con la
+       feature APAGADA. Si la respuesta es si, el test no vale. De ahi `TestHostGuardTests`
+
+- --- ⚠️ El limitador de tasa se limita a SI MISMO
+  - -- 100 req/min por IP, y en `WebApplicationFactory` todas las peticiones comparten IP
+  - -- a las 100, media suite empieza a recibir 429 por un motivo ajeno a lo que prueba
+  - -- solucion: los limites pasan a `RateLimit:*` en configuracion (que ademas hacia
+       falta en produccion) y el host de tests los sube
+
+- --- ⚠️ Aislamiento: los que levantan su PROPIO host tambien van sin paralelismo
+```
+Passed en aislado  ->  Failed en la suite completa
+"Database 'ApiEcommerceNET8_Tests' already exists. Choose a different database name."
+```
+  - -- dos hosts arrancando a la vez ejecutan dos `MigrateAsync` sobre la misma base
+  - -- todos a la misma `[Collection]` con `DisableParallelization = true`, usen o no su fixture
+
+- --- ⭐ La concurrencia, con `Task.WhenAll` de peticiones REALES
+```csharp
+var responses = await Task.WhenAll(Enumerable.Range(0, 15)
+    .Select(_ => user.PostAsJsonAsync("/api/v1/product/buy", new { sku, quantity = 1 })));
+```
+  - -- da exactamente lo mismo que la medicion manual: 10x200, 5x409, **stock 0**
+  - -- en secuencia esto pasaba TAMBIEN con la implementacion defectuosa. Por eso el bug
+       del stock sobrevivio tanto
+
+- --- ⭐ La degradacion: correcta pero **inservible**, y solo se ve midiendo
+```
+Redis inalcanzable, timeouts de fabrica (ConnectTimeout 5s x ConnectRetry 3, SyncTimeout 5s):
+   GET /category                     11 s
+   POST /product/buy + Idempotency   34 s
+```
+  - -- responde bien, pero a esa latencia el cliente ya corto, los hilos se acumulan y la
+       caida de una OPTIMIZACION se lleva la API entera. "Degradar en abierto" tambien
+       tiene que ser RAPIDO
+  - -- acotar timeouts a 1 s bajo la compra de 34 s a 11 s... y ahi se vio lo otro:
+  - -- ⚠️ **`AddStackExchangeRedisCache` crea su PROPIO multiplexer** y se quedaba con los
+       timeouts de fabrica. Los mios solo protegian la mitad del sistema
+```csharp
+var multiplexer = new Lazy<IConnectionMultiplexer>(() => Connect(options.Configuration));
+services.AddStackExchangeRedisCache(r => r.ConnectionMultiplexerFactory = () => Task.FromResult(multiplexer.Value));
+services.AddSingleton<IConnectionMultiplexer>(_ => multiplexer.Value);
+```
+  - -- con una sola conexion: **3 s y 7 s**
+
+- --- ⭐ El arranque: el P0 del crash-loop **seguia vivo en otro atributo**
+  - -- ya se habia quitado el `[Required]` de `SeedOptions.AdminPassword` por esto mismo
+  - -- pero `[EmailAddress]` sobre `AdminEmail` es igual de incondicional: con el seeding
+       APAGADO y `Seed__AdminEmail=` vacio, `OptionsValidationException` al arrancar
+  - -- lo destapo el test de "arranca en Production con el seeding apagado", que era
+       literalmente el test escrito para el bug anterior
+  - -- **la regla condicional va en `.Validate(...)`, nunca en un atributo.** Otra vez
