@@ -13,7 +13,10 @@ public class ProductProfile : Profile
     // lectura: CategoryName viaja plano (la navegación puede venir sin cargar)
     CreateMap<Product, ProductDto>()
         .ForMember(d => d.CategoryName,
-                   o => o.MapFrom(s => s.Category != null ? s.Category.Name : null));
+                   o => o.MapFrom(s => s.Category != null ? s.Category.Name : null))
+        // El rowversion es binario en la base y texto en una cabecera HTTP.
+        .ForMember(d => d.RowVersion,
+                   o => o.MapFrom(s => s.RowVersion != null ? Convert.ToBase64String(s.RowVersion) : null));
 
     // escritura: la navegación Category se ignora, se trabaja solo con CategoryId
     CreateMap<CreateProductDto, Product>()
@@ -46,6 +49,8 @@ public class ProductProfile : Profile
         .ForMember(d => d.SKU, o => o.MapFrom((s, d) => s.SKU ?? d.SKU))
         .ForMember(d => d.Stock, o => o.MapFrom((s, d) => s.Stock ?? d.Stock))
         .ForMember(d => d.CategoryId, o => o.MapFrom((s, d) => s.CategoryId ?? d.CategoryId));
+    // Nota: UpdateProductDto.RowVersion NO se mapea a la entidad. Lo gestiona SQL Server;
+    // el valor que manda el cliente sirve solo para COMPARAR (ver ProductRules).
   }
 
 }

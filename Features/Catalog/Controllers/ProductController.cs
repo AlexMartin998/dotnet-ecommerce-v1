@@ -72,6 +72,12 @@ public class ProductController : ControllerBase
     public async Task<ActionResult<ProductDto>> GetProduct(int id, CancellationToken ct)
     {
         var product = await _service.GetByIdAsync(id, ct);
+
+        // ETag: la versión del recurso, para que el cliente pueda devolverla en If-Match
+        // y no pisar el cambio de otro. Entre comillas porque el RFC 9110 lo exige.
+        if (product.RowVersion is not null)
+            Response.Headers.ETag = $"\"{product.RowVersion}\"";
+
         return Ok(product);
     }
 
@@ -102,6 +108,11 @@ public class ProductController : ControllerBase
     {
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
+
+        // La versión viaja por cabecera, no en el cuerpo: es una precondición de HTTP.
+        // Se rellena aquí para que el servicio y las reglas no tengan que conocer
+        // HttpContext. Es OPCIONAL: sin If-Match, el PATCH se comporta como siempre.
+        dto.RowVersion = IfMatch();
 
         await _service.UpdateAsync(id, dto, ct);
         return NoContent();
@@ -191,5 +202,23 @@ public class ProductController : ControllerBase
         // SKU inexistente -> 404 ; stock insuficiente -> 409
         var product = await _service.BuyAsync(dto, User.GetUserId(), ct);
         return Ok(product);
+    }
+
+    /// <summary>
+    /// Lee <c>If-Match</c> y le quita el envoltorio del RFC (comillas y el prefijo
+    /// <c>W/</c> de las etiquetas débiles).
+    /// </summary>
+    /// <remarks>
+    /// Sin quitarlo, el token no casaría nunca con el de la base y todo PATCH con
+    /// <c>If-Match</c> devolvería 412 — un fallo especialmente desagradable porque parece
+    /// un conflicto real.
+    /// </remarks>
+    private string? IfMatch()
+    {
+        var header = Request.Headers.IfMatch.ToString();
+
+        if (string.IsNullOrWhiteSpace(header) || header == "*") return null;
+
+        return header.Trim().TrimStart('W', '/').Trim('"');
     }
 }

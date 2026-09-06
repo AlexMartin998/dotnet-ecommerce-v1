@@ -35,4 +35,17 @@ public class UpdateProductDto
   [Range(1, int.MaxValue, ErrorMessage = "CategoryId must be greater than zero")]
   public int? CategoryId { get; set; }
 
+
+  /// <summary>
+  /// Versión que el cliente leyó. <b>No la manda en el cuerpo</b>: la rellena el controller
+  /// desde la cabecera <c>If-Match</c>.
+  /// </summary>
+  /// <remarks>
+  /// Está aquí y no como parámetro de <c>ICrudService.UpdateAsync</c> para no meter una
+  /// preocupación de HTTP en el contrato genérico del CRUD, que lo comparten todas las
+  /// entidades. El DTO ya es el transporte entre controller y servicio; esto es un campo
+  /// más de ese transporte.
+  /// </remarks>
+  public string? RowVersion { get; set; }
+
 }

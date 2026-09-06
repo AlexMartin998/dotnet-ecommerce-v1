@@ -60,11 +60,13 @@ public class Product : IAuditable
   /// tracker.
   /// </para>
   /// <para>
-  /// <b>Lo que NO garantiza:</b> el <i>lost update</i> entre dos administradores.
-  /// El token no se expone en <c>ProductDto</c> ni se acepta en <c>UpdateProductDto</c>,
-  /// así que el PATCH relee la fila y usa el <c>rowversion</c> recién leído. Para
-  /// cerrarlo haría falta publicarlo como <c>ETag</c> y exigir <c>If-Match</c>
-  /// (anotado en <c>06-estado-y-roadmap.md</c>).
+  /// <b>El <i>lost update</i> entre dos administradores ya está cerrado</b> (2026-09-06),
+  /// pero <b>no por esta columna sola</b>: por sí misma no puede. El PATCH relee la fila,
+  /// así que EF compara contra el <c>rowversion</c> recién leído —el del otro— y todo
+  /// cuadra. Lo que lo cierra es publicar el token como <c>ETag</c> en el GET y compararlo
+  /// contra el <c>If-Match</c> que devuelve el cliente (<c>ProductRules</c>): ese es el
+  /// único valor que prueba <i>qué versión leyó de verdad</i>. Esta columna sigue siendo
+  /// necesaria como segunda red, para la ventana entre esa comparación y el UPDATE.
   /// </para>
   /// <para>
   /// <b>No es lo que impide sobrevender stock:</b> eso lo resuelve el UPDATE

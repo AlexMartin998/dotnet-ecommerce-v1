@@ -1,6 +1,9 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using ApiEcommerce.Shared.Auth;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Formatters;
+using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Mvc.Filters;
 
 namespace ApiEcommerce.Shared.Idempotency;
@@ -92,20 +95,28 @@ public sealed class IdempotentAttribute : Attribute, IAsyncActionFilter, IOrdere
     var route = $"{request.Method}:{request.Path.Value?.ToLowerInvariant()}{request.QueryString.Value}";
     var key = $"{user}:{route}:{header!}";
 
-    // 1) ¿Ya terminó una petición con esta clave? Se reproduce su respuesta.
-    if (await store.GetAsync(key, context.HttpContext.RequestAborted) is { } cached)
+    var requestHash = HashOf(context);
+
+    // 1) ¿Ya existe esta clave? Puede estar en curso o ya terminada.
+    if (await store.GetAsync(key, context.HttpContext.RequestAborted) is { } existing)
     {
-      Replay(context, cached);
-      return;
+      if (MismatchedBody(context, existing, requestHash)) return;
+
+      // Terminada: se reproduce su respuesta.
+      if (existing.Response is { } cached)
+      {
+        Replay(context, cached);
+        return;
+      }
     }
 
     // 2) Reserva atómica. Si falla, hay otra petición idéntica EN CURSO ahora mismo.
-    if (!await store.TryAcquireAsync(key, ReservationTtl, context.HttpContext.RequestAborted))
+    if (!await store.TryAcquireAsync(key, requestHash, ReservationTtl, context.HttpContext.RequestAborted))
     {
       // Puede que la otra petición haya terminado entre el GET de arriba y esta
       // reserva. Se vuelve a mirar antes de dar 409: si ya hay respuesta, lo correcto
       // es reproducirla, no decirle al cliente que su operación sigue en curso.
-      if (await store.GetAsync(key, context.HttpContext.RequestAborted) is { } justFinished)
+      if (await store.GetAsync(key, context.HttpContext.RequestAborted) is { Response: { } justFinished })
       {
         Replay(context, justFinished);
         return;
@@ -147,7 +158,16 @@ public sealed class IdempotentAttribute : Attribute, IAsyncActionFilter, IOrdere
 
     if (executed.Result is ObjectResult { Value: not null } ok)
     {
-      body = JsonSerializer.Serialize(ok.Value, SerializerOptions);
+      // ⚠️ Con las opciones de MVC, no con las nuestras. El contrato de la idempotencia es
+      // "reproducir la respuesta ORIGINAL", y eso significa los MISMOS BYTES. Con un
+      // JsonSerializerOptions propio, el replay salía equivalente pero no idéntico: un
+      // `+` dentro de un base64 (el ETag de RowVersion, sin ir más lejos) se escapaba
+      // como `\u002B` en el replay y no en la respuesta viva. Lo destapó un test que
+      // comparaba los dos cuerpos, no una revisión.
+      var jsonOptions = context.HttpContext.RequestServices
+          .GetRequiredService<IOptions<JsonOptions>>().Value.JsonSerializerOptions;
+
+      body = JsonSerializer.Serialize(ok.Value, jsonOptions);
       contentType = "application/json";
     }
 
@@ -160,9 +180,80 @@ public sealed class IdempotentAttribute : Attribute, IAsyncActionFilter, IOrdere
 
     await store.SaveAsync(
         key,
+        requestHash,
         new IdempotentResponse(status.Value, body, contentType, headers.Count > 0 ? headers : null),
         ResponseTtl,
         CancellationToken.None);
+  }
+
+  /// <summary>
+  /// Rechaza con <b>422</b> una clave reutilizada con otro cuerpo.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Sin esto, reutilizar una <c>Idempotency-Key</c> con un cuerpo distinto reproducía la
+  /// respuesta de la primera <b>en silencio</b>: el cliente pedía comprar 5 unidades,
+  /// recibía un 200 con el resultado de haber comprado 1, y nada indicaba que su segunda
+  /// petición no se había ejecutado. Un fallo silencioso en el mecanismo que existe
+  /// precisamente para no cobrar de más.
+  /// </para>
+  /// <para>
+  /// 422 y no 409: el request está bien formado y no choca con el estado de la base — lo
+  /// que pasa es que <b>no se puede procesar</b> porque contradice a otro que el cliente
+  /// mandó con la misma clave. Es la respuesta que fija el borrador de idempotencia de la
+  /// IETF, y lo que hacen Stripe y compañía.
+  /// </para>
+  /// </remarks>
+  private static bool MismatchedBody(
+      ActionExecutingContext context, IdempotencyEntry entry, string requestHash)
+  {
+    // Huella vacía = no se pudo calcular (ver HashOf). No se inventa un conflicto.
+    if (requestHash.Length == 0 || entry.RequestHash.Length == 0) return false;
+
+    if (entry.RequestHash == requestHash) return false;
+
+    context.Result = new UnprocessableEntityObjectResult(new ProblemDetails
+    {
+      Status = StatusCodes.Status422UnprocessableEntity,
+      Title = "Idempotency key reused with a different body",
+      Detail = $"The {HeaderName} was already used for a different request. Use a new key.",
+      Extensions = { ["code"] = "idempotency_key_reuse" }
+    });
+
+    return true;
+  }
+
+  /// <summary>Huella estable del cuerpo de la petición.</summary>
+  /// <remarks>
+  /// <para>
+  /// Se calcula sobre los <b>argumentos ya enlazados</b> y no sobre el flujo crudo: para
+  /// cuando corre un filtro de acción, el model binder ya consumió el cuerpo y releerlo
+  /// exigiría un middleware que active <c>EnableBuffering</c> en <b>todas</b> las
+  /// peticiones. Los argumentos son además una huella mejor: dos cuerpos que solo difieren
+  /// en espacios o en el orden de los campos son la misma petición.
+  /// </para>
+  /// <para>
+  /// Si algo no se puede serializar, devuelve cadena vacía y la comprobación se salta:
+  /// una huella imposible de calcular no puede convertirse en un 422 para el cliente.
+  /// </para>
+  /// </remarks>
+  private static string HashOf(ActionExecutingContext context)
+  {
+    try
+    {
+      var arguments = context.ActionArguments
+          .Where(a => a.Value is not CancellationToken)
+          .OrderBy(a => a.Key, StringComparer.Ordinal)
+          .ToDictionary(a => a.Key, a => a.Value);
+
+      var json = JsonSerializer.SerializeToUtf8Bytes(arguments, SerializerOptions);
+
+      return Convert.ToHexString(SHA256.HashData(json));
+    }
+    catch (Exception)
+    {
+      return string.Empty;
+    }
   }
 
   /// <summary>Reproduce una respuesta memorizada, cabeceras incluidas.</summary>

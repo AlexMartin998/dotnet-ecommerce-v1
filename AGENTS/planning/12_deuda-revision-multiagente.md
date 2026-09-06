@@ -34,12 +34,20 @@
       índice filtrado de pendientes pasa a ir por `Sequence`.
 
 ## 12.2 Concurrencia y contrato
-- [ ] **`ETag` / `If-Match` para el *lost update* entre admins.** `RowVersion` existe pero no
-      se expone en `ProductDto` ni se acepta en `UpdateProductDto`, así que el PATCH usa el
-      token que acaba de leer. El XML doc de `Product.RowVersion` ya dice qué garantiza y
-      qué no — **si se cierra, hay que actualizarlo**.
-- [ ] **Hash del cuerpo en la clave de idempotencia.** Hoy la misma clave con otro payload
-      reproduce la respuesta del primero en silencio. Lo estándar es 422 si no coincide.
+- [x] **`ETag` / `If-Match` para el *lost update* entre admins.** El GET publica el
+      `rowversion` como `ETag`; el PATCH lee `If-Match` y `ProductRules` lo compara →
+      **412** si el cliente leyó otra versión. **Opcional a propósito**: sin `If-Match` el
+      PATCH sigue funcionando, porque exigirlo rompería a todos los clientes actuales.
+      Token ilegible → **400**, no 500. El XML doc de `Product.RowVersion` actualizado, que
+      era parte de la casilla.
+- [x] **Hash del cuerpo en la clave de idempotencia.** SHA-256 de los argumentos ya
+      enlazados (no del flujo crudo: cuando corre el filtro, el model binder ya lo consumió,
+      y los argumentos además ignoran espacios y orden de campos). Se guarda **desde la
+      reserva**, no al terminar: si no, una segunda petición con otro cuerpo que llegue
+      *mientras la primera sigue en curso* no tendría contra qué comparar. Distinto → **422**.
+      ⚠️ **Deuda que abre**: el replay re-serializa el cuerpo memorizado y no es idéntico
+      byte a byte al vivo (`+` sale como `\u002B`). Equivalente para cualquier cliente que
+      parsee JSON; byte-identidad exigiría capturar lo que MVC escribe.
 
 ## 12.3 Observabilidad y operación
 - [ ] **OpenTelemetry**: trazas y métricas, más un correlation id por request. Es lo primero
