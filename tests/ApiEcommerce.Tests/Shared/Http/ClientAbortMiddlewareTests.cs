@@ -6,22 +6,11 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace ApiEcommerce.Tests.Shared.Http;
 
 
-/// <summary>
-/// Absorber las excepciones que solo ocurren porque el cliente colgó.
-/// </summary>
+/// <summary>Absorber las excepciones que solo ocurren porque el cliente colgó.</summary>
 /// <remarks>
-/// <para>
-/// ⚠️ El caso real no es una <c>OperationCanceledException</c>: cuando el cliente corta,
-/// EF cancela el <c>SqlCommand</c> y SqlClient lanza un <b><c>SqlException</c></b>, que
-/// llegaba al final del pipeline como una excepción cualquiera —500, nivel Error y traza
-/// completa—. Medido en las pruebas de carga: 27 «errores» que no eran errores.
-/// </para>
-/// <para>
-/// Aquí se usa una excepción cualquiera a propósito: lo que se está fijando es que la
-/// decisión se toma por el <b>estado de la petición</b> y no por el tipo de la excepción.
-/// <c>SqlException</c> no se puede construir en un test —no tiene constructor público—,
-/// que es justo por lo que perseguir tipos concretos era mal diseño.
-/// </para>
+/// El caso real no es una <c>OperationCanceledException</c>: al cortar el cliente,
+/// SqlClient lanza un <c>SqlException</c> cualquiera. Los tests usan una excepción
+/// arbitraria porque la decisión se toma por el estado de la petición, no por su tipo.
 /// </remarks>
 public class ClientAbortMiddlewareTests
 {
@@ -49,8 +38,7 @@ public class ClientAbortMiddlewareTests
   [Fact]
   public async Task WhenTheClientHungUpTheRequestIsSwallowedAndMarked499()
   {
-    // 499 (Client Closed Request) no es del RFC pero es la convención de facto —la de
-    // nginx— y es lo que hace que estas peticiones no cuenten como 5xx en las métricas.
+    // 499 no es del RFC pero es la convención de nginx, y evita contarlas como 5xx.
     var context = await RunAsync(new InvalidOperationException("cancelado a media consulta"), clientAborted: true);
 
     Assert.Equal(499, context.Response.StatusCode);
@@ -59,8 +47,7 @@ public class ClientAbortMiddlewareTests
   [Fact]
   public async Task WithTheClientStillThereTheExceptionKeepsGoingUp()
   {
-    // La otra mitad, y la que impide que esto se coma errores de verdad: si el cliente
-    // sigue conectado, un fallo es un fallo y tiene que llegar al handler global.
+    // Impide que esto se coma errores de verdad: con el cliente conectado, un fallo sube.
     var boom = await Assert.ThrowsAsync<InvalidOperationException>(
         () => RunAsync(new InvalidOperationException("fallo real"), clientAborted: false));
 
@@ -70,12 +57,9 @@ public class ClientAbortMiddlewareTests
   [Fact]
   public async Task IfTheResponseAlreadyStartedTheStatusIsNotTouched()
   {
-    // Tocar el código de estado con las cabeceras ya enviadas lanza otra excepción
-    // encima de la primera, y entonces sí se pierde la información del fallo original.
-    //
-    // ⚠️ Hace falta sustituir la característica de respuesta: la de `DefaultHttpContext`
-    // devuelve `HasStarted` false SIEMPRE, así que un test escrito con ella pasa sin
-    // probar nada — y este guard es justo el que evita convertir un fallo en dos.
+    // Tocar el estado con las cabeceras ya enviadas lanza otra excepción encima y pierde
+    // el fallo original. Hay que sustituir la feature de respuesta: la de
+    // `DefaultHttpContext` devuelve `HasStarted` false siempre y el test no probaría nada.
     var context = new DefaultHttpContext();
     context.Features.Set<IHttpResponseFeature>(new StartedResponseFeature());
 

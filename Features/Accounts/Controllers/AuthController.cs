@@ -15,8 +15,7 @@ namespace ApiEcommerce.Features.Accounts.Controllers;
 [ApiVersion("1.0")]
 [Route("api/v{version:apiVersion}/[controller]")] // api/v1/auth
 [Produces("application/json")]
-// Ventana estricta: 10 intentos por minuto y por IP. Complementa al lockout de
-// Identity, que solo cuenta fallos POR USUARIO.
+// Por IP, complementando al lockout de Identity, que solo cuenta fallos por usuario.
 [EnableRateLimiting(RateLimitPolicies.Auth)]
 public class AuthController : ControllerBase
 {
@@ -34,10 +33,8 @@ public class AuthController : ControllerBase
 
     /// <summary>Alta de un usuario nuevo. Siempre con rol <c>user</c>.</summary>
     /// <remarks>
-    /// El rol <b>no</b> se acepta como campo del body a propósito: en el código de
-    /// referencia el cliente podía mandar <c>"Role": "Admin"</c> en un endpoint
-    /// anónimo y auto-promoverse. Los administradores se crean sembrando o
-    /// promoviendo desde un endpoint protegido, nunca desde el registro público.
+    /// El rol no se acepta en el body: sería auto-promoverse desde un endpoint anónimo. Los
+    /// administradores se crean sembrando o promoviendo desde un endpoint protegido.
     /// </remarks>
     [AllowAnonymous]
     [HttpPost("register", Name = "Register")]
@@ -54,8 +51,7 @@ public class AuthController : ControllerBase
         // username/email repetido -> 409 ; política de password -> 422
         var result = await _service.RegisterAsync(dto, ct);
 
-        // Registrarse deja la sesión abierta, igual que el login: si no, el cliente
-        // recibiría un access token que no puede renovar y en 15 minutos estaría fuera.
+        // Registrarse abre sesión como el login: si no, el access token no se podría renovar.
         await OpenSessionAsync(result.User.Id, ct);
 
         return CreatedAtRoute("GetProfile", new { version = "1.0" }, result);
@@ -84,8 +80,8 @@ public class AuthController : ControllerBase
 
     /// <summary>Cambia un refresh token por un access token nuevo (y otro refresh token).</summary>
     /// <remarks>
-    /// El refresh token NO viaja en el cuerpo: se lee de la cookie <c>HttpOnly</c>, que es
-    /// justo lo que impide que un XSS se lo lleve. Por eso este endpoint no recibe DTO.
+    /// No recibe DTO: el refresh token se lee de la cookie <c>HttpOnly</c>, que es lo que
+    /// impide que un XSS se lo lleve.
     /// </remarks>
     [AllowAnonymous]
     [HttpPost("refresh", Name = "RefreshToken")]
@@ -99,8 +95,7 @@ public class AuthController : ControllerBase
             return Unauthorized(Problem(
                 "No refresh token was provided.", "missing_refresh_token"));
 
-        // No existe, gastado o caducado -> 401. Y si es un reuso fuera de la ventana de
-        // gracia, el servicio ya habrá revocado la familia entera antes de lanzar.
+        // No existe, gastado o caducado -> 401; si es reuso, el servicio ya revocó la familia.
         var (auth, refreshed) = await _sessions.RotateAsync(current, ClientIp(), ct);
 
         _cookie.Write(Response, refreshed);
@@ -110,34 +105,28 @@ public class AuthController : ControllerBase
 
     /// <summary>Cierra la sesión: revoca la familia de refresh tokens y borra la cookie.</summary>
     /// <remarks>
-    /// <c>[AllowAnonymous]</c> a propósito: el caso más habitual de cerrar sesión es que
-    /// el access token ya haya expirado. Exigir uno válido dejaría al usuario sin poder
-    /// cerrar justo cuando más falta le hace.
+    /// <c>[AllowAnonymous]</c> a propósito: lo normal al cerrar sesión es que el access token
+    /// ya haya expirado, y exigir uno válido impediría cerrarla.
     /// </remarks>
     [AllowAnonymous]
     [HttpPost("logout", Name = "Logout")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<IActionResult> Logout(CancellationToken ct)
     {
-        // Si venía un access token válido, su `jti` entra en la denylist para que muera
-        // ya en vez de al expirar. Es un extra: la sesión se corta con o sin él.
+        // El `jti`, si viene, entra en la denylist; es un extra, la sesión se corta sin él.
         await _sessions.LogoutAsync(
             _cookie.Read(Request), User.GetTokenId(), User.GetTokenExpiry(), ct);
 
         _cookie.Clear(Response);
 
-        // 204 siempre, incluso sin cookie o con una ya revocada: cerrar sesión dos veces
-        // tiene que ser inofensivo, y un error dejaría al usuario sin saber si salió.
+        // 204 siempre, incluso sin cookie: cerrar sesión dos veces tiene que ser inofensivo.
         return NoContent();
     }
 
     /// <summary>Cambia la contraseña del propio usuario y corta el resto de sesiones.</summary>
     /// <remarks>
-    /// ⚠️ Cambiar la contraseña <b>revoca todas las sesiones</b>, y esa es la expectativa de
-    /// cualquiera que la cambia porque sospecha que se la han robado: si las sesiones
-    /// abiertas siguieran vivas, cambiarla no habría echado a nadie.
-    /// Se abre una sesión nueva para ESTE dispositivo, para no expulsar también a quien
-    /// acaba de hacerlo bien.
+    /// Revoca todas las sesiones: quien cambia la contraseña por sospecha de robo espera que
+    /// eche a los demás. Se abre una nueva para este dispositivo, para no expulsarse solo.
     /// </remarks>
     [Authorize]
     [HttpPost("password", Name = "ChangePassword")]
@@ -173,9 +162,8 @@ public class AuthController : ControllerBase
 
         await _sessions.RevokeAllSessionsAsync(userId, ct);
 
-        // El access token de ESTE dispositivo sí se puede matar en el acto; los de los
-        // demás no —la denylist va por `jti` y no sabemos cuáles son— y sobreviven como
-        // mucho lo que les quede, sin poder renovarse.
+        // Solo se mata el access token de este dispositivo: la denylist va por `jti` y no se
+        // conocen los de los demás, que sobreviven lo que les quede pero ya no pueden renovar.
         await _sessions.LogoutAsync(null, User.GetTokenId(), User.GetTokenExpiry(), ct);
 
         _cookie.Clear(Response);

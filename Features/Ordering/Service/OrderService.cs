@@ -33,8 +33,7 @@ public sealed class OrderService(
     {
       return await transactions.ExecuteAsync(async token =>
       {
-        // Idempotencia DENTRO de la transacción: la marca y el efecto se confirman juntos
-        // o no se confirma ninguno. Es la garantía de planning/17, reutilizada tal cual.
+        // Idempotencia dentro de la transacción: la marca y el efecto se confirman juntos.
         if (await commands.FindResultAsync<OrderDto>(intent, dto, token) is { } already)
           return new CommandOutcome<OrderDto>(already, WasReplayed: true);
 
@@ -42,9 +41,7 @@ public sealed class OrderService(
 
         repository.Add(order);
 
-        // Se guarda ANTES de emitir el evento porque el evento necesita el Id, que lo
-        // asigna la base. Sigue siendo atómico: los dos SaveChanges van dentro de la
-        // misma transacción del runner.
+        // Antes del evento porque este necesita el Id; los dos SaveChanges van en la misma transacción.
         await repository.SaveChangesAsync(token);
 
         await outbox.EnqueueAsync(new OrderPlaced(
@@ -65,9 +62,7 @@ public sealed class OrderService(
     }
     catch (Exception ex) when (commands.IsDuplicateIntent(ex))
     {
-      // Otra réplica cerró la misma compra a la vez y confirmó primero. Nuestra
-      // transacción entera se deshizo —stock incluido—, así que basta con devolver lo
-      // que hizo el ganador.
+      // Otra réplica confirmó primero: nuestra transacción se deshizo entera, stock incluido.
       var winner = await commands.FindResultAsync<OrderDto>(intent, dto, ct)
           ?? throw new ConflictAppException(
               "A concurrent request with the same idempotency key is still in progress.");
@@ -80,8 +75,7 @@ public sealed class OrderService(
       int id, string buyerUserId, CancellationToken ct = default)
   {
     var order = await repository.FindForBuyerAsync(id, buyerUserId, ct)
-        // 404 y no 403: decir "existe pero no es tuya" ya filtra que existe, y con ids
-        // correlativos eso permite contar las órdenes de la tienda desde fuera.
+        // 404 y no 403: "existe pero no es tuya" ya filtra que existe.
         ?? throw new NotFoundAppException("Order", id.ToString());
 
     return ToDto(order);
@@ -101,21 +95,13 @@ public sealed class OrderService(
   public async Task<DocumentContent> GetReceiptAsync(
       int orderId, string buyerUserId, CancellationToken ct = default)
   {
-    // Misma consulta filtrada por comprador que GetForBuyerAsync: el comprobante de otro
-    // es indistinguible de uno que no existe.
+    // Filtrada por comprador: el comprobante de otro es indistinguible de uno que no existe.
     var order = await repository.FindForBuyerAsync(orderId, buyerUserId, ct)
         ?? throw new NotFoundAppException("Order", orderId.ToString());
 
     if (order.ReceiptDocumentKey is null)
-      // ⚠️ DOS códigos distintos, y esa es toda la razón de que `ReceiptStatus` sea una
-      // columna y no un booleano derivado: "todavía no" y "ya no va a estar" se responden
-      // igual de mal con el mismo código. `receipt_not_ready` significa «vuelve en un
-      // momento» y un cliente lo reintenta; devolverlo para un comprobante que murió en la
-      // DLQ lo deja haciendo polling eterno sobre algo que no va a existir.
-      //
-      // Los dos son 409 y no 404 porque la ORDEN existe, y CustomAppException y no
-      // ConflictAppException porque el `code` es parte del contrato: es por lo que el
-      // cliente los distingue, y ConflictAppException fija el suyo en "conflict".
+      // Dos códigos porque "todavía no" es reintentable y "ya no va a estar" no lo es.
+      // 409 y no 404 porque la orden existe; CustomAppException porque el `code` es contrato.
       throw order.ReceiptStatus == ReceiptStatus.Failed
           ? new CustomAppException(
               "receipt_failed",
@@ -127,18 +113,13 @@ public sealed class OrderService(
               $"The receipt for order '{order.Number}' is not ready yet.",
               System.Net.HttpStatusCode.Conflict);
 
-    // El almacén devuelve null —no lanza— cuando la clave ya no está: es una condición
-    // tratable (un borrado, una migración de infraestructura a medias), no un fallo del
-    // sistema. Aquí sí es un 404: la orden existe pero su documento se ha perdido, y
-    // decirlo es más honesto que un 500.
+    // El almacén devuelve null si la clave ya no está: la orden existe pero su documento
+    // se perdió, y eso es un 404, no un 500.
     var content = await documents.OpenAsync(order.ReceiptDocumentKey, ct)
         ?? throw new NotFoundAppException("Receipt", order.Number);
 
-    // ⚠️ El nombre de la descarga lo pone el DOMINIO, no el almacén. Visto ejecutando: el
-    // fichero llegaba como `cdfdcf87c326aadb22845f2f46c8c691.pdf` —la clave opaca, que es
-    // lo único que el almacén sabe de él—, y con eso en la carpeta de descargas nadie
-    // sabe de qué compra era. Peor: filtra la forma de las claves. Aquí sí se sabe cómo se
-    // llama: es el número de la orden.
+    // El nombre de la descarga lo pone el dominio: el del almacén es la clave opaca, que
+    // no dice de qué compra es y además filtra la forma de las claves.
     return content with { FileName = $"{order.Number}.pdf" };
   }
 
@@ -148,21 +129,12 @@ public sealed class OrderService(
   private async Task<Order> BuildAsync(
       PlaceOrderDto dto, string buyerUserId, string? buyerEmail, CancellationToken ct)
   {
-    // ⚠️ Se agrupan las líneas repetidas ANTES de apartar stock. Sin esto, un carrito con
-    // el mismo SKU dos veces produciría dos líneas idénticas en el comprobante y dos
-    // descuentos separados: cuadra en total, pero el documento queda raro y el cliente
-    // llama preguntando.
+    // Se agrupan los SKU repetidos antes de apartar stock: si no, salen líneas duplicadas
+    // en el comprobante y dos descuentos separados.
     var lines = dto.Items
         .GroupBy(i => i.Sku.Trim(), StringComparer.OrdinalIgnoreCase)
         .Select(g => (Sku: g.Key, Quantity: g.Sum(i => i.Quantity)))
-        // ⚠️ Y se ORDENAN por SKU, que no es cosmética: cada descuento toma un lock
-        // exclusivo de la fila del producto y lo mantiene hasta el commit, que aquí está
-        // lejos (secuencia, INSERT de la orden, outbox, marca del comando). Recorrerlas en
-        // el orden que mandó el CLIENTE es pedir un deadlock: A compra [1,2] y B compra
-        // [2,1] a la vez, cada uno bloquea el primero y espera el del otro. Con un orden
-        // total y global de adquisición, el deadlock deja de ser posible por construcción.
-        // Se sobreviviría —1205 es transitorio y EF reintenta— pero rehaciendo la compra
-        // entera, y con contención alta se agotan los reintentos y sale un 500.
+        // Ordenar por SKU da un orden global de adquisición de locks: sin él, dos compras cruzadas hacen deadlock.
         .OrderBy(line => line.Sku, StringComparer.OrdinalIgnoreCase)
         .ToList();
 
@@ -171,8 +143,8 @@ public sealed class OrderService(
     foreach (var (sku, quantity) in lines)
     {
       var taken = await catalog.TryTakeAsync(sku, quantity, ct)
-          // Un solo mensaje para "no existe" y "no hay bastante": distinguirlos convierte
-          // el checkout en un inventario consultable desde fuera.
+          // Un solo mensaje para "no existe" y "no hay bastante": distinguirlos haría el
+          // inventario consultable desde fuera.
           ?? throw new ConflictAppException($"'{sku}' is not available in the requested quantity.");
 
       items.Add(new OrderItem
@@ -196,9 +168,7 @@ public sealed class OrderService(
       BuyerUserId = buyerUserId,
       Status = OrderStatus.Paid,
       Subtotal = subtotal,
-      // Descuento, impuestos y envío quedan a cero: no hay reglas de negocio que los
-      // calculen todavía. Están en el modelo y en el comprobante porque el desglose es
-      // parte del documento, y añadirlos después obligaría a migrar datos.
+      // A cero: todavía no hay reglas que los calculen, pero el desglose ya está en el modelo.
       Discount = 0m,
       Tax = 0m,
       Shipping = 0m,

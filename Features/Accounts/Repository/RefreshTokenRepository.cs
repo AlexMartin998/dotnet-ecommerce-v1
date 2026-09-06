@@ -13,13 +13,11 @@ public sealed class RefreshTokenRepository(AppDbContext db) : IRefreshTokenRepos
 
   public async Task<bool> TryConsumeAsync(int id, CancellationToken ct = default)
   {
-    // El instante se captura FUERA del árbol de expresión: dentro, `DateTime.Now` se
-    // traduce a `GETDATE()`, o sea el reloj del SERVIDOR SQL, y el resto del proyecto
-    // estampa con el del proceso.
+    // Fuera del árbol de expresión: dentro, `DateTime.Now` se traduciría a `GETDATE()`, el
+    // reloj del servidor SQL, y el resto del proyecto estampa con el del proceso.
     var now = DateTime.Now;
 
-    // La condición `RevokedAt == null` va DENTRO del UPDATE: es lo que hace que dos
-    // peticiones simultáneas con el mismo token no puedan gastarlo las dos.
+    // `RevokedAt == null` va dentro del UPDATE: dos peticiones simultáneas no lo gastan las dos.
     var affected = await db.RefreshTokens
         .Where(t => t.Id == id && t.RevokedAt == null)
         .ExecuteUpdateAsync(setters => setters.SetProperty(t => t.RevokedAt, now), ct);
@@ -50,8 +48,7 @@ public sealed class RefreshTokenRepository(AppDbContext db) : IRefreshTokenRepos
   public Task SaveChangesAsync(CancellationToken ct = default) => db.SaveChangesAsync(ct);
 
   public Task<int> DeleteExpiredBeforeAsync(DateTime cutoff, int batchSize, CancellationToken ct = default)
-      // En tandas acotadas, como el resto de purgas: un DELETE de toda la tabla escala el
-      // bloqueo y se lleva por delante a quien esté autenticándose.
+      // En tandas: un DELETE de toda la tabla escala el bloqueo y corta las autenticaciones.
       => db.RefreshTokens
           .Where(t => t.ExpiresAt < cutoff)
           .OrderBy(t => t.Id)

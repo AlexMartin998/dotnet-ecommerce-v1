@@ -8,17 +8,9 @@ namespace ApiEcommerce.Shared.Documents;
 /// Almacén de documentos sobre el sistema de ficheros. La implementación de hoy.
 /// </summary>
 /// <remarks>
-/// <para>
-/// ⚠️ Escribe <b>fuera de <c>wwwroot/</c></b>, y eso no es un detalle: dentro,
-/// <c>UseStaticFiles</c> serviría cada comprobante a cualquiera que adivinara la ruta, sin
-/// pasar por autenticación. Se sirven por un endpoint que comprueba de quién es la orden.
-/// </para>
-/// <para>
-/// La clave tiene forma <c>aaaa/mm/&lt;32 hex&gt;.pdf</c>. Las carpetas por año y mes no son
-/// estética: un único directorio con cientos de miles de ficheros hace lento hasta un
-/// <c>ls</c>, y en algunos sistemas de ficheros degrada la apertura. La parte aleatoria son
-/// 16 bytes de un CSPRNG.
-/// </para>
+/// Escribe fuera de <c>wwwroot/</c> y se sirve por un endpoint que comprueba de quién es
+/// la orden. La clave tiene forma <c>aaaa/mm/&lt;32 hex&gt;.pdf</c>: las carpetas por año y
+/// mes evitan un único directorio con cientos de miles de ficheros.
 /// </remarks>
 public sealed class LocalDocumentStore : IDocumentStore
 {
@@ -26,14 +18,13 @@ public sealed class LocalDocumentStore : IDocumentStore
 
   /// <summary>Raíz del almacén, ya absoluta.</summary>
   /// <remarks>
-  /// ⚠️ Una ruta relativa se resuelve contra el <b>content root</b>, no contra el
-  /// directorio de trabajo. `Path.GetFullPath` usa el <c>cwd</c>, y eso hace que dónde
-  /// acaban los comprobantes dependa de <i>desde dónde</i> se arrancó el proceso: un
-  /// `dotnet /app/ApiEcommerce.dll` lanzado desde otra carpeta escribiría en otro sitio y
-  /// **todas las claves ya guardadas darían 404**. Se resuelve una sola vez, aquí.
+  /// Se resuelve una sola vez y contra el content root: <c>Path.GetFullPath</c> usa el
+  /// <c>cwd</c>, así que arrancar desde otra carpeta cambiaría dónde acaban los
+  /// comprobantes y todas las claves guardadas darían 404.
   /// </remarks>
   private readonly string _root;
 
+  /// <summary>Resuelve y valida la raíz del almacén.</summary>
   public LocalDocumentStore(
       IOptions<DocumentStorageOptions> options,
       IWebHostEnvironment environment,
@@ -46,19 +37,14 @@ public sealed class LocalDocumentStore : IDocumentStore
 
     var configured = options.Value.RootPath;
 
-    // ⚠️ `TrimEndingDirectorySeparator`: `GetFullPath` CONSERVA la barra final, y la
-    // comprobación de abajo concatena una. Con `RootPath` acabado en "/" la raíz quedaba
-    // como ".../docs//" y **ninguna clave** pasaba el filtro: guardar lanzaría y abrir
-    // devolvería null para todo, o sea todos los comprobantes en 404 permanente mientras
-    // la orden dice "available". Un carácter de más en la configuración, y en silencio.
+    // `TrimEndingDirectorySeparator` porque `GetFullPath` conserva la barra final y la
+    // comprobación de abajo concatena una: con "/" al final ninguna clave pasaría el filtro.
     _root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.IsPathRooted(configured)
         ? configured
         : Path.Combine(environment.ContentRootPath, configured)));
 
-    // ⚠️ Y la raíz NO puede caer dentro de `wwwroot`. Es toda la premisa de esta clase:
-    // ahí `UseStaticFiles` serviría cada comprobante a quien adivinara la ruta, saltándose
-    // la autenticación. Nada más lo impide —es una cadena en un fichero de configuración—
-    // así que se comprueba, y se revienta en vez de servir documentos privados en abierto.
+    // La raíz no puede caer dentro de `wwwroot`: ahí `UseStaticFiles` serviría cada
+    // comprobante a quien adivinara la ruta. Nada más lo impide, así que se comprueba.
     var webRoot = string.IsNullOrEmpty(environment.WebRootPath)
         ? null
         : Path.TrimEndingDirectorySeparator(Path.GetFullPath(environment.WebRootPath));
@@ -68,11 +54,12 @@ public sealed class LocalDocumentStore : IDocumentStore
           $"Documents:RootPath ('{_root}') is inside the web root ('{webRoot}'). " +
           "Private documents must NOT be served as static files.");
 
-    // La raíz se resuelve YA por si ella misma es un enlace: si no, la comparación de
-    // TryResolve mezclaría una ruta real con una que aún pasa por el enlace.
+    // La raíz se resuelve ya por si ella misma es un enlace: si no, la comparación de
+    // TryResolve mezclaría una ruta real con otra que aún pasa por el enlace.
     _root = FinalTargetOf(_root);
   }
 
+  /// <inheritdoc />
   public async Task<DocumentReference> SaveAsync(
       DocumentContent content, CancellationToken ct = default)
   {
@@ -80,9 +67,8 @@ public sealed class LocalDocumentStore : IDocumentStore
 
     var now = DateTime.Now;
 
-    // La clave NO se deriva de la orden ni del usuario: si fuera predecible, cualquier
-    // despiste futuro en el control de acceso se convertiría en una fuga masiva en vez de
-    // en una filtración de un documento.
+    // La clave no se deriva de la orden ni del usuario: si fuera predecible, un despiste
+    // en el control de acceso sería una fuga masiva y no la de un documento.
     var key = $"{now:yyyy}/{now:MM}/{Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant()}{ExtensionFor(content.ContentType)}";
 
     var path = ResolvePath(key);
@@ -91,9 +77,8 @@ public sealed class LocalDocumentStore : IDocumentStore
 
     try
     {
-      // FileMode.CreateNew y no Create: si la clave ya existiera —lo que solo puede pasar
-      // por un fallo del generador aleatorio— es mejor reventar que pisar el comprobante de
-      // otro en silencio.
+      // CreateNew y no Create: si la clave ya existiera es mejor reventar que pisar el
+      // comprobante de otro en silencio.
       await using var file = new FileStream(
           path, FileMode.CreateNew, FileAccess.Write, FileShare.None, bufferSize: 81920, useAsync: true);
 
@@ -101,10 +86,8 @@ public sealed class LocalDocumentStore : IDocumentStore
     }
     catch
     {
-      // ⚠️ Un fallo a mitad de la copia deja un PDF **truncado** en disco. Nadie lo
-      // referencia —`SaveAsync` no llegó a devolver clave—, así que sería un huérfano más;
-      // la diferencia es que este está CORRUPTO, y el día que exista el recolector tendría
-      // que distinguirlo. Se borra aquí, que es donde se sabe.
+      // Un fallo a mitad de la copia deja un PDF truncado que nadie referencia: se borra
+      // aquí, que es donde se sabe que está corrupto.
       TryDelete(path);
       throw;
     }
@@ -116,6 +99,7 @@ public sealed class LocalDocumentStore : IDocumentStore
     return new DocumentReference(key, size);
   }
 
+  /// <inheritdoc />
   public Task<DocumentContent?> OpenAsync(string key, CancellationToken ct = default)
   {
     ct.ThrowIfCancellationRequested();
@@ -124,11 +108,8 @@ public sealed class LocalDocumentStore : IDocumentStore
 
     try
     {
-      // ⚠️ Se ABRE directamente en vez de comprobar `File.Exists` y abrir después: entre
-      // las dos cosas cabe un borrado, y entonces salía una `FileNotFoundException`
-      // desnuda → **500**. Esta interfaz promete devolver `null` cuando no está, y quien
-      // llama ya sabe traducirlo a un 404 honesto. La comprobación previa no evita la
-      // carrera, solo la hace menos frecuente y por tanto más difícil de diagnosticar.
+      // Se abre directamente en vez de comprobar `File.Exists` antes: entre las dos cosas
+      // cabe un borrado, y la excepción resultante sería un 500 en vez del null prometido.
       var stream = new FileStream(
           path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 81920, useAsync: true);
 
@@ -142,6 +123,7 @@ public sealed class LocalDocumentStore : IDocumentStore
     }
   }
 
+  /// <inheritdoc />
   public Task DeleteAsync(string key, CancellationToken ct = default)
   {
     ct.ThrowIfCancellationRequested();
@@ -151,14 +133,14 @@ public sealed class LocalDocumentStore : IDocumentStore
     return Task.CompletedTask;
   }
 
+  /// <inheritdoc />
   public async IAsyncEnumerable<DocumentEntry> ListAsync(
       DateTime writtenBefore,
       [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
   {
     if (!Directory.Exists(_root)) yield break;
 
-    // EnumerateFiles y no GetFiles: devuelve perezosamente, así que un almacén con muchos
-    // ficheros no se materializa entero en memoria antes de mirar el primero.
+    // EnumerateFiles y no GetFiles: devuelve perezosamente, sin materializar el almacén.
     foreach (var path in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
     {
       ct.ThrowIfCancellationRequested();
@@ -169,9 +151,8 @@ public sealed class LocalDocumentStore : IDocumentStore
       {
         info = new FileInfo(path);
 
-        // Se lee `LastWriteTime` y no `CreationTime`: en varios sistemas de ficheros la
-        // fecha de creación no se mantiene al copiar o restaurar un volumen, y aquí una
-        // fecha demasiado antigua significa "bórralo".
+        // `LastWriteTime` y no `CreationTime`: la fecha de creación no se mantiene al
+        // copiar o restaurar un volumen, y aquí «antigua» significa «bórralo».
         if (info.LastWriteTime >= writtenBefore) continue;
       }
       catch (IOException)
@@ -179,9 +160,8 @@ public sealed class LocalDocumentStore : IDocumentStore
         continue;   // desapareció mientras enumerábamos: no es nuestro problema
       }
 
-      // La clave es la ruta relativa a la raíz, con '/' — la misma forma que devolvió
-      // SaveAsync. Devolver la ruta absoluta convertiría al recolector en alguien que
-      // conoce el disco, que es justo lo que la clave opaca evita.
+      // La clave es la ruta relativa con '/', la misma forma que devolvió SaveAsync: dar
+      // la absoluta convertiría al recolector en alguien que conoce el disco.
       yield return new DocumentEntry(
           Path.GetRelativePath(_root, path).Replace(Path.DirectorySeparatorChar, '/'),
           info.LastWriteTime,
@@ -201,22 +181,9 @@ public sealed class LocalDocumentStore : IDocumentStore
 
   /// <summary>Ruta absoluta de una clave, comprobando que no se sale del almacén.</summary>
   /// <remarks>
-  /// <para>
-  /// ⚠️ <b>Esta comprobación es el control de seguridad de la clase.</b> La clave viaja
-  /// desde la base de datos, pero basta una fila manipulada, un endpoint futuro que la
-  /// acepte del cliente o una migración descuidada para que llegue algo como
-  /// <c>../../appsettings.json</c>. Se compara la ruta ya <b>canonicalizada</b> contra la
-  /// raíz: filtrar por la cadena <c>".."</c> no vale, porque no cubre las rutas absolutas.
-  /// </para>
-  /// <para>
-  /// ⚠️ Y <b>canonicalizar no es solo normalizar</b>: <c>Path.GetFullPath</c> resuelve
-  /// <c>.</c> y <c>..</c> pero <b>no sigue los enlaces simbólicos</b>. Con un enlace dentro
-  /// del almacén (<c>2026 → ../secretos</c>), la ruta normalizada empieza por la raíz, pasa
-  /// el filtro, y se lee un fichero de fuera. Por eso se resuelve el destino real
-  /// <b>segmento a segmento</b> antes de comparar. El ataque exige poder escribir en el
-  /// directorio del almacén, así que hoy es remoto — pero esta comprobación es lo único que
-  /// hay, y una que dice cubrir algo que no cubre es peor que no tenerla.
-  /// </para>
+  /// Es el control de seguridad de la clase: se compara la ruta ya canonicalizada contra
+  /// la raíz, porque filtrar por la cadena <c>".."</c> no cubre las rutas absolutas, y se
+  /// siguen los enlaces simbólicos, que <c>Path.GetFullPath</c> no resuelve.
   /// </remarks>
   private bool TryResolve(string key, out string path)
   {
@@ -247,14 +214,12 @@ public sealed class LocalDocumentStore : IDocumentStore
       => candidate.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal);
 
   /// <summary>
-  /// Ruta real de <paramref name="path"/>, siguiendo los enlaces de <b>cada</b> segmento
-  /// bajo la raíz.
+  /// Ruta real de <paramref name="path"/>, siguiendo los enlaces de cada segmento bajo la raíz.
   /// </summary>
   /// <remarks>
-  /// Se recorre segmento a segmento y no solo el final: un enlace en un directorio
-  /// intermedio saca la ruta del almacén igual, y <c>ResolveLinkTarget</c> solo mira el
-  /// último componente. Los segmentos que aún no existen —lo normal al guardar— se
-  /// concatenan tal cual: no pueden ser enlaces todavía.
+  /// Segmento a segmento y no solo el final: un enlace intermedio saca la ruta del almacén
+  /// igual, y <c>ResolveLinkTarget</c> solo mira el último componente. Los segmentos que
+  /// aún no existen se concatenan tal cual, porque no pueden ser enlaces todavía.
   /// </remarks>
   private string ResolveSymlinks(string path)
   {
@@ -284,8 +249,7 @@ public sealed class LocalDocumentStore : IDocumentStore
     }
     catch (IOException)
     {
-      // Un enlace circular o roto. No se puede decir que esté dentro, así que se devuelve
-      // algo que NO lo está: la decisión la toma quien compara, no este helper.
+      // Enlace circular o roto: se devuelve algo que no está dentro y decide quien compara.
       return Path.GetTempPath();
     }
   }

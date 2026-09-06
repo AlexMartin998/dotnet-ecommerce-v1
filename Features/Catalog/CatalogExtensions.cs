@@ -16,20 +16,12 @@ namespace ApiEcommerce.Features.Catalog;
 /// Registro del contexto acotado <b>Catálogo</b>: categorías y productos.
 /// </summary>
 /// <remarks>
-/// <para>
-/// El slice registra <b>todo lo suyo</b> —repositorios, reglas, CRUD compuesto y
-/// servicios— en un solo sitio. Añadir una entidad al catálogo (una unidad de medida, una
-/// etiqueta de producto, una marca) es tocar <b>esta carpeta y este archivo</b>, no siete
-/// carpetas repartidas por el proyecto.
-/// </para>
-/// <para>
-/// Y nótese que una entidad así <b>no crea un slice nuevo</b>: `UnitOfMeasurement` o
-/// `ProductTag` no son contextos acotados, son parte del catálogo. Un slice por entidad
-/// degenera en la misma dispersión que se venía a quitar, solo que con más carpetas.
-/// </para>
+/// El slice registra aquí todo lo suyo. Una entidad más del catálogo (una marca, una
+/// etiqueta) entra en este archivo; no es un contexto acotado nuevo.
 /// </remarks>
 public static class CatalogExtensions
 {
+  /// <summary>Registra repositorios, reglas, servicios y consumidores del catálogo.</summary>
   public static IServiceCollection AddCatalogFeature(
       this IServiceCollection services, IConfiguration configuration)
   {
@@ -41,14 +33,12 @@ public static class CatalogExtensions
     services.AddScoped<IProductRepository, ProductRepository>();
 
     // ---- reglas de negocio -------------------------------------------------
-    // Registro CERRADO por entidad: el contenedor prefiere siempre la coincidencia exacta
-    // sobre el genérico abierto NoEntityRules<,,>, así que estas ganan.
+    // Registro cerrado por entidad: gana sobre el genérico abierto NoEntityRules.
     services.AddScoped<IEntityRules<Category, CreateCategoryDto, UpdateCategoryDto>, CategoryRules>();
     services.AddScoped<IEntityRules<Product, CreateProductDto, UpdateProductDto>, ProductRules>();
 
     // ---- CRUD compuesto ----------------------------------------------------
-    // ICrudService no lleva TEntity (para que el controller no pueda ver la entidad),
-    // así que el registro es cerrado: una línea por entidad.
+    // ICrudService no lleva TEntity, así que el registro es cerrado: una línea por entidad.
     services.AddScoped<
         ICrudService<CategoryDto, CreateCategoryDto, UpdateCategoryDto>,
         CrudService<Category, CategoryDto, CreateCategoryDto, UpdateCategoryDto>>();
@@ -60,33 +50,22 @@ public static class CatalogExtensions
     // ---- servicios ---------------------------------------------------------
     services.AddScoped<IProductService, ProductService>();
 
-    // Category se registra DECORADO: el contenedor construye el servicio real y lo
-    // envuelve en el que cachea. Quien pide ICategoryService recibe el decorador y no se
-    // entera. El tipo CONCRETO se registra aparte porque, si solo estuviera la interfaz,
-    // el decorador no tendría de dónde sacar el servicio interno sin recursión infinita.
+    // Category se registra decorado: quien pide ICategoryService recibe el que cachea. El
+    // tipo concreto se registra aparte o el decorador no podría resolver su interior.
     services.AddScoped<CategoryService>();
     services.AddScoped<ICategoryService>(sp => new CachedCategoryService(
         sp.GetRequiredService<CategoryService>(),
         sp.GetRequiredService<ICacheService>()));
 
     // ---- consumidores de eventos -------------------------------------------
-    // Quién reacciona a un evento del catálogo es asunto DEL CATÁLOGO. Shared/Messaging
-    // pone el mecanismo (conexión, outbox, publicador) y la condición de "hay broker";
-    // registrarlo allí obligaría a Shared a conocer este tipo e invertiría la dirección
-    // de dependencias declarada en el composition root.
-    // El EFECTO de reaccionar a una compra, separado del transporte. Se registra
-    // SIEMPRE, también sin broker: es lógica del slice, y así se puede probar sin AMQP
-    // delante — que es justo lo que faltaba para cubrir el P0 del consumidor.
+    // Quién reacciona a un evento del catálogo es asunto del catálogo; Shared/Messaging
+    // solo pone el mecanismo. El efecto se registra siempre, también sin broker, para
+    // poder probarlo sin AMQP delante.
     services.AddScoped<IProductPurchasedHandler, LowStockNotifier>();
 
-    // La cola es del SLICE: dice a qué reacciona el catálogo. Shared/Messaging solo pone
-    // el mecanismo y la condición de "hay broker".
-    //
-    // ⚠️ Los nombres salen de RabbitMqOptions y la dead-letter es la HEREDADA
-    // (`{Exchange}.dlx`), no una por cola como en los slices nuevos. No es incoherencia:
-    // esta cola ya existe en los brokers con ese `x-dead-letter-exchange`, y redeclararla
-    // con otro da 406 PRECONDITION_FAILED y deja la mensajería abajo. Cambiarlo exige
-    // borrar la cola, que es una parada — y no compensa por estética.
+    // La dead-letter es la heredada (`{Exchange}.dlx`) y no una por cola como en los
+    // slices nuevos: la cola ya existe en los brokers así, y redeclararla con otro
+    // x-dead-letter-exchange da 406 PRECONDITION_FAILED y tumba la mensajería.
     services.AddEventConsumer<ProductPurchasedConsumer>(
         configuration,
         new EventSubscription(rabbit.Queue, rabbit.RoutingKey, rabbit.DeadLetterExchange));

@@ -9,23 +9,9 @@ namespace ApiEcommerce.Shared.Messaging;
 /// Purga las filas ya procesadas de <c>OutboxMessages</c> y <c>ProcessedMessages</c>.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Ambas tablas crecen <b>con cada compra y para siempre</b>. El índice de pendientes es
-/// filtrado, así que la consulta del publicador no se degrada; lo que crece sin techo es
-/// el disco, el tiempo de las copias de seguridad y el coste de cualquier
-/// <c>ALTER TABLE</c> futuro. Es la clase de deuda que no molesta hasta que ya es cara.
-/// </para>
-/// <para>
-/// Se conserva una ventana (<see cref="OutboxOptions.RetentionDays"/>) en vez de borrar
-/// al procesar: son la evidencia de qué se publicó y qué se consumió cuando alguien
-/// pregunta por un pedido de la semana pasada.
-/// </para>
-/// <para>
-/// ⚠️ <b>No se toca nada sin procesar.</b> El filtro de <c>OutboxMessages</c> exige
-/// <c>ProcessedAt != null</c>: un evento que agotó sus reintentos sigue pendiente de
-/// revisión manual y borrarlo sería perder el hecho de negocio en silencio, que es
-/// justamente lo que el outbox existe para impedir.
-/// </para>
+/// Ambas tablas crecen con cada compra y sin techo. Se conserva una ventana
+/// (<see cref="OutboxOptions.RetentionDays"/>) porque son la evidencia de qué se publicó, y no
+/// se toca nada sin procesar: borrarlo perdería el hecho de negocio en silencio.
 /// </remarks>
 public sealed class OutboxCleaner(
     IServiceScopeFactory scopeFactory,
@@ -41,8 +27,7 @@ public sealed class OutboxCleaner(
   {
     var interval = TimeSpan.FromHours(_options.CleanupIntervalHours);
 
-    // Un respiro antes de la primera pasada: al arrancar hay cosas más urgentes
-    // (migraciones, seeding, el primer drenaje del outbox).
+    // Un respiro antes de la primera pasada: al arrancar hay cosas más urgentes.
     try { await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken); }
     catch (OperationCanceledException) { return; }
 
@@ -58,10 +43,7 @@ public sealed class OutboxCleaner(
       }
       catch (Exception ex)
       {
-        // ⚠️ SIN filtro que excluya OperationCanceledException: una OCE que no venga del
-        // stoppingToken (la cancelación de un SqlCommand, por ejemplo) se escapaba y, con
-        // BackgroundServiceExceptionBehavior.StopHost por defecto desde .NET 6, tumbaba la
-        // API entera. El comentario decía justo eso y el filtro dejaba la puerta abierta.
+        // Sin filtrar OperationCanceledException: una OCE ajena al stoppingToken tumbaría la API (StopHost).
         logger.LogError(ex, "Outbox cleanup failed; retrying in {Interval}", interval);
       }
 
@@ -75,9 +57,7 @@ public sealed class OutboxCleaner(
     using var scope = scopeFactory.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-    // ⚠️ El corte se calcula en una VARIABLE LOCAL. Dentro del árbol de expresión,
-    // DateTime.Now se traduce a GETDATE() y lo evaluaría el reloj del servidor SQL —
-    // otro reloj distinto del que escribió las filas.
+    // El corte va en variable LOCAL: dentro del árbol de expresión sería GETDATE(), otro reloj.
     var cutoff = DateTime.Now.AddDays(-_options.RetentionDays);
 
     var outbox = await DeleteInBatchesAsync(
@@ -94,10 +74,8 @@ public sealed class OutboxCleaner(
                 .Take(DeleteBatchSize),
         ct);
 
-    // Los comandos ya ejecutados caducan por el mismo criterio. ⚠️ El plazo NO se copia
-    // de nadie: tiene que cubrir el PEOR reintento de un cliente, porque a partir de ahí
-    // la misma Idempotency-Key vuelve a ejecutar de verdad. (Stripe recuerda 24 h, Adyen
-    // 7-14 días; el número correcto depende de los clientes de cada quien.)
+    // Los comandos ya ejecutados caducan igual, pero el plazo debe cubrir el PEOR reintento de
+    // un cliente: a partir de ahí, la misma Idempotency-Key vuelve a ejecutar de verdad.
     var commands = await DeleteInBatchesAsync(
         () => db.ExecutedCommands
                 .Where(c => c.ExecutedAt < cutoff)
@@ -115,9 +93,8 @@ public sealed class OutboxCleaner(
   /// Borra en tandas hasta que no queda nada que borrar.
   /// </summary>
   /// <remarks>
-  /// <c>ExecuteDeleteAsync</c> lanza un único <c>DELETE</c> sin traer las filas al
-  /// cliente. Se trocea porque un borrado de cientos de miles de filas escala el bloqueo
-  /// a toda la tabla y bloquea a las compras que están escribiendo su evento.
+  /// <c>ExecuteDeleteAsync</c> no trae las filas al cliente. Se trocea porque un borrado de
+  /// cientos de miles escala el bloqueo a toda la tabla y frena a las compras.
   /// </remarks>
   private static async Task<int> DeleteInBatchesAsync<T>(
       Func<IQueryable<T>> batch, CancellationToken ct) where T : class

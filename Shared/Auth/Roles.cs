@@ -1,18 +1,17 @@
 namespace ApiEcommerce.Shared.Auth;
 
 
-/// <summary>
-/// Nombres de rol como constantes. Equivale a las constantes que en Spring Security
-/// se usan con <c>@PreAuthorize("hasRole('ADMIN')")</c>.
-/// </summary>
+/// <summary>Nombres de rol como constantes, para no repetir strings mágicos.</summary>
 /// <remarks>
-/// Son <c>const</c> y no <c>static readonly</c> a propósito: <c>[Authorize(Roles = ...)]</c>
-/// es un atributo y solo admite constantes de compilación. Un string mágico repetido
-/// en 12 endpoints es un typo esperando a pasar en producción.
+/// Son <c>const</c> y no <c>static readonly</c> porque <c>[Authorize(Roles = ...)]</c> es
+/// un atributo y solo admite constantes de compilación.
 /// </remarks>
 public static class Roles
 {
+  /// <summary>Rol administrador.</summary>
   public const string Admin = "admin";
+
+  /// <summary>Rol de usuario registrado.</summary>
   public const string User = "user";
 
   /// <summary>Todos los roles que siembra <c>DataSeeder</c>.</summary>

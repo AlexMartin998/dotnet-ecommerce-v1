@@ -8,24 +8,13 @@ namespace ApiEcommerce.Shared.Crud;
 
 /// <summary>
 /// Implementación única y reutilizable del CRUD de la capa de servicio: mapea DTO ↔
-/// entidad, delega la persistencia en <see cref="IBaseRepository{T}"/> y consulta las
-/// reglas de negocio de la entidad en <see cref="IEntityRules{TEntity, TCreateDto, TUpdateDto}"/>.
+/// entidad, persiste con <see cref="IBaseRepository{T}"/> y consulta las reglas de la
+/// entidad en <see cref="IEntityRules{TEntity, TCreateDto, TUpdateDto}"/>.
 /// </summary>
 /// <remarks>
-/// <para>
-/// <b>Composición, no herencia.</b> Los servicios por entidad (<c>CategoryService</c>,
-/// <c>ProductService</c>) <i>tienen</i> un <c>ICrudService</c> y le delegan; no heredan
-/// de él. Por eso la clase es <c>sealed</c>: sus invariantes —"antes de escribir se
-/// evalúan las reglas", "el update mapea sobre la entidad rastreada"— no se pueden
-/// sobreescribir por accidente desde una subclase.
-/// </para>
-/// <para>
-/// Lo que se gana frente a una clase base abstracta con hooks <c>virtual</c>:
-/// reglas testeables por separado, un servicio de entidad libre de componer varios
-/// colaboradores, y cero reflexión (el <c>Id</c> lo garantiza <see cref="IEntity"/>).
-/// Lo que se paga: cinco métodos de delegación por entidad. Es un precio explícito y
-/// aceptado; ver <c>AGENTS/docs/03-service.md</c>.
-/// </para>
+/// Los servicios por entidad lo componen en vez de heredarlo, y por eso es <c>sealed</c>:
+/// sus invariantes (evaluar reglas antes de escribir, mapear sobre la entidad rastreada)
+/// no deben poder sobreescribirse. Ver <c>AGENTS/docs/03-service.md</c>.
 /// </remarks>
 public sealed class CrudService<TEntity, TDto, TCreateDto, TUpdateDto>(
     IBaseRepository<TEntity> repository,
@@ -35,9 +24,11 @@ public sealed class CrudService<TEntity, TDto, TCreateDto, TUpdateDto>(
   where TEntity : class, IEntity
 {
 
+  /// <inheritdoc />
   public async Task<IEnumerable<TDto>> GetAllAsync(CancellationToken ct = default)
       => mapper.Map<IEnumerable<TDto>>(await repository.GetAllAsync(ct));
 
+  /// <inheritdoc />
   public async Task<PagedResult<TDto>> GetPagedAsync(PageQuery query, CancellationToken ct = default)
   {
     ArgumentNullException.ThrowIfNull(query);
@@ -49,9 +40,11 @@ public sealed class CrudService<TEntity, TDto, TCreateDto, TUpdateDto>(
         page.Page, page.PageSize, page.TotalItems);
   }
 
+  /// <inheritdoc />
   public async Task<TDto> GetByIdAsync(int id, CancellationToken ct = default)
       => mapper.Map<TDto>(await GetOrThrowAsync(id, ct));
 
+  /// <inheritdoc />
   public async Task<int> CreateAsync(TCreateDto dto, CancellationToken ct = default)
   {
     ArgumentNullException.ThrowIfNull(dto);
@@ -64,6 +57,7 @@ public sealed class CrudService<TEntity, TDto, TCreateDto, TUpdateDto>(
     return entity.Id; // sin reflexión: IEntity garantiza la propiedad
   }
 
+  /// <inheritdoc />
   public async Task UpdateAsync(int id, TUpdateDto dto, CancellationToken ct = default)
   {
     ArgumentNullException.ThrowIfNull(dto);
@@ -77,6 +71,7 @@ public sealed class CrudService<TEntity, TDto, TCreateDto, TUpdateDto>(
     await repository.UpdateAsync(existing, ct);
   }
 
+  /// <inheritdoc />
   public async Task DeleteAsync(int id, CancellationToken ct = default)
   {
     var existing = await GetOrThrowAsync(id, ct);

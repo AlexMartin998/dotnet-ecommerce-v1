@@ -4,21 +4,10 @@ using ApiEcommerce.Shared.Paging;
 namespace ApiEcommerce.Features.Accounts.Service;
 
 
-/// <summary>
-/// Administración de cuentas: listar, dar y quitar roles, bloquear y desbloquear.
-/// </summary>
+/// <summary>Administración de cuentas: listar, dar y quitar roles, bloquear y desbloquear.</summary>
 /// <remarks>
-/// <para>
-/// Se apoya en <c>UserManager</c> y <b>no</b> en <c>BaseRepository&lt;T&gt;</c> ni en
-/// <c>CrudService&lt;&gt;</c>: <c>ApplicationUser</c> no implementa <c>IEntity</c> —su
-/// clave es un <c>string</c>— y su ciclo de vida pertenece a Identity, que es quien sabe
-/// de hashes, sellos de seguridad y bloqueos. Forzarlo dentro del CRUD genérico sería
-/// meter una entidad en una abstracción que no le sirve.
-/// </para>
-/// <para>
-/// Las reglas de aquí no son validaciones de formato: son las que impiden que un clic
-/// deje el sistema sin nadie que pueda administrarlo.
-/// </para>
+/// Se apoya en <c>UserManager</c> y no en el CRUD genérico: <c>ApplicationUser</c> no implementa
+/// <c>IEntity</c> y su ciclo de vida pertenece a Identity.
 /// </remarks>
 public interface IUserAdminService
 {
@@ -36,9 +25,8 @@ public interface IUserAdminService
   /// <param name="ct">Token de cancelación.</param>
   /// <exception cref="Exceptions.NotFoundAppException">El usuario no existe.</exception>
   /// <exception cref="Exceptions.BadOperationAppException">
-  /// El rol no existe. ⚠️ Se comprueba porque <c>UserManager.AddToRoleAsync</c> con un rol
-  /// desconocido falla, pero un <c>RoleManager</c> mal usado lo crearía al vuelo: acabaríamos
-  /// con roles fantasma que no protegen nada porque ningún <c>[Authorize]</c> los nombra.
+  /// El rol no existe. Se comprueba antes para no crear roles fantasma que ningún
+  /// <c>[Authorize]</c> nombra y que por tanto no protegen nada.
   /// </exception>
   Task AssignRoleAsync(string userId, string role, string actingAdminId, CancellationToken ct = default);
 
@@ -48,14 +36,10 @@ public interface IUserAdminService
   /// </exception>
   Task RemoveRoleAsync(string userId, string role, string actingAdminId, CancellationToken ct = default);
 
-  /// <summary>
-  /// Bloquea una cuenta indefinidamente y <b>corta sus sesiones abiertas</b>.
-  /// </summary>
+  /// <summary>Bloquea una cuenta indefinidamente y corta sus sesiones abiertas.</summary>
   /// <remarks>
-  /// ⚠️ Lo segundo no es un extra: sin revocar los refresh tokens, bloquear una cuenta no
-  /// sirve de nada. El usuario sigue dentro con el access token que ya tiene y —lo grave—
-  /// podría <b>seguir renovándolo indefinidamente</b>, porque renovar no vuelve a pedir
-  /// credenciales.
+  /// Revocar los refresh tokens no es un extra: renovar no vuelve a pedir credenciales, así que
+  /// sin eso una cuenta bloqueada seguiría renovando su sesión indefinidamente.
   /// </remarks>
   /// <exception cref="Exceptions.ConflictAppException">Es uno mismo.</exception>
   Task LockAsync(string userId, string actingAdminId, CancellationToken ct = default);

@@ -7,8 +7,9 @@ public class AuthResponseDto
   /// <summary>Access token JWT. Se envía como <c>Authorization: Bearer &lt;token&gt;</c>.</summary>
   public string Token { get; set; } = string.Empty;
 
-  /// <summary>Momento de expiración del token (hora local, coherente con el resto del proyecto).</summary>
+  /// <summary>Momento de expiración del token, en hora local como el resto del proyecto.</summary>
   public DateTime ExpiresAt { get; set; }
 
+  /// <summary>Dueño del token.</summary>
   public UserDto User { get; set; } = new();
 }

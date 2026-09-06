@@ -4,15 +4,11 @@ using System.Net.Http.Json;
 namespace ApiEcommerce.Tests.Integration;
 
 
-/// <summary>
-/// La matriz de autorización de <c>AGENTS/features/02</c>, endpoint a endpoint.
-/// </summary>
+/// <summary>La matriz de autorización, endpoint a endpoint.</summary>
 /// <remarks>
-/// Es el bloque de tests más valioso del proyecto y el que <b>no se puede escribir con
-/// mocks</b>: quien decide 401 frente a 403 es el pipeline de ASP.NET Core, no el
-/// controller. Y protege la trampa que ya mordió una vez — varios <c>[Authorize]</c> se
-/// <b>combinan (AND)</b>, no se sobreescriben, así que con
-/// <c>[Authorize(Roles = "admin")]</c> en la clase la compra devolvía 403 a un cliente.
+/// No se puede escribir con mocks: quien decide 401 frente a 403 es el pipeline, no el
+/// controller. Y varios <c>[Authorize]</c> se combinan con AND, así que el requisito
+/// fuerte nunca va en la clase.
 /// </remarks>
 [Collection(IntegrationCollection.Name)]
 public class AuthorizationTests(ApiFactory factory)
@@ -43,8 +39,7 @@ public class AuthorizationTests(ApiFactory factory)
   [InlineData("DELETE", "/api/v1/product/1")]
   public async Task WritingWithAPlainUserTokenIs403(string method, string endpoint)
   {
-    // 403 y no 401: sé quién eres y no puedes. Un 401 aquí haría que el cliente
-    // reintentara pidiendo credenciales que no le van a servir de nada.
+    // 403 y no 401: un 401 haría al cliente reintentar con credenciales que no sirven.
     using var user = await factory.AsNewUserAsync();
 
     var response = await user.SendAsync(Request(method, endpoint));
@@ -82,9 +77,8 @@ public class AuthorizationTests(ApiFactory factory)
   [Fact]
   public async Task BuyingOnlyRequiresBeingAuthenticated()
   {
-    // ⚠️ El escenario que da nombre a la trampa. Exigir admin para comprar —como hacía
-    // el código del curso— no tiene ningún sentido en una tienda, y es exactamente lo
-    // que pasa si el requisito fuerte se pone en la clase.
+    // Exigir admin para comprar no tiene sentido en una tienda, y es exactamente lo que
+    // pasa si el requisito fuerte se pone a nivel de clase.
     using var admin = await factory.AsAdminAsync();
     var sku = await CreateProductAsync(admin, stock: 5);
 

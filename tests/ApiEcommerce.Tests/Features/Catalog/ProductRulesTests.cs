@@ -29,9 +29,8 @@ public class ProductRulesTests
     var ex = await Assert.ThrowsAsync<BadOperationAppException>(
         () => Sut().EnsureCanCreateAsync(Create(sku: "SKU-1", categoryId: 99)));
 
-    // ⚠️ 400 y NO 404: el recurso pedido es el producto; la categoría inexistente hace
-    // que el request sea inválido en sí mismo. Y validarlo aquí es obligatorio — si se
-    // deja pasar, EF revienta con un error de FK y el cliente recibe un 500.
+    // 400 y no 404: el recurso pedido es el producto, y la categoría inexistente hace el
+    // request inválido. Sin validarlo aquí, EF revienta por FK y sale un 500.
     Assert.Equal(HttpStatusCode.BadRequest, ex.Status);
     Assert.Equal("bad_request", ex.Code);
   }
@@ -39,8 +38,8 @@ public class ProductRulesTests
   [Fact]
   public async Task EnsureCanCreateAsync_ChecksTheCategoryBeforeTheSku()
   {
-    // El orden importa para el mensaje que recibe el cliente: con categoría inexistente
-    // Y SKU duplicado, lo primero que hay que arreglar es la categoría.
+    // Con categoría inexistente y SKU duplicado, lo primero que hay que arreglar es la
+    // categoría, y el mensaje tiene que decir eso.
     _categories.Setup(r => r.ExistsAsync(99, It.IsAny<CancellationToken>())).ReturnsAsync(false);
 
     await Assert.ThrowsAsync<BadOperationAppException>(
@@ -99,8 +98,7 @@ public class ProductRulesTests
   [Fact]
   public async Task EnsureCanUpdateAsync_ExcludesItsOwnId()
   {
-    // Mismo motivo que en Category: sin excludeId, reenviar el mismo SKU en un PATCH
-    // choca consigo mismo.
+    // Sin excludeId, reenviar el mismo SKU en un PATCH choca consigo mismo.
     _products.Setup(r => r.SkuExistsAsync("SKU-1", 5, It.IsAny<CancellationToken>())).ReturnsAsync(false);
 
     await Sut().EnsureCanUpdateAsync(5, new UpdateProductDto { SKU = "SKU-1" }, Existing(5));
@@ -111,8 +109,7 @@ public class ProductRulesTests
   [Fact]
   public async Task EnsureCanUpdateAsync_WhenCategoryIdIsSentAndDoesNotExist_ThrowsBadRequest()
   {
-    // ⚠️ `dto.CategoryId is int categoryId` distingue "no lo mandó" (null) de "mandó 0".
-    // Un 0 SÍ se valida: es un id inválido, no una ausencia.
+    // Un 0 se valida: es un id inválido, no una ausencia (eso es null).
     _categories.Setup(r => r.ExistsAsync(0, It.IsAny<CancellationToken>())).ReturnsAsync(false);
 
     await Assert.ThrowsAsync<BadOperationAppException>(

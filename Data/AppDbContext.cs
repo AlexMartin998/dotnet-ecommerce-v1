@@ -13,16 +13,12 @@ namespace ApiEcommerce.Data;
 
 
 /// <summary>
-/// Contexto de EF Core. Hereda de <see cref="IdentityDbContext{TUser}"/> y no de
-/// <c>DbContext</c>: eso añade las 7 tablas <c>AspNet*</c> (usuarios, roles, claims,
-/// logins, tokens) al mismo contexto y a la misma transacción que el dominio.
+/// Contexto de EF Core del proyecto, con el dominio y las tablas de Identity.
 /// </summary>
 /// <remarks>
-/// El contexto de referencia del curso mantenía <b>dos</b> tablas de usuarios (una
-/// legacy <c>Users</c> y las de Identity) y declaraba un <c>DbSet&lt;User&gt; Users</c>
-/// que <b>ocultaba</b> el <c>Users</c> de <see cref="IdentityDbContext{TUser}"/>.
-/// Resultado: las comprobaciones de unicidad consultaban una tabla vacía y siempre
-/// devolvían "libre". Aquí solo existe <see cref="ApplicationUser"/>.
+/// Hereda de <see cref="IdentityDbContext{TUser}"/> y no de <c>DbContext</c> para que las
+/// tablas <c>AspNet*</c> compartan contexto y transacción con el dominio. El único
+/// usuario es <see cref="ApplicationUser"/>.
 /// </remarks>
 public class AppDbContext : IdentityDbContext<ApplicationUser>
 {
@@ -43,14 +39,14 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
   public DbSet<ProcessedMessage> ProcessedMessages { get; set; }
 
   /// <summary>
-  /// Comandos ya ejecutados. Es la GARANTÍA de idempotencia de las operaciones de
-  /// negocio: se escribe en la misma transacción que el efecto.
+  /// Comandos ya ejecutados; se escriben en la misma transacción que su efecto y son
+  /// la garantía de idempotencia de las operaciones de negocio.
   /// </summary>
   public DbSet<ExecutedCommand> ExecutedCommands { get; set; }
 
   /// <summary>
-  /// Refresh tokens emitidos. Es la GARANTÍA de que una sesión se puede cortar: revocar
-  /// y emitir el siguiente ocurren en la misma transacción.
+  /// Refresh tokens emitidos. Revocar y emitir el siguiente ocurren en la misma
+  /// transacción, que es lo que permite cortar una sesión.
   /// </summary>
   public DbSet<RefreshToken> RefreshTokens { get; set; }
 
@@ -60,43 +56,33 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
 
   /// <summary>
-  /// <c>base.OnModelCreating</c> es <b>obligatorio</b>: es quien mapea las tablas de
-  /// Identity y sus índices únicos. Omitirlo compila y luego falla en la migración.
+  /// Configura el modelo: índices, secuencias y precisión de los importes.
   /// </summary>
+  /// <remarks>
+  /// La llamada a <c>base.OnModelCreating</c> es obligatoria: es quien mapea las tablas
+  /// de Identity. Omitirla compila y falla al generar la migración.
+  /// </remarks>
   protected override void OnModelCreating(ModelBuilder modelBuilder)
   {
     base.OnModelCreating(modelBuilder);
 
-    // Índice filtrado: el publicador solo consulta los pendientes, y en una tabla
-    // que crece sin parar un índice sobre TODAS las filas sería cada vez más caro.
-    // Aquí solo se indexa lo que de verdad se busca.
-    // La secuencia la asigna SQL Server, no la aplicación: es el único árbitro de orden
-    // que no depende del reloj de cada réplica.
+    // La secuencia la asigna SQL Server: es el único árbitro de orden que no depende
+    // del reloj de cada réplica.
     modelBuilder.Entity<OutboxMessage>()
         .Property(m => m.Sequence)
         .ValueGeneratedOnAdd()
         .UseIdentityColumn();
 
-    // Índice FILTRADO por el que consulta el publicador. Va por Sequence, que es el orden
-    // real de drenaje; indexar OccurredAt ordenaba por un valor que ya no manda.
-    // El filtro es lo que lo mantiene pequeño: la tabla crece sin parar, pero las filas
-    // pendientes son siempre unas pocas.
-    // ⚠️ `Attempts` va en el INCLUDE. El publicador filtra por `Attempts < MaxPublishAttempts`,
-    // que no estaba en el índice: el plan real hacía un key lookup a la tabla por CADA fila
-    // recorrida para evaluarlo. Y los mensajes agotados siguen con `ProcessedAt IS NULL`
-    // (el recolector no los borra, a propósito), así que se quedan en el índice PARA
-    // SIEMPRE, a la cabeza del escaneo, y cada vuelta —cada 5 s, eternamente— paga un
-    // lookup por cada uno antes de llegar a los frescos. Basta un despliegue con la
-    // routing key mal para llenarlo de zombis: medido, dos mensajes sin cola destino
-    // pasaron de 0 a 5 intentos en ~14 s.
+    // Índice del publicador: filtrado por pendientes para que no crezca con la tabla, y
+    // por Sequence, que es el orden real de drenaje. `Attempts` va en el INCLUDE porque
+    // el publicador filtra por él y si no habría un key lookup por fila recorrida.
     modelBuilder.Entity<OutboxMessage>()
         .HasIndex(m => m.Sequence)
         .IncludeProperties(m => m.Attempts)
         .HasFilter("[ProcessedAt] IS NULL")
         .HasDatabaseName("IX_OutboxMessages_Pending");
 
-    // La purga borra por fecha de procesado; sin este índice sería un scan de toda la
-    // tabla cada vez que pasa el recolector.
+    // La purga borra por fecha de procesado; sin índice sería un scan en cada pasada.
     modelBuilder.Entity<OutboxMessage>()
         .HasIndex(m => m.ProcessedAt)
         .HasDatabaseName("IX_OutboxMessages_ProcessedAt");
@@ -105,21 +91,18 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         .HasIndex(m => m.ProcessedAt)
         .HasDatabaseName("IX_ProcessedMessages_ProcessedAt");
 
-    // Misma razón que en ProcessedMessages: la purga borra por fecha, y sin índice cada
-    // pasada del recolector sería un scan de una tabla que solo crece.
+    // Misma razón que en ProcessedMessages: la purga borra por fecha.
     modelBuilder.Entity<ExecutedCommand>()
         .HasIndex(c => c.ExecutedAt)
         .HasDatabaseName("IX_ExecutedCommands_ExecutedAt");
 
-    // ÚNICO: por aquí se busca en cada refresh, y además impide que dos tokens
-    // distintos acaben con la misma huella.
+    // Único: por aquí se busca en cada refresh, y evita dos tokens con la misma huella.
     modelBuilder.Entity<RefreshToken>()
         .HasIndex(t => t.TokenHash)
         .IsUnique()
         .HasDatabaseName("IX_RefreshTokens_TokenHash");
 
-    // Por aquí se revoca la familia entera cuando se detecta un reuso; sin índice sería
-    // un scan de la tabla justo en el momento en el que hay que reaccionar deprisa.
+    // Por aquí se revoca la familia entera al detectar un reuso, que urge.
     modelBuilder.Entity<RefreshToken>()
         .HasIndex(t => t.FamilyId)
         .HasDatabaseName("IX_RefreshTokens_FamilyId");
@@ -131,28 +114,25 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
     // ---- órdenes ------------------------------------------------------------
 
-    // Secuencia para el número de orden. ⚠️ Una SECUENCIA y no un MAX()+1: eso último es
-    // un leer-y-escribir y dos compras simultáneas se llevarían el mismo número, que
-    // además tiene índice único — una de las dos reventaría.
+    // Secuencia y no MAX()+1: eso último es un leer-y-escribir y dos compras simultáneas
+    // se llevarían el mismo número, que además es único.
     modelBuilder.HasSequence<long>(Features.Ordering.Repository.OrderRepository.NumberSequence)
         .StartsAt(1)
         .IncrementsBy(1);
 
-    // Único: es el número que cita el cliente, y dos órdenes con el mismo lo convierten
-    // en inservible.
+    // Único: es el número que cita el cliente, y repetido lo vuelve inservible.
     modelBuilder.Entity<Order>()
         .HasIndex(o => o.Number)
         .IsUnique()
         .HasDatabaseName("IX_Orders_Number");
 
-    // Por aquí consulta "mis órdenes", que es la lectura más frecuente del slice.
+    // Por aquí consulta "mis órdenes", la lectura más frecuente del slice.
     modelBuilder.Entity<Order>()
         .HasIndex(o => new { o.BuyerUserId, o.PlacedAt })
         .HasDatabaseName("IX_Orders_Buyer_PlacedAt");
 
-    // ⚠️ `decimal` sin precisión explícita cae a decimal(18,2) por convención de EF, que
-    // aquí vale, pero dejarlo implícito hace que un cambio de convención mueva dinero sin
-    // que nadie lo note. Se fija.
+    // Precisión explícita: la convención de EF ya da decimal(18,2), pero dejarlo implícito
+    // haría que un cambio de convención moviese dinero sin que nadie lo note.
     foreach (var money in new[] { "Subtotal", "Discount", "Tax", "Shipping", "Total" })
       modelBuilder.Entity<Order>().Property(money).HasPrecision(18, 2);
 
@@ -168,10 +148,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
   }
 
 
-  // // // Auditoría automática -------------------------------------------------
-  // Equivalente a @EnableJpaAuditing + @CreatedDate/@LastModifiedDate de Spring.
-  // Antes cada repositorio asignaba UpdatedAt a mano (ProductRepository.BuyProduct);
-  // ahora es imposible olvidarlo.
+  // Auditoría automática: equivale a @EnableJpaAuditing + @CreatedDate/@LastModifiedDate.
 
   public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
   {
@@ -187,8 +164,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
   /// <summary>
   /// Estampa <c>CreatedAt</c> / <c>UpdatedAt</c> sobre las entidades
-  /// <see cref="IAuditable"/> rastreadas. Usa <c>DateTime.Now</c> (hora local),
-  /// que es la decisión ya tomada en el proyecto (ver AGENTS/docs/02-repository.md).
+  /// <see cref="IAuditable"/> rastreadas, con <c>DateTime.Now</c> (hora local).
   /// </summary>
   private void StampAuditFields()
   {

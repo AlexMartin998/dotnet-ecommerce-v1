@@ -6,19 +6,18 @@ using ApiEcommerce.Shared.Idempotency;
 namespace ApiEcommerce.Tests.Integration;
 
 
-/// <summary>
-/// Idempotencia con <c>Idempotency-Key</c>. Se prueba contra Redis <b>real</b>: es un
-/// filtro cuyo valor entero está en la reserva atómica (<c>SET NX</c>), y con una
-/// implementación falsa en memoria no se estaría probando nada.
-/// </summary>
+/// <summary>Idempotencia con <c>Idempotency-Key</c>, contra Redis real.</summary>
+/// <remarks>
+/// El valor entero del mecanismo está en la reserva atómica (<c>SET NX</c>): con una
+/// implementación falsa en memoria no se probaría nada.
+/// </remarks>
 [Collection(IntegrationCollection.Name)]
 public class IdempotencyTests(ApiFactory factory)
 {
   [Fact]
   public async Task RetryingWithTheSameKeyReplaysTheResponseAndDoesNotBuyTwice()
   {
-    // El caso real: el móvil pierde la conexión tras enviar la compra y el usuario
-    // vuelve a pulsar. Sin esto se le cobra dos veces.
+    // El móvil pierde la conexión tras enviar la compra y el usuario vuelve a pulsar.
     using var admin = await factory.AsAdminAsync();
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
 
@@ -47,25 +46,15 @@ public class IdempotencyTests(ApiFactory factory)
     var first = await (await Buy(user, sku, 1, key)).Content.ReadAsStringAsync();
     var second = await (await Buy(user, sku, 1, key)).Content.ReadAsStringAsync();
 
-    // Reproducir la respuesta ORIGINAL, no ejecutar otra vez y devolver una parecida.
-    //
-    // ⭐ Se comparan los BYTES, no el JSON parseado. Durante mucho tiempo esto no se pudo
-    // exigir: el filtro memorizaba el cuerpo ya serializado y lo devolvía tal cual, y
-    // `System.Text.Json` escapa `+` como `\u002B` mientras que la respuesta viva de MVC
-    // lo emite crudo — dos cuerpos equivalentes que no eran idénticos, y sólo cuando el
-    // base64 del `rowVersion` llevaba un `+`, o sea de forma intermitente.
-    //
-    // Al bajar la garantía a la transacción, lo que se memoriza es el DTO y no la
-    // respuesta HTTP, así que el replay vuelve a pasar por el MISMO formateador de MVC.
-    // La deuda se cerró como efecto secundario de arreglar dónde vivía la marca.
+    // Se comparan los bytes: reproducir la respuesta original, no ejecutar otra vez y
+    // devolver una parecida.
     Assert.Equal(first, second);
   }
 
   [Fact]
   public async Task WithoutTheHeaderTheOperationRunsEveryTime()
   {
-    // La idempotencia es OPCIONAL y la pide el cliente, que es quien sabe si está
-    // reintentando. Sin cabecera, dos compras son dos compras.
+    // La idempotencia la pide el cliente, que es quien sabe si está reintentando.
     using var admin = await factory.AsAdminAsync();
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
 
@@ -92,9 +81,8 @@ public class IdempotencyTests(ApiFactory factory)
   [Fact]
   public async Task AFailedOperationReleasesTheKeySoTheClientCanRetry()
   {
-    // ⚠️ Solo se memoriza el ÉXITO. Memorizar un 409 convertiría un fallo transitorio
-    // —comprar más de lo que hay, y que luego entre stock— en un fallo PERMANENTE
-    // durante 24 h para esa clave, sin forma de que el cliente salga del bucle.
+    // Solo se memoriza el éxito: memorizar un 409 convertiría un fallo transitorio en uno
+    // permanente durante 24 h, sin forma de que el cliente salga del bucle.
     using var admin = await factory.AsAdminAsync();
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 1);
 
@@ -114,10 +102,8 @@ public class IdempotencyTests(ApiFactory factory)
   [Fact]
   public async Task ReusingTheKeyWithADifferentBodyIs422AndDoesNotExecute()
   {
-    // ⚠️ Antes reproducía la respuesta de la primera EN SILENCIO: el cliente pedía 5
-    // unidades, recibía un 200 con el resultado de haber comprado 1, y nada indicaba que
-    // su petición no se había ejecutado. Un fallo mudo en el mecanismo que existe para no
-    // cobrar de más.
+    // Reproducir la primera respuesta aquí sería mudo: el cliente pide 5 unidades, recibe
+    // el 200 de haber comprado 1 y nada indica que su petición no se ejecutó.
     using var admin = await factory.AsAdminAsync();
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
 
@@ -136,8 +122,8 @@ public class IdempotencyTests(ApiFactory factory)
   [Fact]
   public async Task TheKeyIsScopedToTheUser()
   {
-    // ⚠️ Sin el usuario en la clave, dos clientes que generen el mismo GUID se pisan —y
-    // peor, uno recibe la respuesta del otro, que es una fuga de datos entre cuentas.
+    // Sin el usuario en la clave, dos clientes con el mismo GUID se pisan y uno recibe la
+    // respuesta del otro: fuga de datos entre cuentas.
     using var admin = await factory.AsAdminAsync();
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
 
@@ -155,9 +141,8 @@ public class IdempotencyTests(ApiFactory factory)
   [Fact]
   public async Task TheReplayIsMarkedWithTheReplayedHeader()
   {
-    // La cabecera es parte del contrato y estaba en el .feature, pero no la afirmaba
-    // ningún test: se podía haber dejado de emitir sin que nada se pusiera rojo. Es lo
-    // único que distingue "tu compra se ejecutó ahora" de "te devuelvo la de antes".
+    // La cabecera es lo único que distingue "tu compra se ejecutó ahora" de "te devuelvo
+    // la de antes", y es parte del contrato.
     using var admin = await factory.AsAdminAsync();
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
 
@@ -174,9 +159,8 @@ public class IdempotencyTests(ApiFactory factory)
   [Fact]
   public async Task AKeyLongerThanTheLimitIsRejectedAndNothingRuns()
   {
-    // La clave la elige el cliente y acaba entera dentro de una clave de Redis que vive
-    // 24 h, en una instancia compartida con otros proyectos. Sin límite se aceptaban
-    // claves de 7000 caracteres (medido contra la API corriendo).
+    // La clave la elige el cliente y acaba entera en una clave de Redis que vive 24 h, en
+    // una instancia compartida: sin límite se aceptaría cualquier tamaño.
     using var admin = await factory.AsAdminAsync();
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
 
@@ -196,10 +180,8 @@ public class IdempotencyTests(ApiFactory factory)
   [Fact]
   public async Task EachUserGetsItsOwnResponseAndNotTheOtherOnes()
   {
-    // El test que ya había miraba el stock, que sube a 6 tanto si cada uno ejecutó lo
-    // suyo como si algo raro pasó por medio. Lo que de verdad hay que descartar es la
-    // FUGA ENTRE CUENTAS: que B reciba el cuerpo de la compra de A. Eso sólo se ve
-    // comparando los cuerpos.
+    // Mirar solo el stock no descartaría la fuga entre cuentas: que B reciba el cuerpo de
+    // la compra de A únicamente se ve comparando los cuerpos.
     using var admin = await factory.AsAdminAsync();
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
 
@@ -222,12 +204,9 @@ public class IdempotencyTests(ApiFactory factory)
   [Fact]
   public async Task ConcurrentRequestsWithTheSameKeyBuyOnceAndTheLosersSayWhy()
   {
-    // Simultáneas, NUNCA en secuencia: en secuencia esto pasaba también con la
-    // implementación que tenía la carrera.
-    //
-    // Y se afirma "exactamente UNA no reproducida" en vez de "exactamente un 200": los
-    // que llegan después de que la primera termine reciben 200 CON la cabecera de
-    // replay, que es correcto. Lo que no puede haber es dos ejecuciones de verdad.
+    // Simultáneas y nunca en secuencia: en secuencia esto pasa incluso con la carrera.
+    // Se afirma "exactamente una no reproducida" y no "un 200", porque los que llegan tras
+    // la primera reciben un 200 con cabecera de replay, que es correcto.
     using var admin = await factory.AsAdminAsync();
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 20);
 

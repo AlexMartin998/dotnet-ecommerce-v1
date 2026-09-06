@@ -7,25 +7,18 @@ namespace ApiEcommerce.Shared.Idempotency;
 /// Contador de cómo se resuelve la puerta de admisión de <c>Idempotency-Key</c>.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Nació de un hallazgo: bajo carga el almacén <b>se apagaba solo</b> —el <c>SET</c>
-/// agotaba el timeout de 1000 ms con Redis sano— y la única señal era un <c>Warning</c>
-/// que nadie mira. Entonces eso significaba ejecutar sin garantía; hoy, con la garantía
-/// en la transacción, significa solo que se perdió el atajo.
-/// </para>
-/// <para>
-/// La dimensión a vigilar es <c>outcome=gate_unavailable</c>. Ya no es un problema de
-/// corrección, pero sí un aviso temprano: sin puerta, las tormentas de reintentos pasan
-/// enteras a SQL y se resuelven bloqueándose en la clave primaria, o sea consumiendo
-/// conexiones.
-/// </para>
+/// La dimensión a vigilar es <c>outcome=gate_unavailable</c>: no es un problema de
+/// corrección, pero sin puerta las tormentas de reintentos pasan enteras a SQL y se
+/// resuelven bloqueándose en la clave primaria, consumiendo conexiones.
 /// </remarks>
 public sealed class IdempotencyMetrics
 {
+  /// <summary>Nombre del <see cref="Meter"/>.</summary>
   public const string MeterName = "ApiEcommerce.Idempotency";
 
   private readonly Counter<long> _requests;
 
+  /// <summary>Crea el contador sobre el <see cref="IMeterFactory"/> de la aplicación.</summary>
   public IdempotencyMetrics(IMeterFactory factory)
   {
     var meter = factory.Create(MeterName);

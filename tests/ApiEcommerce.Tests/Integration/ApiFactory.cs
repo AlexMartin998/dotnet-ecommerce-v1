@@ -12,54 +12,31 @@ namespace ApiEcommerce.Tests.Integration;
 
 
 /// <summary>
-/// Levanta la API entera en memoria contra SQL Server y Redis <b>reales</b>, sobre una
-/// base de datos propia que se recrea en cada corrida.
+/// Levanta la API entera en memoria contra SQL Server y Redis reales, sobre una base de
+/// datos propia que se recrea en cada corrida.
 /// </summary>
 /// <remarks>
-/// <para>
-/// <b>Por qué no Testcontainers</b>, que es lo que decía el plan: el entorno de trabajo es
-/// un dev container <b>sin Docker dentro</b>, así que no puede arrancar contenedores. Se
-/// usa la infraestructura que ya está levantada en el host, con una base de datos
-/// separada (<c>ApiEcommerceNET8_Tests</c>) y un prefijo propio de Redis para no pisar los
-/// datos de desarrollo. Testcontainers entra en la fase 6 (CI), donde el runner sí tiene
-/// Docker y es donde de verdad aporta aislamiento.
-/// </para>
-/// <para>
-/// La base se <b>borra al empezar</b> y no al terminar: si una corrida falla, el estado
-/// queda ahí para poder mirarlo. Las migraciones y el seeding los aplica el propio
-/// <c>Program</c> al arrancar el host, igual que en producción — así el test también
-/// cubre ese camino.
-/// </para>
+/// Sin Testcontainers porque el dev container no tiene Docker dentro: se usa la
+/// infraestructura del host con base y prefijo de Redis separados. La base se borra al
+/// empezar y no al terminar, para poder mirar el estado de una corrida que falló.
 /// </remarks>
 public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
   /// <summary>
-  /// Dónde vive la infraestructura de pruebas. Por variable de entorno, con el valor
-  /// local por defecto.
+  /// Lee un ajuste de infraestructura de las variables de entorno, con el valor local por
+  /// defecto para que el mismo fichero sirva en el dev container y en CI.
   /// </summary>
   /// <remarks>
-  /// <para>
-  /// En el dev container es <c>172.17.0.1</c> (la gateway del bridge de Docker, o sea el
-  /// host); en CI los <c>services</c> del runner escuchan en <c>localhost</c>. Sin esto,
-  /// el mismo fichero no puede servir en los dos sitios.
-  /// </para>
-  /// <para>
-  /// La contraseña por defecto es la del SQL Server <b>local</b> del autor, no un secreto
-  /// de producción: sirve para que <c>dotnet test</c> funcione recién clonado y sin
-  /// preparar nada. Cualquier entorno real —CI incluido— la pasa por
-  /// <c>TEST_SQL_PASSWORD</c>.
-  /// </para>
+  /// Los valores por defecto son los de la máquina local del autor y no secretos: están
+  /// para que <c>dotnet test</c> funcione recién clonado. CI los pasa por entorno.
   /// </remarks>
   private static string Env(string name, string fallback)
       => Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value : fallback;
 
-  /// <summary>
-  /// Carpeta de comprobantes de la corrida. <b>Temporal y propia</b>.
-  /// </summary>
+  /// <summary>Carpeta temporal de comprobantes, propia de cada corrida.</summary>
   /// <remarks>
-  /// ⚠️ Sin esto, <c>Documents:RootPath</c> es relativo al content root, o sea el
-  /// directorio del proyecto: cada corrida dejaría PDFs dentro del repo. Y siendo una
-  /// carpeta por corrida, dos suites en paralelo tampoco se pisan.
+  /// <c>Documents:RootPath</c> es relativo al content root: sin esto cada corrida dejaría
+  /// PDFs dentro del repo, y dos suites en paralelo se pisarían.
   /// </remarks>
   private static readonly string DocumentsRoot =
       Path.Combine(Path.GetTempPath(), $"apiecommerce-tests-docs-{Guid.NewGuid():N}");
@@ -74,10 +51,8 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
   private static string ConnectionString =>
       $"Server={SqlHost},{SqlPort};Database=ApiEcommerceNET8_Tests;User ID=sa;Password={SqlPassword};" +
-      // Sin MultipleActiveResultSets: MARS hace que EF Core DESACTIVE los savepoints y
-      // suelte un warning en cada transacción ("If 'SaveChanges' fails, the transaction
-      // cannot be automatically rolled back"). EF Core no lo necesita —es herencia de
-      // EF6— y con él los tests corrían en un modo transaccional distinto del real.
+      // Sin MultipleActiveResultSets: MARS desactiva los savepoints de EF Core y haría
+      // que los tests corriesen en un modo transaccional distinto del real.
       "TrustServerCertificate=true";
 
   /// <summary>
@@ -90,15 +65,8 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
   {
     builder.UseEnvironment("Testing");
 
-    // Toda la configuración explícita: los tests NO deben depender de lo que haya en
-    // appsettings.Development.json, que es un fichero de trabajo del autor y cambia.
-    // ⚠️ UseSetting y NO ConfigureAppConfiguration. Los callbacks de
-    // ConfigureAppConfiguration se aplican DESPUÉS de que Program haya ejecutado sus
-    // registros, y varias piezas (AddDistributedCaching, AddMessaging, AddHealthProbes)
-    // leen la configuración de forma EAGER para decidir QUÉ implementación registran.
-    // Con ConfigureAppConfiguration el host arrancaba con NoIdempotencyStore y
-    // NoCacheService pese a que la configuración final sí traía Redis: los tests de
-    // idempotencia pasaban en verde sin probar nada. Ver TestHostGuardTests.
+    // UseSetting y no ConfigureAppConfiguration: varias piezas leen la configuración de
+    // forma eager para elegir implementación, y eso pasa antes de esos callbacks.
     var settings = Settings;
 
     foreach (var (key, value) in Overrides) settings[key] = value;
@@ -120,34 +88,26 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
           ["Redis:InstanceName"] = "apiecommerce-tests:",
           ["Redis:DefaultTtlSeconds"] = "60",
 
-          // Sin broker: publicar de verdad es la fase 5. Aquí los eventos se quedan en el
-          // outbox, que es el comportamiento diseñado y no un fallo.
+          // Sin broker: los eventos se quedan en el outbox, que es el comportamiento diseñado.
           ["RabbitMq:ConnectionString"] = "",
 
-          // El admin sembrado es la única forma de tener uno: sin esto no hay manera de
-          // probar la mitad de la matriz de autorización.
+          // El admin sembrado es la única forma de probar la mitad de la matriz de autorización.
           ["Seed:Enabled"] = "true",
           ["Seed:AdminUsername"] = AdminUsername,
           ["Seed:AdminEmail"] = "admin@apiecommerce.test",
           ["Seed:AdminPassword"] = AdminPassword,
 
-          // ⚠️ Sin esto la suite se limita a SÍ MISMA: el limitador particiona por IP y en
-          // WebApplicationFactory todas las peticiones comparten la misma, así que a las
-          // 100 peticiones toda la suite empieza a recibir 429 por un motivo que no tiene
-          // nada que ver con lo que se prueba. La política se prueba aparte, bajándolos.
+          // Sin esto la suite se limita a sí misma: todas sus peticiones comparten IP y a
+          // las 100 empiezan los 429. La política se prueba aparte, bajando el límite.
           ["RateLimit:GlobalPermitLimit"] = "1000000",
           ["RateLimit:AuthPermitLimit"] = "1000000",
 
-          // Comprobantes fuera del repo. El proveedor va explícito para que este host
-          // pruebe el MISMO camino que producción y no una rama distinta.
+          // Comprobantes fuera del repo, y proveedor explícito para probar el camino real.
           ["Documents:Provider"] = "filesystem",
           ["Documents:RootPath"] = DocumentsRoot,
 
-          // ⚠️ El recolector de huérfanos APAGADO en la suite. Hoy no llegaría a correr
-          // —espera 5 minutos antes de la primera pasada y la suite dura ~80 s— pero eso es
-          // una coincidencia, no una garantía: un job que BORRA FICHEROS no puede depender
-          // de llegar tarde. El recolector se prueba invocándolo a mano, que además es
-          // determinista.
+          // Recolector de huérfanos apagado: un job que borra ficheros no puede depender de
+          // llegar tarde. Se prueba invocándolo a mano, que además es determinista.
           ["Documents:CleanupIntervalHours"] = "0",
 
           ["Serilog:MinimumLevel:Default"] = "Warning",
@@ -155,21 +115,19 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
   public async Task InitializeAsync()
   {
-    // Antes de arrancar el host: base limpia. Program aplicará las migraciones y el
-    // seeding al levantarse.
+    // Base limpia antes de arrancar: Program aplica migraciones y seeding al levantarse.
     var options = new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(ConnectionString).Options;
     await using var db = new AppDbContext(options);
     await db.Database.EnsureDeletedAsync();
 
-    // Fuerza el arranque del host aquí y no dentro del primer test, para que un fallo de
-    // migración o de seeding se lea como lo que es y no como un fallo del primer test.
+    // Arranque forzado aquí: un fallo de migración o seeding no debe leerse como un fallo
+    // del primer test.
     using var _ = CreateClient();
   }
 
   public new Task DisposeAsync()
   {
-    // La base NO se borra al terminar (si algo falla, el estado queda para mirarlo), pero
-    // los ficheros sí: son basura del sistema de ficheros del host, no evidencia.
+    // La base se conserva para poder mirarla; los ficheros no son evidencia y sí basura.
     if (Directory.Exists(DocumentsRoot)) Directory.Delete(DocumentsRoot, recursive: true);
 
     return Task.CompletedTask;
@@ -183,11 +141,11 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
   /// <summary>Cliente autenticado como el admin sembrado.</summary>
   public Task<HttpClient> AsAdminAsync() => LoginAsync(AdminUsername, AdminPassword);
 
-  /// <summary>
-  /// Registra un usuario nuevo y devuelve su cliente autenticado. Uno nuevo por test y
-  /// no uno compartido: cinco fallos de login bloquean la cuenta cinco minutos, y una
-  /// cuenta compartida convierte ese bloqueo en fallos intermitentes por toda la suite.
-  /// </summary>
+  /// <summary>Registra un usuario nuevo y devuelve su cliente autenticado.</summary>
+  /// <remarks>
+  /// Uno por test: cinco fallos de login bloquean la cuenta, y compartirla convertiría ese
+  /// bloqueo en fallos intermitentes por toda la suite.
+  /// </remarks>
   public async Task<HttpClient> AsNewUserAsync()
   {
     var username = $"user{Guid.NewGuid():N}"[..20];

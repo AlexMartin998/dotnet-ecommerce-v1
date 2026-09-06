@@ -5,51 +5,38 @@ namespace ApiEcommerce.Shared.Observability;
 
 
 /// <summary>
-/// Da a cada petición un identificador que aparece en <b>todas</b> sus líneas de log y
-/// viaja de vuelta al cliente en la cabecera <c>X-Correlation-Id</c>.
+/// Da a cada petición un identificador que aparece en todas sus líneas de log y viaja de
+/// vuelta al cliente en la cabecera <c>X-Correlation-Id</c>.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Es lo primero que se pide en un incidente: "mándame el id de la petición que falló".
-/// Sin esto, correlacionar los logs de una petición concreta entre réplicas es imposible,
-/// y el cliente que reporta el fallo no tiene <b>nada</b> que dar salvo la hora.
-/// </para>
-/// <para>
-/// Si el cliente ya manda uno, <b>se respeta</b>: así una cadena de servicios comparte el
-/// mismo identificador de punta a punta. Se acota su longitud porque acaba en el log, y
-/// un valor de 10 KB elegido por el cliente es un vector de ruido barato.
-/// </para>
-/// <para>
-/// Convive con el <c>TraceId</c> de OpenTelemetry sin sustituirlo: el <c>TraceId</c> es
-/// para las herramientas, este es para las personas y para las cabeceras.
-/// </para>
+/// Si el cliente ya manda uno se respeta, para que una cadena de servicios comparta el
+/// mismo identificador de punta a punta; su longitud se acota porque acaba en el log.
+/// Convive con el <c>TraceId</c> de OpenTelemetry: ese es para las herramientas.
 /// </remarks>
 public sealed class CorrelationIdMiddleware(RequestDelegate next)
 {
+  /// <summary>Cabecera que transporta el identificador.</summary>
   public const string HeaderName = "X-Correlation-Id";
 
   private const int MaxLength = 128;
 
+  /// <summary>Resuelve el identificador, lo publica en la respuesta y en el contexto de log.</summary>
   public async Task InvokeAsync(HttpContext context)
   {
     var correlationId = Incoming(context) ?? context.TraceIdentifier;
 
     context.Items[HeaderName] = correlationId;
 
-    // Se escribe ANTES de seguir: si se hiciera al terminar, una respuesta ya empezada a
-    // enviar no admitiría cabeceras nuevas y el id no llegaría justo en los casos lentos.
+    // Se registra antes de seguir: una respuesta ya empezada a enviar no admite cabeceras
+    // nuevas, justo en los casos lentos.
     context.Response.OnStarting(() =>
     {
       context.Response.Headers[HeaderName] = correlationId;
       return Task.CompletedTask;
     });
 
-    // LogContext lo añade a todas las líneas emitidas dentro de este ámbito, incluidas
-    // las del middleware de errores.
-    //
-    // Y de paso el TraceId de OpenTelemetry, que es lo que permite saltar de una línea de
-    // log a la traza completa de esa petición. Se lee de `Activity.Current` en vez de
-    // añadir un paquete enriquecedor: son dos líneas y una dependencia menos que mantener.
+    // LogContext lo añade a todas las líneas del ámbito, incluidas las del middleware de
+    // errores. El TraceId se lee de `Activity.Current` para evitar un paquete enriquecedor.
     using (LogContext.PushProperty("CorrelationId", correlationId))
     using (LogContext.PushProperty("TraceId", Activity.Current?.TraceId.ToString()))
     {

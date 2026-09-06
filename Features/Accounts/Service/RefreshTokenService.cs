@@ -41,17 +41,10 @@ public sealed class RefreshTokenService(
 
     var now = DateTime.Now;
 
-    // ---- detección de reuso ------------------------------------------------
-    // Que un token YA GASTADO vuelva a aparecer solo tiene dos explicaciones: o hay dos
-    // copias circulando (robo), o el propio cliente lanzó dos refrescos a la vez. La
-    // rotación existe precisamente para que esto sea distinguible.
+    // Detección de reuso: un token ya gastado que reaparece es robo o una carrera del cliente.
     if (stored.RevokedAt is { } revokedAt)
     {
-      // ⚠️ La ventana de gracia no es un parche: sin ella la detección es inutilizable.
-      // Un móvil o una SPA lanzan varias peticiones en paralelo; si dos reciben 401 casi
-      // a la vez, las dos refrescan con el mismo token y la segunda parece un ladrón.
-      // Dentro de la ventana se rechaza igual —ese token está gastado— pero NO se revoca
-      // la familia, así que el token nuevo que ya recibió la otra petición sigue valiendo.
+      // Dentro de la ventana de gracia se rechaza pero NO se revoca la familia: es una carrera.
       if (now - revokedAt <= _options.ReuseGrace)
       {
         logger.LogInformation(
@@ -61,8 +54,7 @@ public sealed class RefreshTokenService(
         throw new UnauthorizedAppException("Invalid refresh token.");
       }
 
-      // Fuera de la ventana sí es señal de robo: no se sabe cuál de las dos copias es la
-      // del dueño, así que se cae la sesión entera. Duro a propósito.
+      // Fuera de la ventana es robo: no se sabe qué copia es la del dueño, cae la sesión entera.
       var revoked = await repository.RevokeFamilyAsync(stored.FamilyId, ct);
 
       logger.LogWarning(
@@ -76,15 +68,10 @@ public sealed class RefreshTokenService(
       throw new UnauthorizedAppException("Invalid refresh token.");
 
     var user = await userManager.FindByIdAsync(stored.UserId)
-        // La cuenta desapareció con la sesión abierta. No es 404: para quien pregunta,
-        // su credencial ya no vale, y decir "ese usuario no existe" es un oráculo.
+        // La cuenta ya no existe: 401 y no 404, distinguirlo sería un oráculo.
         ?? throw new UnauthorizedAppException("Invalid refresh token.");
 
-    // ⚠️ Renovar NO vuelve a pedir credenciales, así que no pasa por el bloqueo de
-    // Identity: sin esta comprobación, una cuenta bloqueada podría seguir renovando su
-    // sesión **indefinidamente** y el bloqueo no serviría de nada. Es el mismo motivo por
-    // el que bloquear revoca además las sesiones abiertas — esto es el cinturón, aquello
-    // los tirantes: cubre también a un usuario que se bloquee solo por fallar el login.
+    // Renovar no vuelve a pedir credenciales: sin esto una cuenta bloqueada renovaría para siempre.
     if (await userManager.IsLockedOutAsync(user))
     {
       logger.LogWarning("Refresh refused for locked-out user {UserId}", stored.UserId);
@@ -93,12 +80,10 @@ public sealed class RefreshTokenService(
 
     var roles = await userManager.GetRolesAsync(user);
 
-    // Gastar el viejo y emitir el nuevo, ATÓMICO. Si solo se confirmara lo primero, el
-    // usuario se quedaría sin sesión por un fallo nuestro.
+    // Gastar el viejo y emitir el nuevo van juntos: confirmar solo lo primero deja al usuario sin sesión.
     var issued = await transactions.ExecuteAsync(async token =>
     {
-      // El UPDATE condicional es quien arbitra: si dos peticiones simultáneas llegan
-      // hasta aquí con el mismo token, solo una lo gasta. La otra recibe `false`.
+      // El UPDATE condicional arbitra: de dos peticiones con el mismo token, solo una lo gasta.
       if (!await repository.TryConsumeAsync(stored.Id, token))
         throw new UnauthorizedAppException("Invalid refresh token.");
 
@@ -131,7 +116,7 @@ public sealed class RefreshTokenService(
       string? refreshToken, string? accessTokenId, DateTime? accessTokenExpiresAt,
       CancellationToken ct = default)
   {
-    // Primero la GARANTÍA: sin familia viva, la sesión no se puede extender.
+    // Primero la garantía: sin familia viva, la sesión no se puede extender.
     if (!string.IsNullOrEmpty(refreshToken)
         && await repository.FindByHashAsync(HashOf(refreshToken), ct) is { } stored)
     {
@@ -141,8 +126,7 @@ public sealed class RefreshTokenService(
           "Logout revoked {Count} refresh token(s) of family {FamilyId}", revoked, stored.FamilyId);
     }
 
-    // Y después la OPTIMIZACIÓN: que el access token que el cliente ya tiene muera ahora
-    // en vez de al expirar. Si esto falla, la sesión sigue cortada igual.
+    // Y después la optimización: matar ya el access token vigente. Si falla, la sesión sigue cortada.
     if (!string.IsNullOrEmpty(accessTokenId) && accessTokenExpiresAt is { } expiresAt)
       await denylist.RevokeAsync(accessTokenId, expiresAt, ct);
   }
@@ -157,8 +141,7 @@ public sealed class RefreshTokenService(
   /// <summary>Genera un token nuevo y lo deja pendiente de confirmar.</summary>
   private IssuedRefreshToken Create(string userId, Guid familyId, string? clientIp)
   {
-    // 32 bytes de un generador criptográfico. Un GUID NO vale: sus bits no son todos
-    // aleatorios y su propósito es ser único, no impredecible.
+    // 32 bytes de un generador criptográfico; un GUID es único pero no impredecible.
     var value = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
     var expiresAt = DateTime.Now.Add(_options.Lifetime);
@@ -177,10 +160,8 @@ public sealed class RefreshTokenService(
 
   /// <summary>Huella del token: lo único que llega a la base.</summary>
   /// <remarks>
-  /// SHA-256 a secas y no un hash de contraseña con sal: aquí el valor ya son 256 bits
-  /// aleatorios, así que no hay nada que adivinar por fuerza bruta y un algoritmo lento
-  /// solo añadiría latencia a cada refresh. La sal tampoco aporta: no hay dos usuarios
-  /// que puedan tener "el mismo token".
+  /// SHA-256 a secas y no un hash de contraseña con sal: el valor ya son 256 bits aleatorios,
+  /// así que no hay fuerza bruta que evitar y un algoritmo lento solo añadiría latencia.
   /// </remarks>
   private static string HashOf(string token)
       => Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token)));

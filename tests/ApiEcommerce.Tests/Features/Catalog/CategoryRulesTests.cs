@@ -9,14 +9,10 @@ using Moq;
 namespace ApiEcommerce.Tests.Features.Catalog;
 
 
-/// <summary>
-/// Reglas de negocio de <c>Category</c>.
-/// </summary>
+/// <summary>Reglas de negocio de <c>Category</c>.</summary>
 /// <remarks>
-/// Estos tests son la prueba de que la composición abarató el testeo: las reglas viven
-/// fuera del CRUD, así que se instancian con un repositorio falso <b>en una línea</b> y
-/// sin base de datos, sin <c>IMapper</c> y sin <c>HttpContext</c>. Con los hooks
-/// <c>virtual</c> de una clase base habría que levantar el servicio entero.
+/// Las reglas viven fuera del CRUD, así que se instancian con un repositorio falso y sin
+/// base, <c>IMapper</c> ni <c>HttpContext</c>.
 /// </remarks>
 public class CategoryRulesTests
 {
@@ -37,8 +33,8 @@ public class CategoryRulesTests
     var ex = await Assert.ThrowsAsync<ConflictAppException>(
         () => Sut().EnsureCanCreateAsync(new CreateCategoryDto { Name = "Bebidas" }));
 
-    // Assert — el 409 lo decide la excepción, no el controller: quien la traduce a HTTP
-    // es GlobalExceptionHandler, y por eso aquí se comprueba el Status y no un IActionResult.
+    // Assert — el 409 lo decide la excepción y no el controller, por eso se comprueba
+    // el Status y no un IActionResult.
     Assert.Equal(HttpStatusCode.Conflict, ex.Status);
     Assert.Equal("conflict", ex.Code);
     Assert.Contains("Bebidas", ex.Message);
@@ -63,9 +59,8 @@ public class CategoryRulesTests
   [InlineData("   ")]
   public async Task EnsureCanUpdateAsync_WhenNameIsNotSent_SkipsTheCheck(string? name)
   {
-    // En un PATCH lo que no viene no se valida. Con MockBehavior.Strict, cualquier
-    // llamada al repositorio haría fallar el test: eso es justo lo que se quiere
-    // comprobar — que no se consulta la base para un campo que el cliente no mandó.
+    // En un PATCH lo que no viene no se valida: con MockBehavior.Strict, consultar la base
+    // por un campo que el cliente no mandó haría fallar el test.
     await Sut().EnsureCanUpdateAsync(1, new UpdateCategoryDto { Name = name }, Existing(1, "Bebidas"));
 
     _repository.VerifyNoOtherCalls();
@@ -74,8 +69,7 @@ public class CategoryRulesTests
   [Fact]
   public async Task EnsureCanUpdateAsync_ExcludesItsOwnId()
   {
-    // ⚠️ La regla que más fácil se rompe: sin excludeId, renombrar una categoría a su
-    // propio nombre choca CONSIGO MISMA y devuelve un 409 absurdo.
+    // Sin excludeId, renombrar una categoría a su propio nombre choca consigo misma.
     _repository.Setup(r => r.NameExistsAsync("Bebidas", 7, It.IsAny<CancellationToken>()))
                .ReturnsAsync(false);
 
@@ -106,7 +100,7 @@ public class CategoryRulesTests
     var ex = await Assert.ThrowsAsync<ConflictAppException>(
         () => Sut().EnsureCanDeleteAsync(Existing(7, "Bebidas")));
 
-    // 409 y no 400: el request es válido en sí mismo, choca con el ESTADO de la base.
+    // 409 y no 400: el request es válido en sí mismo, choca con el estado de la base.
     Assert.Equal(HttpStatusCode.Conflict, ex.Status);
     Assert.Contains("still has products", ex.Message);
   }
@@ -124,8 +118,8 @@ public class CategoryRulesTests
   [Fact]
   public void EntityName_IsTheDomainName()
   {
-    // Alimenta el mensaje del 404 ("Category with key '9' was not found"), que es
-    // contrato de la API: no puede pasar a llamarse como la clase C# si esta se renombra.
+    // Alimenta el mensaje del 404, que es contrato de la API: no puede cambiar porque se
+    // renombre la clase C#.
     Assert.Equal("Category", Sut().EntityName);
   }
 

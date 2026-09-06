@@ -1,6 +1,7 @@
 namespace ApiEcommerce.Features.Catalog.Dtos;
 
 
+/// <summary>Categoría tal y como la ve el cliente.</summary>
 public class CategoryDto
 {
 

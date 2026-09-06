@@ -3,53 +3,41 @@ using ApiEcommerce.Features.Accounts.Dtos;
 namespace ApiEcommerce.Features.Accounts.Service;
 
 
-/// <summary>
-/// Sesiones: emitirlas, rotarlas y cortarlas.
-/// </summary>
+/// <summary>Sesiones: emitirlas, rotarlas y cortarlas.</summary>
 /// <remarks>
-/// <para>
-/// El access token es corto y no se puede revocar por sí solo; lo que se revoca es la
-/// <b>sesión</b>, y eso vive aquí. La rotación —cada uso gasta el token y entrega otro—
-/// no está para molestar: es lo que convierte un robo en algo <b>detectable</b>, porque
-/// el ladrón y el dueño acaban usando el mismo token gastado.
-/// </para>
+/// Lo revocable es la sesión, no el access token. La rotación —cada uso gasta el token y
+/// entrega otro— hace detectable un robo: ladrón y dueño acaban usando el mismo token gastado.
 /// </remarks>
 public interface IRefreshTokenService
 {
   /// <summary>Abre una sesión nueva y devuelve su primer refresh token, en claro.</summary>
   /// <remarks>
-  /// El valor en claro se devuelve <b>una sola vez</b>, para que quien llama lo ponga en
-  /// la cookie: en la base solo queda su huella y no hay forma de recuperarlo.
+  /// El valor en claro se devuelve una sola vez: en la base solo queda su huella.
   /// </remarks>
   /// <param name="userId">Dueño de la sesión.</param>
   /// <param name="clientIp">Solo para investigar incidentes; no se usa para decidir nada.</param>
   /// <param name="ct">Token de cancelación.</param>
   Task<IssuedRefreshToken> IssueAsync(string userId, string? clientIp, CancellationToken ct = default);
 
-  /// <summary>
-  /// Gasta un refresh token y entrega uno nuevo, junto con un access token fresco.
-  /// </summary>
+  /// <summary>Gasta un refresh token y entrega uno nuevo, con un access token fresco.</summary>
   /// <remarks>
-  /// Revocar el viejo y emitir el nuevo van en la <b>misma transacción</b>: si se
-  /// confirmara solo lo primero, el usuario se quedaría sin sesión por un fallo nuestro.
+  /// Revocar el viejo y emitir el nuevo van en la misma transacción: confirmar solo lo
+  /// primero dejaría al usuario sin sesión.
   /// </remarks>
   /// <param name="refreshToken">El token en claro que trae el cliente.</param>
   /// <param name="clientIp">IP de origen.</param>
   /// <param name="ct">Token de cancelación.</param>
   /// <exception cref="Exceptions.UnauthorizedAppException">
-  /// No existe, ya está gastado o ha caducado. <b>Si además es un reuso fuera de la
-  /// ventana de gracia, la familia entera queda revocada antes de lanzar.</b>
+  /// No existe, ya está gastado o ha caducado. Si es un reuso fuera de la ventana de gracia,
+  /// la familia entera queda revocada antes de lanzar.
   /// </exception>
   Task<(AuthResponseDto Auth, IssuedRefreshToken Refresh)> RotateAsync(
       string refreshToken, string? clientIp, CancellationToken ct = default);
 
-  /// <summary>
-  /// Cierra la sesión: revoca su familia y, si se puede, invalida ya el access token.
-  /// </summary>
+  /// <summary>Cierra la sesión: revoca su familia y, si puede, invalida ya el access token.</summary>
   /// <remarks>
-  /// <b>No lanza si el token no existe o ya estaba revocado.</b> Cerrar sesión dos veces,
-  /// o con una cookie caducada, tiene que ser inofensivo: un logout que devuelve error
-  /// deja al usuario sin saber si está dentro o fuera.
+  /// No lanza si el token no existe o ya estaba revocado: cerrar sesión dos veces tiene que
+  /// ser inofensivo.
   /// </remarks>
   /// <param name="refreshToken">El token en claro, o <c>null</c> si no vino cookie.</param>
   /// <param name="accessTokenId">El <c>jti</c> del access token actual, si lo hay.</param>
@@ -59,14 +47,10 @@ public interface IRefreshTokenService
       string? refreshToken, string? accessTokenId, DateTime? accessTokenExpiresAt,
       CancellationToken ct = default);
 
-  /// <summary>
-  /// Corta <b>todas</b> las sesiones de un usuario, esté donde esté conectado.
-  /// </summary>
+  /// <summary>Corta todas las sesiones de un usuario, esté donde esté conectado.</summary>
   /// <remarks>
-  /// ⚠️ No se puede invalidar aquí los access tokens ya emitidos: la denylist va por
-  /// <c>jti</c> y no sabemos cuáles son los del usuario. Sobreviven <b>como mucho lo que
-  /// dure un access token</b> (15 min), y en ese rato el usuario ya no puede renovar. Es
-  /// una consecuencia de que un JWT sea autocontenido, no un descuido.
+  /// Los access tokens ya emitidos no se invalidan aquí —la denylist va por <c>jti</c> y no se
+  /// conocen— y sobreviven lo que les quede de vida, pero en ese rato ya no se puede renovar.
   /// </remarks>
   /// <param name="userId">De quién.</param>
   /// <param name="ct">Token de cancelación.</param>
@@ -75,6 +59,6 @@ public interface IRefreshTokenService
 
 
 /// <summary>Un refresh token recién emitido, en claro y con su caducidad.</summary>
-/// <param name="Token">El valor que hay que meter en la cookie. No se guarda en ningún sitio.</param>
+/// <param name="Token">El valor que va en la cookie. No se guarda en claro en ningún sitio.</param>
 /// <param name="ExpiresAt">Cuándo deja de valer.</param>
 public readonly record struct IssuedRefreshToken(string Token, DateTime ExpiresAt);

@@ -22,17 +22,41 @@
   y son parte del contrato de la API (`"Insufficient stock for SKU 'X'"`).
 - **Mensajes de commit en español.**
 
-### 1.1 Los comentarios explican el PORQUÉ, no el qué
+### 1.1 Los comentarios explican el PORQUÉ, y son BREVES
 
 Un comentario que repite lo que dice el código es ruido. Los que valen son los que
-registran **la decisión y su alternativa descartada**:
+registran **la decisión**. Pero el porqué largo —la medición, la historia, la alternativa
+descartada— **no va en el código**: va en
+[`docs/07-decisiones-en-el-codigo.md`](docs/07-decisiones-en-el-codigo.md), indexado por
+ruta de archivo.
+
+> **Regla del 2026-09-06, por petición del owner.** El 40 % del código fuente eran
+> comentarios. Un `<remarks>` de tres párrafos para explicar un semáforo no documenta: tapa
+> el código que pretende explicar. Se lee peor, se mantiene peor y se escala peor.
+
+**El contrato:**
+
+| | |
+|---|---|
+| **Sin iconos** | Nada de ⚠️ 🔴 ⭐ ✅ ✏️ en el código. Un archivo lleno de emojis no se lee, se esquiva |
+| `<summary>` | **Una o dos líneas.** Qué es y para qué sirve |
+| `<remarks>` | Solo si hay una decisión no obvia, y **máximo 3 líneas**. Sin `<para>` encadenados |
+| Comentarios de cuerpo | **Una línea**, y solo si dicen algo que el código no dice |
+| Prohibido | Anécdotas, mediciones, «antes se hacía X», referencias a `planning/NN`, y repetir el código |
 
 ```csharp
-// RowVersion (concurrencia optimista) sirve para EDITAR una entidad. Aplicado a un
-// contador con mucha contención rechaza compras válidas al agotar los reintentos:
-// medido, 15 compras sobre stock 10 daban 5x200 + 5x409. Por eso el stock usa un
-// UPDATE condicional atómico y no esto.
+// BIEN: dice el porqué, y cabe en una línea.
+// Los IChannel no prometen ser thread-safe, así que se serializa el acceso.
+
+// MAL: es la historia del cambio, no la razón del código de hoy.
+// ⚠️ El canal se reutiliza. Antes se abría y cerraba uno por mensaje, y abrir un canal
+// es un viaje de ida y vuelta al broker: con Outbox:BatchSize en 50, eran 50 canales
+// por cada vuelta del publicador, cada uno con su negociación. Funcionaba, pero...
 ```
+
+**Nada se pierde**: lo que se quita del código se escribe en `docs/07`, con su ruta
+relativa. Y lo que ahí está sigue siendo lo más valioso del repo — solo que fuera del
+camino de quien lee el código.
 
 ### 1.2 Los bloques comentados de implementaciones anteriores **NO se borran**
 

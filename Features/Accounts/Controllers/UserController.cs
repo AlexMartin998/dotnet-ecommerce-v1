@@ -9,21 +9,13 @@ using Microsoft.AspNetCore.Mvc;
 namespace ApiEcommerce.Features.Accounts.Controllers;
 
 
-/// <summary>
-/// Administración de cuentas. <b>Todo el controller es solo para administradores.</b>
-/// </summary>
-/// <remarks>
-/// Existe porque hasta ahora el <b>único</b> camino para tener un administrador era el
-/// <c>DataSeeder</c>: no había forma de promover a nadie, ni de bloquear una cuenta, sin
-/// tocar la base a mano.
-/// </remarks>
+/// <summary>Administración de cuentas. Todo el controller es solo para administradores.</summary>
 [ApiController]
 [ApiVersion("1.0")]
 [Route("api/v{version:apiVersion}/[controller]")] // api/v1/user
 [Produces("application/json")]
-// El requisito va en la CLASE porque aquí sí es el mismo para todas las acciones. Ojo con
-// la semántica: varios [Authorize] se COMBINAN (AND), así que una acción no podría
-// relajarlo — solo [AllowAnonymous] gana, y aquí no lo lleva ninguna.
+// En la clase porque el requisito es el mismo para todas las acciones: varios [Authorize] se
+// combinan (AND), así que una acción no podría relajarlo, solo [AllowAnonymous] gana.
 [Authorize(Roles = Roles.Admin)]
 public class UserController : ControllerBase
 {

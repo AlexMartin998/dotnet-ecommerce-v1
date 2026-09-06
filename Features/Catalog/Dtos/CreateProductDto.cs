@@ -3,6 +3,7 @@ using System.ComponentModel.DataAnnotations;
 namespace ApiEcommerce.Features.Catalog.Dtos;
 
 
+/// <summary>Body del POST de producto.</summary>
 public class CreateProductDto
 {
 

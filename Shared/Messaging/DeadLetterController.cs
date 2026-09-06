@@ -8,21 +8,13 @@ namespace ApiEcommerce.Shared.Messaging;
 
 
 /// <summary>
-/// Administración de los mensajes que agotaron sus reintentos: ver cuántos hay y
-/// devolverlos a la cola principal.
+/// Administración de los mensajes que agotaron sus reintentos: ver cuántos hay y devolverlos a
+/// la cola principal.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Es la salida de la DLQ. Antes de esto, un comprobante que agotaba sus intentos dejaba
-/// la orden en <c>failed</c> —correcto, el cliente deja de esperar— pero **reemitirlo
-/// exigía entrar a la consola del broker**. Una cola de la que no se sale no es una red de
-/// seguridad, es un vertedero.
-/// </para>
-/// <para>
-/// ⚠️ <b>Vive en <c>Shared/Messaging</c> y no en un slice</b> porque no es de ningún
-/// dominio: opera sobre el mecanismo. Y no nombra ningún tipo de <c>Features/</c>, que es
-/// lo que la regla de dirección de dependencias prohíbe.
-/// </para>
+/// Es la salida de la DLQ; sin ella, reemitir exigía entrar a la consola del broker. Vive en
+/// <c>Shared/Messaging</c> y no en un slice porque opera sobre el mecanismo y no nombra ningún
+/// tipo de <c>Features/</c>.
 /// </remarks>
 [ApiController]
 [ApiVersion("1.0")]
@@ -41,9 +33,8 @@ public class DeadLetterController : ControllerBase
 
     /// <summary>Cuántos mensajes hay parados en cada cola de dead-letters.</summary>
     /// <remarks>
-    /// Devuelve <b>recuentos, no contenido</b>: para decidir si hay que reemitir basta con
-    /// saber cuántos hay, y volcar payloads sería una fuga esperando a que alguien publique
-    /// un evento más rico que los de hoy.
+    /// Devuelve recuentos y no contenido: volcar payloads sería una fuga, y para decidir si hay
+    /// que reemitir basta con saber cuántos hay.
     /// </remarks>
     [HttpGet(Name = "GetDeadLetters")]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -57,17 +48,9 @@ public class DeadLetterController : ControllerBase
 
     /// <summary>Devuelve mensajes muertos a su cola principal, con el presupuesto a cero.</summary>
     /// <remarks>
-    /// <para>
-    /// ⚠️ El <paramref name="queue"/> es el nombre de la cola <b>principal</b>, y se valida
-    /// contra las colas que este servicio consume. Una cola desconocida devuelve
-    /// <b>404</b>: la lista de suscripciones registradas es una allowlist por construcción,
-    /// y sin ella el endpoint movería mensajes de cualquier cola del broker — que es
-    /// compartido con otros proyectos.
-    /// </para>
-    /// <para>
-    /// Es <b>idempotente en el efecto</b>, no en la operación: reemitir dos veces publica
+    /// El <paramref name="queue"/> es la cola principal y se valida contra las suscripciones
+    /// registradas, que son la allowlist; una desconocida da 404. Reemitir dos veces publica
     /// dos veces, pero el inbox deduplica por <c>MessageId</c> y el trabajo se hace una.
-    /// </para>
     /// </remarks>
     /// <param name="queue">Cola principal cuya dead-letter se vacía.</param>
     /// <param name="max">Tope de mensajes a mover (1..500).</param>
@@ -82,8 +65,7 @@ public class DeadLetterController : ControllerBase
     public async Task<ActionResult<object>> ReplayDeadLetters(
         string queue, [FromQuery] int max, CancellationToken ct)
     {
-        // El tope tiene un techo: sin él, un `max` enorme deja la petición HTTP moviendo
-        // mensajes de uno en uno durante minutos. Quien necesite más, llama otra vez.
+        // Con techo: sin él, un `max` enorme deja la petición moviendo mensajes durante minutos.
         if (max is < 1 or > 500)
             return ValidationProblem("max must be between 1 and 500.");
 

@@ -18,39 +18,13 @@ namespace ApiEcommerce.Shared.DependencyInjection;
 
 
 /// <summary>
-/// <b>Composition root</b>: compone en tres bloques lo que cada slice y cada pieza
-/// transversal registran por su cuenta.
-/// <para>
-/// <b>No registra servicios de dominio ni de infraestructura</b>: cada uno vive en el
-/// <c>XxxExtensions.cs</c> de su carpeta. Las dos únicas excepciones son
-/// <c>AddControllers()</c> y <c>AddHsts()</c>, que son de la superficie HTTP y no tienen
-/// otra carpeta a la que pertenecer.
-/// </para>
+/// Composition root: compone en tres bloques lo que cada slice y cada pieza transversal
+/// registran por su cuenta.
 /// </summary>
 /// <remarks>
-/// <para>
-/// La organización es <b>vertical slicing por contexto acotado</b>: cada carpeta de
-/// <c>Features/</c> es un contexto de dominio con <b>todo lo suyo dentro</b>
-/// (<c>Models/</c>, <c>Dtos/</c>, <c>Repository/</c>, <c>Service/</c>, <c>Mapping/</c>,
-/// <c>Controllers/</c>) y su propio <c>XxxExtensions.AddXxxFeature()</c>.
-/// </para>
-/// <para>
-/// <b>Un slice es un contexto acotado, no una entidad.</b> `Category` y `Product` viven
-/// juntos en <c>Catalog</c>, y ahí irían también `UnitOfMeasurement`, `ProductTag` o
-/// `Brand`. Un slice por entidad reproduce la dispersión que el slicing venía a quitar,
-/// solo que con más carpetas. La pregunta para decidir es de DDD: <i>¿esto tiene su propio
-/// lenguaje y sus propias invariantes, o es parte del vocabulario de otro?</i>
-/// </para>
-/// <para>
-/// Los tres bloques declaran además la dirección de las dependencias:
-/// <b>Web → Features → Shared</b>. En un proyecto único es una convención, pero son las
-/// costuras exactas por donde se parte la solución en proyectos el día que haga falta.
-/// </para>
-/// <para>
-/// <b>Lifetimes.</b> Todo lo que dependa de <see cref="AppDbContext"/> va <c>Scoped</c>.
-/// Lo que no guarda estado por request y solo depende de singletons va <c>Singleton</c>,
-/// y va <b>igual en todas sus ramas de registro</b>.
-/// </para>
+/// No registra servicios propios —cada uno vive en el <c>XxxExtensions.cs</c> de su
+/// carpeta—, salvo <c>AddControllers()</c> y <c>AddHsts()</c>, que no tienen otra. Los tres
+/// bloques declaran la dirección de dependencias Web → Features → Shared.
 /// </remarks>
 public static class ServiceCollectionExtensions
 {
@@ -64,24 +38,26 @@ public static class ServiceCollectionExtensions
       => services
           .AddPersistence(configuration)        // Shared/Persistence  — EF Core + SQL Server + ITransactionRunner
           .AddGenericCrud()                     // Shared/Crud         — genéricos abiertos del CRUD compuesto
-          // El composition root es el ÚNICO sitio de Shared/ que puede nombrar tipos de
-          // Features/: es literalmente su trabajo. Por eso el ensamblado a escanear se
-          // pasa desde aquí y no se resuelve dentro de Shared/Mapping.
+          // El composition root es el único sitio de Shared/ que puede nombrar tipos de
+          // Features/, así que el ensamblado a escanear se pasa desde aquí.
           .AddObjectMapping(typeof(CategoryProfile).Assembly)  // Shared/Mapping — AutoMapper
           .AddDistributedCaching(configuration) // Shared/Caching      — Redis + idempotencia
           .AddFileStorage(configuration)        // Shared/Storage      — imagenes PUBLICAS (wwwroot)
-          // ⚠️ Es OTRO almacén, no una duplicación del de arriba: aquel sirve estáticos
-          // públicos desde wwwroot y este guarda documentos PRIVADOS fuera de él. Ver
-          // IDocumentStore. Este método es además el único sitio a tocar el día que los
-          // comprobantes vivan en S3, R2, MinIO o Cloudinary.
+          // Otro almacén, no una duplicación: este guarda documentos privados fuera de
+          // wwwroot (ver IDocumentStore).
           .AddDocumentStorage(configuration)    // Shared/Documents    — documentos PRIVADOS
           .AddMessaging(configuration)          // Shared/Messaging    — outbox + RabbitMQ
           .AddObservability(configuration);     // Shared/Observability — trazas y métricas
 
 
   /// <summary>
-  /// Los contextos acotados. <b>Añadir un slice = crear su carpeta y una línea aquí.</b>
+  /// Los contextos acotados. Añadir un slice = crear su carpeta y una línea aquí.
   /// </summary>
+  /// <remarks>
+  /// Un slice es un contexto acotado, no una entidad: <c>Category</c> y <c>Product</c>
+  /// viven juntos en <c>Catalog</c>. La pregunta para separar es si algo tiene su propio
+  /// lenguaje y sus propias invariantes o es vocabulario de otro.
+  /// </remarks>
   public static IServiceCollection AddFeatures(
       this IServiceCollection services, IConfiguration configuration)
       => services
@@ -99,14 +75,9 @@ public static class ServiceCollectionExtensions
   {
     services.AddControllers();
 
-    // HSTS. El valor de fábrica de ASP.NET Core son **30 días**, que no sirve de mucho:
-    // la recomendación operativa es un año, porque la protección solo vale mientras el
-    // navegador recuerde la política.
-    //
-    // ⚠️ SIN `Preload` ni `IncludeSubDomains` a propósito. `Preload` es una **puerta de
-    // un solo sentido**: entrar en la lista de los navegadores lleva meses y salir, más;
-    // e `IncludeSubDomains` rompe cualquier subdominio que aún se sirva en claro. Las dos
-    // se activan cuando alguien lo decida a sabiendas, no por defecto.
+    // Un año, y no los 30 días de fábrica: la protección solo vale mientras el navegador
+    // recuerde la política. Sin `Preload` (es una puerta de un solo sentido) ni
+    // `IncludeSubDomains` (rompe subdominios servidos en claro).
     services.AddHsts(options => options.MaxAge = TimeSpan.FromDays(365));
 
     return services

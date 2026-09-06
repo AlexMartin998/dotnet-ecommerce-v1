@@ -8,12 +8,12 @@ namespace ApiEcommerce.Features.Catalog.Service;
 
 
 /// <summary>
-/// Reglas de negocio de <see cref="Product"/>: SKU único y categoría existente.
+/// Reglas de negocio de <see cref="Product"/>: SKU único, categoría existente y
+/// comprobación de <c>If-Match</c>.
 /// </summary>
 /// <remarks>
-/// Validar la FK aquí es obligatorio: si se deja pasar un <c>CategoryId</c>
-/// inexistente, EF revienta con un error de clave foránea y el cliente recibe un
-/// 500 en vez del 400 que corresponde.
+/// La FK se valida aquí porque, si se deja pasar un <c>CategoryId</c> inexistente, EF
+/// falla con un error de clave foránea y el cliente recibe un 500 en vez de un 400.
 /// </remarks>
 public sealed class ProductRules(
     IProductRepository productRepository,
@@ -44,26 +44,12 @@ public sealed class ProductRules(
   // ---- helpers privados ---------------------------------------------------
 
   /// <summary>
-  /// Cierra el <i>lost update</i> entre dos administradores.
+  /// Compara el <c>If-Match</c> del cliente con la versión en base y cierra el
+  /// <i>lost update</i> entre dos administradores.
   /// </summary>
   /// <remarks>
-  /// <para>
-  /// El escenario: A lee el producto, B lo edita, A guarda. Sin esto A pisa el cambio de B
-  /// <b>sin que nadie se entere</b>, y no lo salva que <c>Product.RowVersion</c> exista:
-  /// el PATCH relee la fila, así que EF compara contra el rowversion que acaba de leer —el
-  /// de B— y todo cuadra. Lo único que rompe el empate es el token que A leyó en SU GET,
-  /// y ese solo puede llegar del cliente.
-  /// </para>
-  /// <para>
-  /// <b>Es opcional a propósito.</b> Sin <c>If-Match</c> el PATCH funciona como siempre:
-  /// exigirlo rompería a todos los clientes actuales, y la protección la pide quien sabe
-  /// que está editando algo que leyó antes.
-  /// </para>
-  /// <para>
-  /// La ventana entre esta comprobación y el UPDATE la cubre EF: <c>[Timestamp]</c> mete
-  /// el rowversion en el <c>WHERE</c>, y si cambia entremedias sale
-  /// <c>DbUpdateConcurrencyException</c> → 409. Dos redes, cada una para su carrera.
-  /// </para>
+  /// Es opcional: sin <c>If-Match</c> el PATCH funciona como siempre. La ventana entre
+  /// esta comprobación y el UPDATE la cubre el <c>[Timestamp]</c> de la entidad.
   /// </remarks>
   private static void EnsureVersionMatches(IReadOnlyList<string>? clientVersions, Product existing)
   {
@@ -93,8 +79,7 @@ public sealed class ProductRules(
 
   private async Task EnsureCategoryExistsAsync(int categoryId, CancellationToken ct)
   {
-    // 400 y no 404: el recurso pedido es el producto; la categoría inexistente
-    // hace que el request sea inválido en sí mismo.
+    // 400 y no 404: el recurso pedido es el producto, no la categoría.
     if (!await categoryRepository.ExistsAsync(categoryId, ct))
       throw new BadOperationAppException($"Category with id {categoryId} does not exist.");
   }

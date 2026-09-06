@@ -23,8 +23,7 @@ public sealed class UserAdminService(
 
     var total = await userManager.Users.CountAsync(ct);
 
-    // Orden estable y explícito: sin `OrderBy`, SQL Server no garantiza el mismo orden
-    // entre páginas y un usuario puede aparecer dos veces o ninguna al pasar de página.
+    // Orden explícito: sin él, un usuario puede salir dos veces o ninguna al pasar de página.
     var users = await userManager.Users
         .AsNoTracking()
         .OrderBy(u => u.UserName)
@@ -32,9 +31,7 @@ public sealed class UserAdminService(
         .Take(query.PageSize)
         .ToListAsync(ct);
 
-    // ⚠️ Una consulta de roles por usuario: es N+1, y se acepta porque la página está
-    // acotada a 100 y esto es un panel de administración, no un endpoint caliente. Si
-    // algún día molesta, la salida es un JOIN contra UserRoles, no subir el pageSize.
+    // N+1 asumido: la página está acotada a 100 y esto es un panel, no un endpoint caliente.
     var items = new List<UserDto>(users.Count);
 
     foreach (var user in users)
@@ -60,17 +57,14 @@ public sealed class UserAdminService(
     if (!await roleManager.RoleExistsAsync(normalized))
       throw new BadOperationAppException($"Role '{role}' does not exist.");
 
-    // Idempotente: pedir un rol que ya se tiene no es un error, es que ya está como se
-    // quería. Devolver 409 aquí obligaría al cliente a consultar antes de cada asignación.
+    // Idempotente: un 409 aquí obligaría al cliente a consultar antes de cada asignación.
     if (await userManager.IsInRoleAsync(user, normalized)) return;
 
     var result = await userManager.AddToRoleAsync(user, normalized);
 
     if (!result.Succeeded) throw Failure(result);
 
-    // Auditoría: quién, a quién y cuándo. Una promoción a administrador es el cambio de
-    // permisos más grande que admite el sistema, y sin rastro no hay forma de responder
-    // "¿quién le dio admin a este?" tres meses después.
+    // Auditoría: sin rastro no hay forma de saber quién concedió un rol meses después.
     logger.LogWarning(
         "ROLE GRANTED: admin {ActingAdminId} granted role {Role} to user {UserId}",
         actingAdminId, normalized, userId);
@@ -87,14 +81,11 @@ public sealed class UserAdminService(
 
     if (normalized == Roles.Admin)
     {
-      // Regla 1: uno no se quita a sí mismo el administrador. Es el clic con el que un
-      // admin se deja fuera de su propio panel, y además el camino más rápido a dejar el
-      // sistema sin nadie que pueda arreglarlo.
+      // Uno no se quita a sí mismo el administrador: se dejaría fuera de su propio panel.
       if (userId == actingAdminId)
         throw new ConflictAppException("An administrator cannot remove their own admin role.");
 
-      // Regla 2: nunca sin administradores. Se comprueba DESPUÉS de la anterior para que
-      // el mensaje sea el que de verdad explica el rechazo.
+      // Nunca sin administradores. Va después de la regla anterior para dar el mensaje que toca.
       if ((await userManager.GetUsersInRoleAsync(Roles.Admin)).Count <= 1)
         throw new ConflictAppException("The last administrator cannot be demoted.");
     }
@@ -116,16 +107,12 @@ public sealed class UserAdminService(
     if (userId == actingAdminId)
       throw new ConflictAppException("An administrator cannot lock their own account.");
 
-    // `MaxValue` = indefinido. Identity no tiene "bloqueado para siempre": tiene una
-    // fecha de fin, y el infinito se expresa así.
+    // `MaxValue` = indefinido: Identity solo sabe de fechas de fin, no de bloqueos perpetuos.
     var result = await userManager.SetLockoutEndDateAsync(user, DateTimeOffset.MaxValue);
 
     if (!result.Succeeded) throw Failure(result);
 
-    // ⚠️ Y AQUÍ está lo que hace que bloquear signifique algo. Sin esto, la cuenta queda
-    // marcada como bloqueada y el usuario sigue dentro: su access token vale hasta que
-    // expire y —lo grave— podría seguir renovándolo indefinidamente, porque renovar no
-    // vuelve a pedir credenciales y por tanto no pasa por el bloqueo.
+    // Sin esto el bloqueo no significa nada: el usuario seguiría renovando su sesión.
     await sessions.RevokeAllSessionsAsync(userId, ct);
 
     logger.LogWarning(
@@ -141,8 +128,7 @@ public sealed class UserAdminService(
 
     if (!result.Succeeded) throw Failure(result);
 
-    // Los intentos fallidos acumulados también se limpian: si no, la cuenta recién
-    // desbloqueada se volvería a bloquear al primer error de contraseña.
+    // Sin limpiar los fallos acumulados, la cuenta se volvería a bloquear al primer error.
     await userManager.ResetAccessFailedCountAsync(user);
 
     logger.LogWarning(

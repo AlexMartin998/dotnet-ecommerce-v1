@@ -6,20 +6,19 @@ namespace ApiEcommerce.Shared.Http;
 
 
 /// <summary>
-/// Limitación de peticiones, integrada en .NET 9 (<c>System.Threading.RateLimiting</c>).
-/// No hace falta ningún paquete.
+/// Limitación de peticiones con <c>System.Threading.RateLimiting</c>, integrado en .NET 9.
 /// </summary>
 /// <remarks>
-/// Dos políticas y no una: el límite global protege la API de un cliente pesado,
-/// pero el que de verdad importa es el de <c>auth</c> — sin él, el lockout de Identity
-/// se puede sortear probando contraseñas contra <b>muchos</b> usuarios distintos,
-/// que es como se hace el password spraying.
+/// Dos políticas y no una: el límite global protege de un cliente pesado, pero el que
+/// importa es el de <c>auth</c> — sin él, el lockout de Identity se sortea probando
+/// contraseñas contra muchos usuarios distintos (password spraying).
 /// </remarks>
 public static class RateLimitPolicies
 {
   /// <summary>Política estricta para login y registro.</summary>
   public const string Auth = "auth";
 
+  /// <summary>Registra el limitador global por IP y la política <see cref="Auth"/>.</summary>
   public static IServiceCollection AddRateLimiting(
       this IServiceCollection services, IConfiguration configuration)
   {
@@ -67,18 +66,16 @@ public static class RateLimitPolicies
   }
 
   /// <summary>
-  /// Los límites se resuelven del contenedor por petición y no se capturan en un
-  /// <c>IConfiguration</c> leído al registrar: la regla del proyecto es que los servicios
-  /// reciban <c>IOptions&lt;T&gt;</c>, y así un cambio de configuración en caliente se
-  /// respeta en la siguiente partición que se cree.
+  /// Límites resueltos del contenedor por petición, como manda la regla de
+  /// <c>IOptions&lt;T&gt;</c>: así un cambio en caliente se respeta en la siguiente
+  /// partición que se cree.
   /// </summary>
   private static RateLimitOptions Limits(HttpContext context)
       => context.RequestServices.GetRequiredService<IOptions<RateLimitOptions>>().Value;
 
   /// <summary>
   /// Partición por IP remota. Detrás de un proxy hay que activar
-  /// <c>UseForwardedHeaders</c> o todas las peticiones compartirán la IP del proxy y
-  /// el límite se agotará para todo el mundo a la vez.
+  /// <c>UseForwardedHeaders</c> o todas las peticiones compartirán la IP del proxy.
   /// </summary>
   private static string ClientKey(HttpContext context)
       => context.Connection.RemoteIpAddress?.ToString() ?? "unknown";

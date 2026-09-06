@@ -7,15 +7,9 @@ namespace ApiEcommerce.Features.Catalog.Service;
 
 
 /// <summary>
-/// Servicio de categorías. <b>Compone</b> el CRUD genérico en lugar de heredarlo:
-/// las cinco operaciones se delegan tal cual y las reglas viven en
-/// <see cref="CategoryRules"/>.
+/// Servicio de categorías: compone el CRUD genérico y delega en él las cinco
+/// operaciones. Las reglas viven en <see cref="CategoryRules"/>.
 /// </summary>
-/// <remarks>
-/// Los cinco reenvíos son el precio explícito de la composición. A cambio, esta clase
-/// no tiene estado heredado que pueda romperse, y el día que Category necesite algo
-/// propio (p. ej. <c>GetWithProductCountAsync</c>) se agrega aquí sin tocar el CRUD.
-/// </remarks>
 public class CategoryService : ICategoryService
 {
   private readonly ICrudService<CategoryDto, CreateCategoryDto, UpdateCategoryDto> _crud;
@@ -53,10 +47,8 @@ public class CategoryService : ICategoryService
 
 
 /* VERSIÓN ANTERIOR — se conserva como registro de aprendizaje.
-   Escrita a mano, sin reutilizar nada: cada entidad nueva copiaba y pegaba estos
-   cinco métodos. Además lanzaba excepciones BCL (InvalidOperationException /
-   KeyNotFoundException) como señal de negocio, que el controller tenía que
-   traducir a HTTP con try/catch. Hoy: CrudService + CategoryRules + handler global.
+   CRUD copiado por entidad, con excepciones BCL como señal de negocio que el
+   controller traducía a HTTP con try/catch.
 
 public class CategoryService : ICategoryService
 {

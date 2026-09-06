@@ -16,14 +16,9 @@ namespace ApiEcommerce.Features.Catalog.Service;
 
 
 /// <summary>
-/// Servicio de productos. Compone tres colaboradores: el CRUD genérico, el
-/// repositorio propio (para las consultas de dominio) y el mapper.
+/// Servicio de productos: compone el CRUD genérico con el repositorio propio para
+/// las consultas y operaciones de dominio.
 /// </summary>
-/// <remarks>
-/// Este es justo el caso que la herencia hacía incómodo: <c>ProductService</c>
-/// necesita el CRUD <b>y</b> consultas propias <b>y</b> el mapper. Con composición
-/// cada colaborador entra por el constructor y se ve de un vistazo qué usa.
-/// </remarks>
 public class ProductService : IProductService
 {
   private readonly ICrudService<ProductDto, CreateProductDto, UpdateProductDto> _crud;
@@ -57,10 +52,8 @@ public class ProductService : IProductService
 
   // ---- CRUD: escrituras delegadas, lecturas propias -----------------------
 
-  // GetAll y GetById NO se delegan: el CRUD genérico no carga la navegación
-  // Category y ProductDto.CategoryName saldría siempre nulo. Poder sustituir dos
-  // de las cinco operaciones sin tocar el componente CRUD es justo lo que compra
-  // la composición.
+  // Las lecturas no se delegan: el CRUD genérico no carga la navegación Category y
+  // ProductDto.CategoryName saldría siempre nulo.
 
   public async Task<IEnumerable<ProductDto>> GetAllAsync(CancellationToken ct = default)
       => _mapper.Map<IEnumerable<ProductDto>>(await _repository.GetAllWithCategoryAsync(ct));
@@ -69,8 +62,6 @@ public class ProductService : IProductService
   {
     ArgumentNullException.ThrowIfNull(query);
 
-    // Igual que GetAll: se usa el método del repositorio que hace Include(Category),
-    // no el genérico, o CategoryName saldría vacío.
     var page = await _repository.GetPagedWithCategoryAsync(query.Page, query.PageSize, ct);
 
     return new PagedResult<ProductDto>(
@@ -92,8 +83,7 @@ public class ProductService : IProductService
   public Task UpdateAsync(int id, UpdateProductDto dto, CancellationToken ct = default)
       => _crud.UpdateAsync(id, dto, ct);
 
-  // Delete NO se delega tal cual: además de borrar la fila hay que borrar el archivo,
-  // o cada producto eliminado deja su imagen huérfana en disco para siempre.
+  // Delete no se delega tal cual: además de la fila hay que borrar la imagen del disco.
   public async Task DeleteAsync(int id, CancellationToken ct = default)
   {
     var product = await _repository.GetByIdAsync(id, ct)
@@ -103,8 +93,7 @@ public class ProductService : IProductService
 
     await _crud.DeleteAsync(id, ct);
 
-    // Después del borrado en base: si la fila no se pudo borrar (409 por FK, por
-    // ejemplo), el archivo debe seguir existiendo.
+    // Después del borrado en base: si la fila no se pudo borrar, el archivo debe seguir.
     await _storage.DeleteAsync(imagePath, ct);
   }
 
@@ -135,8 +124,8 @@ public class ProductService : IProductService
 
     var previous = product.ImageUrl;
 
-    // Se guarda la nueva ANTES de borrar la vieja: si la validación falla, el
-    // producto conserva la imagen que ya tenía.
+    // Se guarda la nueva antes de borrar la vieja: si la validación falla, el producto
+    // conserva la imagen que ya tenía.
     var stored = await _storage.SaveProductImageAsync(upload, ct);
 
     product.ImageUrl = stored;
@@ -155,54 +144,41 @@ public class ProductService : IProductService
 
     try
     {
-      // La atomicidad "descontar stock + emitir el evento + dejar constancia de que este
-      // intento ya se ejecutó" es una regla de NEGOCIO, así que la transacción vive aquí
-      // y no en un atributo del controller. Antes dependía de que alguien no olvidara
-      // poner [Transactional] en la acción: llamar a BuyAsync desde un job o desde otro
-      // endpoint descontaba stock sin emitir el evento, en silencio y sin error.
-      //
-      // La lambda es REPLAYABLE (relee todo lo que necesita), que es lo que exige
-      // ITransactionRunner para poder reintentar ante un fallo transitorio.
+      // Descontar stock, emitir el evento y registrar el intento son atómicos entre sí:
+      // la transacción vive aquí, y no en un atributo del controller, porque es la regla.
+      // La lambda es replayable (relee todo lo que necesita), como exige ITransactionRunner.
       return await _tx.ExecuteAsync(async token =>
       {
-        // ⚠️ Esta comprobación va DENTRO de la transacción, y ahí está toda la diferencia
-        // con la versión que vivía en Redis. La marca y el efecto se confirman juntos o
-        // no se confirman: no existe la ventana en la que la compra ocurrió y nadie la
-        // recuerda (proceso muerto entre el commit y el guardado), ni la de "el almacén
-        // no contestó, ejecuto sin garantía". Si la base no está, tampoco hay compra.
+        // Dentro de la transacción: la marca y el efecto se confirman juntos o no se
+        // confirman, así que no hay ventana en la que la compra ocurra y nadie la recuerde.
         if (await _commands.FindResultAsync<ProductDto>(intent, dto, token) is { } already)
           return new CommandOutcome<ProductDto>(already, WasReplayed: true);
 
         var product = await _repository.GetBySkuAsync(dto.SKU, token)
             ?? throw new NotFoundAppException("Product", dto.SKU);
 
-        // El descuento y la comprobación de stock ocurren en la MISMA sentencia SQL.
-        // Comprobar aquí `product.Stock < dto.Quantity` y descontar después sería
-        // read-then-write: entre las dos cosas cabe otra compra y se vende dos veces
-        // la última unidad.
+        // Comprobación y descuento van en la misma sentencia SQL: comprobar el stock aquí
+        // y descontar después sería read-then-write y vendería dos veces la última unidad.
         if (!await _repository.TryDecrementStockAsync(product.Id, dto.Quantity, token))
           throw new ConflictAppException(
               $"Insufficient stock for SKU '{product.SKU}': requested {dto.Quantity}.");
 
-        // Relectura para devolver el estado real: ExecuteUpdate no toca el change
-        // tracker, así que la instancia que ya teníamos sigue con el stock anterior.
+        // Relectura: ExecuteUpdate no toca el change tracker y la instancia que ya
+        // teníamos sigue con el stock anterior.
         var updated = await _repository.GetByIdWithCategoryAsync(product.Id, token) ?? product;
 
-        // El evento se ESCRIBE aquí y se PUBLICA después (OutboxPublisher). Publicar
-        // directo a RabbitMQ en esta línea ataría la compra a que el broker esté vivo,
-        // y dejaría anunciada una compra que todavía podría no confirmarse.
+        // El evento se escribe aquí y lo publica después OutboxPublisher: publicar a
+        // RabbitMQ en esta línea ataría la compra a que el broker esté vivo.
         await _outbox.EnqueueAsync(new ProductPurchased(
             updated.Id, updated.SKU, updated.Name, dto.Quantity, updated.Stock,
             updated.Price, buyerUserId, DateTime.Now), token);
 
         var result = _mapper.Map<ProductDto>(updated);
 
-        // Deja constancia del intento. Tampoco hace SaveChanges: lo confirma el
-        // SaveChangesAsync de abajo, junto al evento y al descuento de stock.
+        // No hace SaveChanges: lo confirma el de abajo, junto al evento y al descuento.
         _commands.Record(intent, dto, result);
 
-        // Confirma la fila del outbox y la del comando dentro de la transacción que
-        // abrió el runner. El choque de clave primaria de ExecutedCommands sale AQUÍ.
+        // El choque de clave primaria de ExecutedCommands sale aquí.
         await _repository.SaveChangesAsync(token);
 
         return new CommandOutcome<ProductDto>(result, WasReplayed: false);
@@ -210,13 +186,9 @@ public class ProductService : IProductService
     }
     catch (Exception ex) when (_commands.IsDuplicateIntent(ex))
     {
-      // Otra réplica ejecutó el MISMO intento a la vez y confirmó primero. Nuestra
-      // transacción entera se deshizo —incluido el descuento de stock—, así que no hay
-      // nada que compensar: basta con devolver lo que hizo el ganador.
-      //
-      // ⚠️ Esto no es una carrera que haya que evitar, es la carrera resolviéndose. La
-      // base bloquea a la segunda inserción en la clave hasta que la primera confirma;
-      // por eso no hacen falta ni reserva, ni TTL, ni un estado "en curso".
+      // Otra réplica ejecutó el mismo intento y confirmó primero: nuestra transacción
+      // entera se deshizo, así que no hay nada que compensar y basta devolver su
+      // resultado. La base serializa la carrera en la clave; no hace falta ni TTL ni reserva.
       var winner = await _commands.FindResultAsync<ProductDto>(intent, dto, ct)
           ?? throw new ConflictAppException(
               "A concurrent request with the same idempotency key is still in progress.");

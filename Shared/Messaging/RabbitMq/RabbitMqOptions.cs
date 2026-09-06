@@ -20,12 +20,8 @@ public sealed class RabbitMqOptions
 
   /// <summary>Cola que consume el <b>catálogo</b>.</summary>
   /// <remarks>
-  /// ⚠️ Sigue aquí solo por compatibilidad con los despliegues que ya la traen en su
-  /// configuración. <b>Un consumidor nuevo NO añade una opción aquí</b>: declara su
-  /// <see cref="EventSubscription"/> en su propio slice y se la pasa a
-  /// <c>AddEventConsumer</c>. Meter cada cola en esta clase haría que <c>Shared</c>
-  /// tuviera que conocer todos los slices, que es justo la dependencia que el vertical
-  /// slicing evita.
+  /// Sigue aquí solo por compatibilidad con los despliegues que ya la traen. Un consumidor nuevo
+  /// declara su <see cref="EventSubscription"/> en su slice y se la pasa a <c>AddEventConsumer</c>.
   /// </remarks>
   [Required]
   public string Queue { get; init; } = "apiecommerce.product-purchased";
@@ -41,47 +37,34 @@ public sealed class RabbitMqOptions
   [Range(1, 1000)]
   public ushort PrefetchCount { get; init; } = 10;
 
-  // PublishIntervalSeconds, MaxPublishAttempts y BatchSize se movieron a OutboxOptions:
-  // son del OUTBOX, que es agnóstico al broker, no de RabbitMQ. Ver Shared/Messaging/OutboxOptions.cs.
+  // PublishIntervalSeconds, MaxPublishAttempts y BatchSize viven en OutboxOptions: son del outbox,
+  // que es agnóstico al broker.
 
-  /// <summary>
-  /// Entregas antes de mandar un mensaje a la DLQ. Cuenta <b>de verdad</b>: se lee de la
-  /// cabecera <c>x-death</c> que escribe el broker al expirar el TTL de la cola de
-  /// reintento.
-  /// </summary>
+  /// <summary>Entregas antes de mandar un mensaje a la DLQ.</summary>
   /// <remarks>
-  /// Esta opción existió y <b>se quitó</b> porque documentaba algo que no ocurría: el
-  /// consumidor miraba <c>args.Redelivered</c>, que es una <i>bandera</i> del broker y no
-  /// un contador. Efectivamente eran 2 intentos y con 0 ms entre ellos, porque un
-  /// <c>requeue</c> devuelve el mensaje a la <b>cabeza</b> de la cola. Vuelve ahora que
-  /// hay un contador real detrás.
+  /// Lo cuenta la cabecera propia <see cref="RetryAttempts"/>, no una bandera del broker como
+  /// <c>args.Redelivered</c>, que no es un contador.
   /// </remarks>
   [Range(1, 20)]
   public int MaxDeliveryAttempts { get; init; } = 5;
 
   /// <summary>Espera antes de reintentar un mensaje fallido (TTL de la cola de reintento).</summary>
   /// <remarks>
-  /// Sin espera, reintentar no arregla nada: si el fallo es un timeout de la base o un
-  /// servicio saturado, los tres reintentos caen dentro del mismo incidente y se agotan
-  /// antes de que nada se haya recuperado.
+  /// Sin espera, los reintentos caen dentro del mismo incidente y se agotan antes de que nada se
+  /// haya recuperado.
   /// </remarks>
   [Range(1, 3600)]
   public int RetryDelaySeconds { get; init; } = 30;
 
+  /// <summary>Hay broker configurado.</summary>
   public bool IsEnabled => !string.IsNullOrWhiteSpace(ConnectionString);
 
   /// <summary>Dead-letter <b>heredada</b> del catálogo.</summary>
   /// <remarks>
-  /// ⚠️ No se toca ni se generaliza: las colas ya declaradas en los brokers la llevan en
-  /// su <c>x-dead-letter-exchange</c>, y redeclarar una cola con otro valor da <b>406
-  /// PRECONDITION_FAILED</b>. Los slices nuevos usan una DLX por cola
-  /// (<see cref="EventSubscription.For"/>), que además evita que el <c>fanout</c> reparta
-  /// los mensajes muertos de un slice a la DLQ del otro.
+  /// No se generaliza: las colas ya declaradas la llevan en su <c>x-dead-letter-exchange</c> y
+  /// redeclararlas con otro valor da 406. Los slices nuevos usan <see cref="EventSubscription.For"/>.
   /// </remarks>
   public string DeadLetterExchange => $"{Exchange}.dlx";
 
-  // DeadLetterQueue y RetryQueue vivían aquí. Se han movido a EventSubscription porque son
-  // de UNA cola, no del broker: con dos consumidores, estas propiedades solo podían
-  // describir a uno de los dos. Su documentación —el porqué del TTL en el nombre— se fue
-  // con ellas.
+  // DeadLetterQueue y RetryQueue viven en EventSubscription: son de UNA cola, no del broker.
 }

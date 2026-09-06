@@ -4,15 +4,15 @@ namespace ApiEcommerce.Tests.Shared.Paging;
 
 
 /// <summary>
-/// Metadatos de paginación. Son aritmética pura, y justo por eso se rompen en los
-/// BORDES: la página 0, la lista vacía, la última página exacta.
+/// Metadatos de paginación: aritmética pura, que se rompe en los bordes —página 0, lista
+/// vacía, última página exacta—.
 /// </summary>
 public class PagedResultTests
 {
   [Theory]
-  [InlineData(0, 10, 0)]    // sin resultados son 0 páginas, NO 1: un paginador con "página 1 de 1" sobre una lista vacía miente
+  [InlineData(0, 10, 0)]    // sin resultados son 0 páginas: "página 1 de 1" sobre una lista vacía miente
   [InlineData(1, 10, 1)]
-  [InlineData(10, 10, 1)]   // borde exacto: 10 de 10 es UNA página, no dos
+  [InlineData(10, 10, 1)]   // borde exacto: 10 de 10 es una página, no dos
   [InlineData(11, 10, 2)]
   [InlineData(137, 10, 14)]
   public void TotalPages_RoundsUp(int totalItems, int pageSize, int expected)
@@ -21,8 +21,8 @@ public class PagedResultTests
   [Fact]
   public void TotalPages_WithPageSizeZero_IsZeroAndDoesNotDivideByZero()
   {
-    // PageQuery lo impide con [Range], pero el record es público y no se defiende solo
-    // en ningún otro sitio: una división entera por 0 aquí sería un 500.
+    // PageQuery lo impide con [Range], pero el record es público: una división entera
+    // por 0 aquí sería un 500.
     Assert.Equal(0, new PagedResult<string>([], 1, 0, 137).TotalPages);
   }
 
@@ -44,9 +44,8 @@ public class PagedResultTests
   [Fact]
   public void Empty_KeepsTheRequestedPageAndTheRealTotal()
   {
-    // Una página fuera de rango devuelve 200 con lista vacía, no 404: el recurso
-    // (la colección) existe; lo que no hay son resultados en ESA página. Y el total
-    // real tiene que seguir viajando para que el cliente sepa a dónde volver.
+    // Fuera de rango son 200 y lista vacía, no 404: la colección existe, y el total real
+    // sigue viajando para que el cliente sepa a dónde volver.
     var empty = PagedResult<string>.Empty(page: 99, pageSize: 10, totalItems: 137);
 
     Assert.Empty(empty.Items);
@@ -64,10 +63,8 @@ public class PagedResultTests
   [InlineData(int.MaxValue, 1, int.MaxValue - 1)]
   public void Skip_NeverOverflowsIntoANegativeOffset(int page, int pageSize, int expected)
   {
-    // ⚠️ `(Page - 1) * PageSize` en `int` DESBORDA con `?page=2147483647`: el resultado es
-    // negativo y SQL Server responde «The offset specified in a OFFSET clause may not be
-    // negative» — un 500 con traza a partir de un query string, en TODOS los endpoints
-    // paginados. Lo destapó una revisión de seguridad probándolo.
+    // `(Page - 1) * PageSize` desborda en `int` con `?page=2147483647`: el offset sale
+    // negativo y SQL Server responde con un 500, en todos los endpoints paginados.
     var query = new PageQuery { Page = page, PageSize = pageSize };
 
     Assert.Equal(expected, query.Skip);

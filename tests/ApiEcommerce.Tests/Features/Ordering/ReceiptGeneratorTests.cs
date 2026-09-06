@@ -16,10 +16,8 @@ namespace ApiEcommerce.Tests.Features.Ordering;
 /// apuntando a él.
 /// </summary>
 /// <remarks>
-/// ⭐ <b>Estos tests existen porque el efecto vive FUERA del consumidor.</b> Es la lección
-/// de <c>planning/18</c>, aplicada desde el principio esta vez: mientras la generación
-/// viviera dentro de un <c>BackgroundService</c> atado a AMQP, «¿qué pasa si el almacén
-/// falla?» no se podía preguntar sin un broker delante. Aquí es un mock.
+/// El efecto vive fuera del consumidor, así que «¿qué pasa si el almacén falla?» se puede
+/// preguntar con un mock y sin broker delante.
 /// </remarks>
 public class ReceiptGeneratorTests
 {
@@ -67,8 +65,8 @@ public class ReceiptGeneratorTests
 
     await Sut(orders, documents).HandleAsync(AnEvent());
 
-    // Lo que se persiste es la CLAVE del almacén, no una ruta del disco: es lo que hace
-    // que migrar a S3 no obligue a reescribir todas las filas.
+    // Se persiste la clave del almacén y no una ruta de disco, para no atar las filas a
+    // la infraestructura de hoy.
     orders.Verify(r => r.SetReceiptAsync(7, "2026/09/abc.pdf", It.IsAny<CancellationToken>()), Times.Once);
   }
 
@@ -94,9 +92,8 @@ public class ReceiptGeneratorTests
   [Fact]
   public async Task HandleAsync_RendersFromTheDatabaseAndNotFromTheMessage()
   {
-    // El evento lleva solo el id y el número a propósito: si el documento se dibujara con
-    // lo que viaja en el mensaje habría dos fuentes de verdad para lo que se imprime, y la
-    // del mensaje puede haber quedado obsoleta esperando en la cola.
+    // Dibujar con lo que viaja en el mensaje daría dos fuentes de verdad, y la del mensaje
+    // puede haber quedado obsoleta esperando en la cola.
     var order = AnOrder();
 
     var orders = new Mock<IOrderRepository>();
@@ -118,9 +115,8 @@ public class ReceiptGeneratorTests
   [Fact]
   public async Task HandleAsync_WhenTheOrderAlreadyHasAReceipt_DoesNothing()
   {
-    // Segunda red bajo la del inbox, y NO es redundante: el inbox deduplica por MessageId,
-    // así que un replay manual desde la DLQ —que llega con otro id— regeneraría el PDF y
-    // dejaría el anterior huérfano en el almacén.
+    // No es redundante con el inbox, que deduplica por MessageId: un replay manual desde
+    // la DLQ llega con otro id y dejaría el PDF anterior huérfano.
     var orders = new Mock<IOrderRepository>();
     orders.Setup(r => r.FindWithItemsAsync(7, It.IsAny<CancellationToken>()))
           .ReturnsAsync(AnOrder(receiptKey: "2026/09/ya-existe.pdf"));
@@ -138,8 +134,8 @@ public class ReceiptGeneratorTests
   [Fact]
   public async Task HandleAsync_WhenTheOrderIsGone_DoesNotThrow()
   {
-    // Reintentar no la va a hacer aparecer: lanzar aquí gastaría los cinco intentos y
-    // acabaría en la DLQ igual, con cinco trazas de error por el camino.
+    // Reintentar no la hará aparecer: lanzar gastaría los cinco intentos y acabaría en la
+    // DLQ igual, con cinco trazas de error por el camino.
     var orders = new Mock<IOrderRepository>();
     orders.Setup(r => r.FindWithItemsAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync((Order?)null);
 
@@ -155,9 +151,8 @@ public class ReceiptGeneratorTests
   [Fact]
   public async Task HandleAsync_WhenTheStoreFails_PropagatesSoTheInboxUndoesTheMark()
   {
-    // ⭐ El test que solo se puede escribir con el efecto fuera del BackgroundService. Si
-    // se tragara la excepción, el inbox confirmaría la marca de «procesado», el mensaje se
-    // haría ack y la orden se quedaría SIN comprobante para siempre y sin reintento.
+    // Si se tragara la excepción, el inbox confirmaría la marca de «procesado» y la orden
+    // se quedaría sin comprobante para siempre y sin reintento.
     var orders = new Mock<IOrderRepository>();
     orders.Setup(r => r.FindWithItemsAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync(AnOrder());
 

@@ -5,14 +5,11 @@ using System.Text.Json;
 namespace ApiEcommerce.Tests.Integration;
 
 
-/// <summary>
-/// <c>ETag</c> / <c>If-Match</c>: el <i>lost update</i> entre dos administradores.
-/// </summary>
+/// <summary><c>ETag</c> / <c>If-Match</c>: el <i>lost update</i> entre dos administradores.</summary>
 /// <remarks>
-/// Es la carrera que <c>Product.RowVersion</c> por sí solo <b>no</b> cierra. A lee, B
-/// edita, A guarda: el PATCH de A relee la fila, así que EF compara contra el rowversion
-/// de B y todo cuadra — A pisa el cambio de B sin que nadie se entere. Lo único que rompe
-/// el empate es el token que A leyó en su GET, y ese solo puede llegar del cliente.
+/// <c>Product.RowVersion</c> por sí solo no cierra esta carrera: el PATCH de A relee la
+/// fila y EF compara contra el rowversion de B, así que cuadra y A pisa el cambio. Solo
+/// rompe el empate el token que A leyó en su GET, y ese llega del cliente.
 /// </remarks>
 [Collection(IntegrationCollection.Name)]
 public class ConcurrencyControlTests(ApiFactory factory)
@@ -76,8 +73,7 @@ public class ConcurrencyControlTests(ApiFactory factory)
   [Fact]
   public async Task WithoutIfMatchThePatchKeepsWorking()
   {
-    // La protección es OPCIONAL a propósito: exigirla rompería a todos los clientes
-    // actuales, y quien la necesita es quien sabe que está editando algo que leyó antes.
+    // La protección es opcional: exigirla rompería a todos los clientes actuales.
     using var admin = await factory.AsAdminAsync();
     var id = await CreateProductAsync(admin);
 
@@ -88,7 +84,7 @@ public class ConcurrencyControlTests(ApiFactory factory)
   [Fact]
   public async Task AMalformedIfMatchIs400AndNot500()
   {
-    // No es que la precondición falle: es que ni siquiera es un token. Sin tratarlo, el
+    // No es que la precondición falle: no es ni un token, y sin tratarlo el
     // Convert.FromBase64String lanza FormatException y sale un 500.
     using var admin = await factory.AsAdminAsync();
     var id = await CreateProductAsync(admin);

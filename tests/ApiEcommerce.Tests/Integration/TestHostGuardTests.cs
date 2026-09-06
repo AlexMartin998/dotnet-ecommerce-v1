@@ -7,25 +7,13 @@ namespace ApiEcommerce.Tests.Integration;
 
 
 /// <summary>
-/// Guarda del propio banco de pruebas: comprueba que el host de tests está montado
-/// contra lo que dice estar montado.
+/// Guarda del banco de pruebas: comprueba que el host de tests está montado contra lo que
+/// dice estar montado.
 /// </summary>
 /// <remarks>
-/// <para>
-/// No es paranoia, es una cicatriz. Con la configuración inyectada por
-/// <c>ConfigureAppConfiguration</c>, el host arrancaba con
-/// <c>NoIdempotencyStore</c> y <c>NoCacheService</c>: todos los tests de idempotencia
-/// <b>pasaban en verde sin probar absolutamente nada</b>, porque un no-op no rompe una
-/// aserción de "dos peticiones distintas dan dos resultados". Solo cayeron los dos que
-/// exigían un replay de verdad.
-/// </para>
-/// <para>
-/// ⚠️ La causa: <c>AddDistributedCaching</c> lee la configuración de forma <b>eager</b>
-/// para decidir QUÉ implementación registra, y eso ocurre mientras corre <c>Program</c>
-/// — <b>antes</b> de que se apliquen los callbacks de <c>ConfigureAppConfiguration</c>.
-/// <c>UseSetting</c> sí entra antes. Este test es la red para que no vuelva a pasar en
-/// silencio.
-/// </para>
+/// Con las implementaciones nulas registradas, los tests de idempotencia pasan en verde
+/// sin probar nada: un no-op no rompe ninguna aserción. Esto es la red para que un cambio
+/// en cómo se inyecta la configuración no vuelva a hacerlo en silencio.
 /// </remarks>
 [Collection(IntegrationCollection.Name)]
 public class TestHostGuardTests(ApiFactory factory)
@@ -40,7 +28,7 @@ public class TestHostGuardTests(ApiFactory factory)
   [Fact]
   public void TheHostRunsAgainstTheTestDatabaseAndNotTheDevelopmentOne()
   {
-    // Si esto falla, la suite está borrando y sembrando la base de trabajo del autor.
+    // Si esto falla, la suite está borrando y sembrando la base de desarrollo.
     var connectionString = factory.Services
         .GetRequiredService<IConfiguration>().GetConnectionString("ConexionSql");
 

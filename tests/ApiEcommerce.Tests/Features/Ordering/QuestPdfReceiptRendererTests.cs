@@ -6,21 +6,11 @@ using QuestPDF.Infrastructure;
 namespace ApiEcommerce.Tests.Features.Ordering;
 
 
-/// <summary>
-/// El render del comprobante. <b>Genera un PDF de verdad</b>, no comprueba llamadas.
-/// </summary>
+/// <summary>El render del comprobante. Genera un PDF de verdad, no comprueba llamadas.</summary>
 /// <remarks>
-/// <para>
-/// ⚠️ <b>Este es el test que cubre la dependencia nativa.</b> En Linux QuestPDF dibuja con
-/// SkiaSharp, que necesita <c>libfontconfig1</c>: sin ella, esto revienta. Y ese es
-/// justamente el fallo que de otra forma solo aparecería <i>dentro del contenedor</i> y
-/// mensaje a mensaje, con cinco reintentos y una DLQ por comprobante.
-/// </para>
-/// <para>
-/// La licencia se declara aquí igual que en el arranque real: QuestPDF <b>lanza al
-/// generar</b>, no al registrar, así que sin esta línea el test fallaría por un motivo que
-/// no tiene nada que ver con lo que prueba.
-/// </para>
+/// Es lo que cubre la dependencia nativa: en Linux QuestPDF dibuja con SkiaSharp, que
+/// necesita <c>libfontconfig1</c>, y sin ella el fallo solo aparecería dentro del
+/// contenedor y mensaje a mensaje. La licencia se declara aquí porque lanza al generar.
 /// </remarks>
 public class QuestPdfReceiptRendererTests
 {
@@ -66,8 +56,7 @@ public class QuestPdfReceiptRendererTests
   {
     var bytes = await RenderAsync(AnOrder());
 
-    // La firma de un PDF. Comprobar solo "hay bytes" dejaría pasar un stream vacío o el
-    // volcado de una excepción.
+    // Comprobar solo "hay bytes" dejaría pasar un stream vacío o el volcado de un error.
     Assert.Equal("%PDF", Encoding.ASCII.GetString(bytes, 0, 4));
     Assert.True(bytes.Length > 1000, $"El PDF pesa {bytes.Length} bytes, sospechosamente poco");
   }
@@ -75,9 +64,8 @@ public class QuestPdfReceiptRendererTests
   [Fact]
   public async Task RenderAsync_ReturnsTheStreamRewound()
   {
-    // ⚠️ Un stream en la última posición se copia al almacén como un fichero de CERO
-    // bytes, sin un solo error: la orden diría "comprobante disponible" y la descarga
-    // daría un PDF vacío.
+    // Un stream sin rebobinar se copia al almacén como un fichero de cero bytes sin dar
+    // ningún error: la orden diría "disponible" y la descarga daría un PDF vacío.
     await using var pdf = await new QuestPdfReceiptRenderer().RenderAsync(AnOrder());
 
     Assert.Equal(0, pdf.Position);
@@ -87,9 +75,8 @@ public class QuestPdfReceiptRendererTests
   [Fact]
   public async Task RenderAsync_EmbedsItsOwnFontSoTheOutputDoesNotDependOnTheMachine()
   {
-    // Es la razón de no pedir Calibri: QuestPDF embebe Lato en el paquete, así que el
-    // documento sale igual en local y en la imagen. Con una fuente del sistema, dos
-    // réplicas podrían producir comprobantes distintos para la misma orden.
+    // Con una fuente del sistema, dos réplicas producirían comprobantes distintos para la
+    // misma orden; Lato viene embebida en el paquete.
     var bytes = await RenderAsync(AnOrder());
     var raw = Encoding.Latin1.GetString(bytes);
 
@@ -100,8 +87,7 @@ public class QuestPdfReceiptRendererTests
   [Fact]
   public async Task RenderAsync_WithManyLines_StillProducesOneDocument()
   {
-    // Un pedido largo pagina; lo que no puede es fallar. La cabecera de la tabla se
-    // declara como Header precisamente para que se repita en cada página.
+    // Un pedido largo pagina, y la cabecera se declara como Header para que se repita.
     var bytes = await RenderAsync(AnOrder(lines: 80));
 
     Assert.Equal("%PDF", Encoding.ASCII.GetString(bytes, 0, 4));

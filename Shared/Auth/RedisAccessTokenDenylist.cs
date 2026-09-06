@@ -13,6 +13,7 @@ public sealed class RedisAccessTokenDenylist(
 {
   private readonly string _prefix = cacheOptions.Value.InstanceName + "revoked-jti:";
 
+  /// <inheritdoc />
   public async Task RevokeAsync(string tokenId, DateTime expiresAt, CancellationToken ct = default)
   {
     // Lo que le queda de vida, en UTC porque `exp` de un JWT es epoch UTC (RFC 7519).
@@ -27,16 +28,15 @@ public sealed class RedisAccessTokenDenylist(
     }
     catch (Exception ex) when (ex is not OperationCanceledException)
     {
-      // ⚠️ No se propaga: el logout ya revocó la familia en la base, que es la garantía.
-      // Lo que se pierde es que el access token actual muera en el acto, y dura como
-      // mucho `Jwt:ExpirationMinutes`. Dejar que un fallo de Redis convierta un logout
-      // correcto en un 500 sería cambiar una molestia por un error.
+      // No se propaga: el logout ya revocó la familia en la base, que es la garantía. Lo
+      // que se pierde es que este access token muera en el acto en vez de al expirar.
       logger.LogWarning(ex,
           "Could not deny-list the access token {TokenId}; the session is revoked but this token lives until it expires",
           tokenId);
     }
   }
 
+  /// <inheritdoc />
   public async Task<bool> IsRevokedAsync(string tokenId, CancellationToken ct = default)
   {
     try
@@ -45,9 +45,8 @@ public sealed class RedisAccessTokenDenylist(
     }
     catch (Exception ex) when (ex is not OperationCanceledException)
     {
-      // Ante la duda, DEJA PASAR. Corre en cada petición autenticada: fallar en cerrado
-      // aquí convierte un corte de Redis en "nadie puede usar la API", que es mucho peor
-      // que el riesgo que cubre — un token ya revocado sobreviviendo unos minutos.
+      // Ante la duda, deja pasar: fallar en cerrado convertiría un corte de Redis en
+      // «nadie puede usar la API».
       logger.LogWarning(ex, "Access token denylist unavailable; letting the request through");
       return false;
     }
@@ -58,14 +57,15 @@ public sealed class RedisAccessTokenDenylist(
 /// <summary>Null Object para cuando no hay Redis configurado.</summary>
 /// <remarks>
 /// Misma decisión que <see cref="RedisAccessTokenDenylist"/> cuando falla: nada queda
-/// revocado antes de tiempo, y la sesión se sigue cortando por la base. Sin esto, la app
-/// no arrancaría sin Redis.
+/// revocado antes de tiempo y la sesión se sigue cortando por la base.
 /// </remarks>
 public sealed class NoAccessTokenDenylist : IAccessTokenDenylist
 {
+  /// <inheritdoc />
   public Task RevokeAsync(string tokenId, DateTime expiresAt, CancellationToken ct = default)
       => Task.CompletedTask;
 
+  /// <inheritdoc />
   public Task<bool> IsRevokedAsync(string tokenId, CancellationToken ct = default)
       => Task.FromResult(false);
 }

@@ -11,40 +11,25 @@ using Serilog;
 var builder = WebApplication.CreateBuilder(args);
 
 
-// // // Logging estructurado --------------------------------------------
-// Serilog sustituye al logger por defecto: mismo ILogger<T> en el código, pero la
-// salida lleva propiedades tipadas ({Username}, {Path}...) en vez de una frase ya
-// interpolada, que es lo que hace un log consultable.
+// Logging estructurado: mismo ILogger<T>, pero la salida lleva propiedades tipadas.
 builder.Host.UseSerilog((context, configuration) => configuration
     .ReadFrom.Configuration(context.Configuration)
     .Enrich.FromLogContext()
-    // ⚠️ La plantilla NO es cosmética. La de fábrica de Serilog es
-    // `[{Timestamp} {Level}] {Message}{NewLine}{Exception}`: **no renderiza las propiedades
-    // del LogContext**, así que el CorrelationId y el TraceId se empujaban correctamente y
-    // no aparecían en ninguna línea — o sea, la única razón de existir del middleware no
-    // se cumplía. Un fallo silencioso: el mecanismo funciona, el sink no lo enseña.
+    // Plantilla propia: la de fábrica no renderiza las propiedades del LogContext.
     .WriteTo.Console(outputTemplate:
         "[{Timestamp:HH:mm:ss} {Level:u3}] [{CorrelationId}/{TraceId}] {Message:lj}{NewLine}{Exception}"));
 
-// ⚠️ El sink se declara AQUÍ y no en `Serilog:WriteTo` de appsettings. Declararlo en los
-// dos sitios NO sustituye: Serilog los suma y cada línea sale DUPLICADA.
+// El sink se declara aquí y no en `Serilog:WriteTo`: declararlo en los dos suma, no sustituye.
 
 
-// // // Add SERVICES to the container ---------------------------------
-// Tres bloques. Cada uno solo COMPONE lo que cada slice y cada pieza transversal
-// registran en SU propia carpeta (ver Shared/DependencyInjection/ServiceCollectionExtensions.cs).
-// Detrás de un proxy, sin esto: el rate limiter particiona por la IP DEL PROXY (o
-// sea, un solo cubo de 100 req/min para todo internet), los logs registran esa misma
-// IP para todo el mundo, y UseHttpsRedirection no sabe si la petición original era
-// HTTPS (hoy avisa con "Failed to determine the https port" y es un no-op).
+// Cabeceras del proxy: sin esto el rate limiter particiona por la IP del proxy y los
+// logs registran esa misma IP para todo el mundo.
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
 
-    // Vaciarlas acepta las cabeceras de CUALQUIER origen. Solo es admisible si la API
-    // no es alcanzable directamente desde fuera del proxy; si lo fuera, cualquiera
-    // podría falsear su IP y saltarse el rate limit. Declara aquí la red del proxy en
-    // cuanto la conozcas.
+    // Vaciarlas acepta las cabeceras de cualquier origen: solo vale si la API no es
+    // alcanzable sin pasar por el proxy. Declarar aquí su red en cuanto se conozca.
     options.KnownNetworks.Clear();
     options.KnownProxies.Clear();
 });
@@ -57,17 +42,11 @@ builder.Services
 var app = builder.Build();
 
 
-// // // Migraciones y datos de arranque ----------------------------------
-// Scope propio: el contenedor RAÍZ no puede resolver servicios Scoped
-// (AppDbContext, UserManager) y lanzaría en el arranque.
+// Scope propio: el contenedor raíz no puede resolver servicios Scoped.
 using (var scope = app.Services.CreateScope())
 {
-    // Sin esto, la imagen de runtime (que no lleva SDK ni dotnet-ef) arranca contra
-    // una base vacía: /health responde 200, /health/ready responde Healthy —porque
-    // AddDbContextCheck solo comprueba que se puede CONECTAR, no el esquema— y todos
-    // los endpoints devuelven 500 "Invalid object name 'Categories'".
-    // MigrateAsync además reintenta gracias a EnableRetryOnFailure, que es justo lo
-    // que hace falta cuando SQL Server todavía está arrancando.
+    // Migrar al arrancar: la imagen de runtime no lleva SDK ni dotnet-ef, y el health
+    // check solo comprueba la conexión, no el esquema.
     var db = scope.ServiceProvider.GetRequiredService<ApiEcommerce.Data.AppDbContext>();
     await db.Database.MigrateAsync();
 
@@ -75,39 +54,26 @@ using (var scope = app.Services.CreateScope())
 }
 
 
-// // // Configure the HTTP request pipeline ------------------------------
-// El orden del pipeline NO es decorativo: cada middleware solo ve lo que ocurre
-// después de él. De arriba abajo: errores → swagger → https → cors → auth → endpoints.
+// Pipeline HTTP. Cada middleware solo ve lo que ocurre después de él.
 
-// Lo PRIMERO del pipeline: reescribe la IP y el esquema a partir de las cabeceras del
-// proxy, para que todo lo que viene después (logs, rate limit, redirección) vea los
-// datos reales del cliente y no los del proxy.
+// Primero: reescribe IP y esquema desde las cabeceras del proxy, para todo lo que sigue.
 app.UseForwardedHeaders();
 
-// Justo después de resolver la IP real y ANTES de todo lo demás: cualquier línea de log
-// que se emita a partir de aquí —incluida la del handler de errores— lleva el
-// CorrelationId. Ponerlo más abajo dejaría sin identificar justamente los fallos
-// tempranos, que son los peores de diagnosticar.
+// Antes de todo lo demás: así hasta los fallos tempranos llevan CorrelationId.
 app.UseMiddleware<CorrelationIdMiddleware>();
 
-// Una línea por request con método, ruta, código y duración, en vez de las tres
-// del logger por defecto.
+// Una línea por request con método, ruta, código y duración.
 app.UseSerilogRequestLogging();
 
-// Lo más arriba posible: solo captura lo que ocurre DESPUÉS de él.
+// Lo más arriba posible: solo captura lo que ocurre después de él.
 app.UseExceptionHandler();
 
-// ⚠️ Justo DEBAJO del anterior, y el orden es lo único que lo hace funcionar. Absorbe las
-// excepciones que solo ocurren porque el cliente colgó (EF cancela el SqlCommand y
-// SqlClient lanza un SqlException, no una OperationCanceledException). El middleware de
-// diagnóstico del framework escribe su "unhandled exception" a nivel Error ANTES de
-// llamar a ningún IExceptionHandler, así que decidirlo en GlobalExceptionHandler llega
-// tarde: la línea de Error ya está escrita. Hay que interceptar antes de que le llegue.
+// Justo debajo del anterior: el diagnóstico del framework escribe su "unhandled
+// exception" a nivel Error antes de llamar a ningún IExceptionHandler, así que las
+// excepciones de cliente colgado hay que absorberlas antes de que le lleguen.
 app.UseMiddleware<ClientAbortMiddleware>();
 
-// Convierte los 401/403/404 "vacíos" que emite el framework (los que no pasan por
-// una excepción) en ProblemDetails, para que el cliente reciba SIEMPRE el mismo
-// formato de error venga de donde venga.
+// Convierte los 401/403/404 vacíos del framework en ProblemDetails.
 app.UseStatusCodePages();
 
 if (app.Environment.IsDevelopment())
@@ -126,48 +92,36 @@ if (app.Environment.IsDevelopment())
     });
 }
 
-// HSTS: le dice al navegador "a este dominio, solo HTTPS" durante N meses, así que la
-// PRIMERA petición en claro de la siguiente visita ni siquiera sale. UseHttpsRedirection
-// por sí solo no lo evita: redirige, pero esa primera petición ya viajó con la cookie o
-// el token dentro.
-//
-// ⚠️ Fuera de Development a propósito. En local se sirve HTTP y una cabecera HSTS queda
-// cacheada en el navegador para `localhost`, rompiendo cualquier otro proyecto que use
-// ese host en claro — y cuesta de diagnosticar porque el fallo aparece en otra app.
+// HSTS evita la primera petición en claro, cosa que UseHttpsRedirection ya no puede.
+// Fuera de Development a propósito: la cabecera queda cacheada para `localhost` y rompe
+// cualquier otro proyecto servido en claro en ese host.
 if (!app.Environment.IsDevelopment())
     app.UseHsts();   // max-age configurado en AddWebApi; el de fábrica son 30 días
 
 app.UseHttpsRedirection();
 
-// UseCors va ANTES de la autenticación: un preflight OPTIONS no lleva token y
-// tiene que poder responderse sin pasar por el filtro de autorización.
+// Antes de la autenticación: un preflight OPTIONS no lleva token y debe responderse igual.
 app.UseCors(CorsPolicies.Default);
 
 // Antes de auth: rechazar una avalancha es más barato que validar su token.
 app.UseRateLimiter();
 
-// Sirve wwwroot/ (las imágenes de producto). Va DESPUÉS de CORS y del rate limiter,
-// y antes de auth porque son públicas. El orden importa: UseStaticFiles es TERMINAL
-// para los archivos que sirve, así que puesto más arriba las imágenes no pasaban por
-// el limitador (descarga en bucle sin cuota) ni recibían cabeceras CORS (un <img>
-// no las necesita, pero un fetch() del front sí).
+// wwwroot/ (imágenes de producto). Es terminal para lo que sirve, así que más arriba se
+// saltaría el limitador y no recibiría cabeceras CORS; antes de auth porque son públicas.
 app.UseStaticFiles();
 
-// El orden importa: primero se averigua QUIÉN eres, después QUÉ puedes hacer.
+// Primero quién eres, después qué puedes hacer.
 app.UseAuthentication();
 app.UseAuthorization();
 
 // endpoints ----
 app.MapControllers();
 
-// Readiness: 200 solo si SQL Server y Redis responden. `/health` (liveness) lo sirve
-// HealthController y no toca ninguna dependencia externa a propósito — si la sonda de
-// vida depende de la base, una caída de la base provoca que el orquestador reinicie
-// procesos que están perfectamente sanos.
+// Readiness: 200 solo si SQL Server y Redis responden. La sonda de vida (`/health`, en
+// HealthController) no toca dependencias externas para no provocar reinicios en cascada.
 app.MapHealthChecks("/health/ready", new HealthCheckOptions
 {
-    // Filtra por tag: hoy todos los checks lo llevan, pero sin el predicado los tags
-    // eran decorativos y un check futuro sin tag entraría en readiness sin querer.
+    // Sin el predicado los tags serían decorativos y un check futuro sin tag entraría solo.
     Predicate = check => check.Tags.Contains("ready")
 });
 
@@ -175,9 +129,8 @@ app.Run();
 
 
 /// <summary>
-/// Program es una clase <b>generada</b> por las instrucciones de nivel superior, y por
-/// eso nace <c>internal</c>: <c>WebApplicationFactory&lt;Program&gt;</c> no la ve y el
-/// proyecto de tests no compila. Declararla <c>public partial</c> aquí es la forma
-/// oficial de abrirla sin tocar nada más.
+/// Punto de entrada. Se declara <c>public partial</c> porque la clase generada por las
+/// instrucciones de nivel superior es <c>internal</c> y
+/// <c>WebApplicationFactory&lt;Program&gt;</c> no la vería.
 /// </summary>
 public partial class Program;

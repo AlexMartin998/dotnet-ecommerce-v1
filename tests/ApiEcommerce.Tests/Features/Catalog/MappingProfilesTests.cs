@@ -8,8 +8,8 @@ namespace ApiEcommerce.Tests.Features.Catalog;
 
 
 /// <summary>
-/// Perfiles de AutoMapper. El PATCH parcial es donde este proyecto ya se quemó una vez,
-/// así que es donde más tests hay.
+/// Perfiles de AutoMapper. El grueso de los tests está en el PATCH parcial, que es lo
+/// más fácil de romper sin que nada avise.
 /// </summary>
 public class MappingProfilesTests
 {
@@ -20,8 +20,8 @@ public class MappingProfilesTests
   [Fact]
   public void Configuration_IsValid()
   {
-    // Detecta miembros del destino que ningún miembro del origen alimenta. Es el test
-    // que avisa cuando alguien añade una propiedad a una entidad y se olvida del perfil.
+    // Detecta miembros del destino que ningún miembro del origen alimenta: avisa cuando
+    // se añade una propiedad y se olvida el perfil.
     _mapper.ConfigurationProvider.AssertConfigurationIsValid();
   }
 
@@ -30,10 +30,9 @@ public class MappingProfilesTests
   [Fact]
   public void UpdateProduct_WithOnlyOneField_LeavesEverythingElseIntact()
   {
-    // ⚠️ EL bug que costó un 500. Con `.ForAllMembers(o => o.Condition(...))`, la
-    // Condition recibe el valor YA CONVERTIDO al tipo del destino: un `int?` nulo
-    // llegaba como 0, no se saltaba, y machacaba el campo. Con CategoryId = 0 se
-    // rompía la clave foránea y el cliente recibía un 500 sin relación aparente.
+    // `Condition` recibe el valor ya convertido al tipo del destino, así que un `int?`
+    // nulo llega como 0 y machaca el campo: con CategoryId = 0 se rompe la FK y sale un
+    // 500 sin relación aparente. Por eso el PATCH se expresa campo a campo.
     var existing = Product(categoryId: 3, stock: 10, price: 99.9m);
 
     _mapper.Map(new UpdateProductDto { Name = "Nombre nuevo" }, existing);
@@ -62,8 +61,7 @@ public class MappingProfilesTests
   [Fact]
   public void UpdateProduct_CanSetAZeroOnPurpose()
   {
-    // La otra cara: 0 SÍ tiene que poder escribirse. "No viene" es null, no 0 — un
-    // agotamiento de stock legítimo no puede quedarse sin aplicar.
+    // "No viene" es null y no 0: un agotamiento de stock legítimo tiene que aplicarse.
     var existing = Product(categoryId: 3, stock: 10, price: 99.9m);
 
     _mapper.Map(new UpdateProductDto { Stock = 0 }, existing);
@@ -74,8 +72,8 @@ public class MappingProfilesTests
   [Fact]
   public void UpdateProduct_ClearsAnOptionalFieldWithAnEmptyString()
   {
-    // Semántica documentada del PATCH: null = "no tocar", "" = "vaciar". Sin esta
-    // distinción no habría forma de borrar una descripción.
+    // Semántica del PATCH: null = "no tocar", "" = "vaciar". Sin distinguirlos no habría
+    // forma de borrar una descripción.
     var existing = Product(categoryId: 3, stock: 10, price: 99.9m);
 
     _mapper.Map(new UpdateProductDto { Description = "" }, existing);
@@ -99,8 +97,8 @@ public class MappingProfilesTests
   [Fact]
   public void WritingNeverTouchesTheAuditFields()
   {
-    // AppDbContext.SaveChangesAsync los estampa. Si el perfil los mapeara, un PATCH
-    // pisaría CreatedAt con el default de un DTO que ni siquiera tiene esa propiedad.
+    // Los estampa AppDbContext: si el perfil los mapeara, un PATCH pisaría CreatedAt con
+    // el default de un DTO que ni siquiera tiene esa propiedad.
     var created = new DateTime(2020, 1, 1);
     var existing = Product(categoryId: 3, stock: 10, price: 99.9m);
     existing.CreatedAt = created;
@@ -139,8 +137,8 @@ public class MappingProfilesTests
   [Fact]
   public void ProductToDto_WithoutTheIncludedNavigation_LeavesTheNameNullAndDoesNotThrow()
   {
-    // Es lo que pasa cuando una consulta olvida el .Include(p => p.Category). El mapeo
-    // no puede reventar por eso: sale null y se ve en la respuesta.
+    // Es lo que pasa si una consulta olvida el .Include: el mapeo no puede reventar, sale
+    // null y se ve en la respuesta.
     Assert.Null(_mapper.Map<ProductDto>(Product(categoryId: 3, stock: 10, price: 99.9m)).CategoryName);
   }
 

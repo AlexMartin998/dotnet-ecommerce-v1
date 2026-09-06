@@ -2,22 +2,13 @@ namespace ApiEcommerce.Shared.Caching;
 
 
 /// <summary>
-/// Cache de aplicación con patrón <b>cache-aside</b>: se pregunta a la cache y, si no
-/// está, se calcula el valor, se guarda y se devuelve.
+/// Cache de aplicación con patrón cache-aside: se pregunta a la cache y, si no está, se
+/// calcula el valor, se guarda y se devuelve.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Es una interfaz propia y no <c>IDistributedCache</c> directamente porque
-/// <c>IDistributedCache</c> habla en <c>byte[]</c>: cada llamante tendría que
-/// serializar a mano, y el "get, si null calcula y set" se repetiría en cada servicio.
-/// </para>
-/// <para>
-/// Se prefiere esto a <c>[ResponseCache]</c> (lo que usa el curso de referencia) por
-/// tres razones concretas: <c>ResponseCaching</c> vive en la memoria de <b>un</b>
-/// proceso (no sirve con varias réplicas), <b>no cachea nada</b> si el request lleva
-/// cabecera <c>Authorization</c>, y <b>no se puede invalidar</b> — una categoría
-/// borrada se sigue sirviendo hasta que expire el TTL.
-/// </para>
+/// Es interfaz propia y no <c>IDistributedCache</c>, que habla en <c>byte[]</c> y repetiría
+/// el «get, si null calcula y set» en cada servicio. Se prefiere a <c>[ResponseCache]</c>,
+/// que es por proceso, no cachea con <c>Authorization</c> y no se puede invalidar.
 /// </remarks>
 public interface ICacheService
 {

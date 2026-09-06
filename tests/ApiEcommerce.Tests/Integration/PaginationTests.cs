@@ -30,9 +30,8 @@ public class PaginationTests(ApiFactory factory)
   [Fact]
   public async Task APageOutOfRangeIs200WithAnEmptyList()
   {
-    // ⚠️ NO 404. El recurso —la colección— existe; lo que no hay son resultados en esa
-    // página. El código del curso devolvía 404 con la tabla vacía, que es semánticamente
-    // falso y obliga al cliente a tratar "no hay nada" como un error.
+    // No es un 404: la colección existe, lo que no hay son resultados en esa página, y un
+    // 404 obligaría al cliente a tratar "no hay nada" como un error.
     using var client = factory.Anonymous();
     var response = await client.GetAsync("/api/v1/category/paged?page=9999&pageSize=10");
 
@@ -51,8 +50,8 @@ public class PaginationTests(ApiFactory factory)
   [InlineData("?page=1&pageSize=101")]
   public async Task PaginationParametersAreBounded(string query)
   {
-    // ⚠️ El tope de pageSize no es cosmético: sin él, un ?pageSize=1000000 contra un
-    // endpoint ANÓNIMO es una denegación de servicio de una sola petición.
+    // Sin tope, un ?pageSize=1000000 contra un endpoint anónimo es una denegación de
+    // servicio de una sola petición.
     using var client = factory.Anonymous();
 
     Assert.Equal(HttpStatusCode.BadRequest,
@@ -62,8 +61,8 @@ public class PaginationTests(ApiFactory factory)
   [Fact]
   public async Task TheOrderIsStableAcrossPages()
   {
-    // Un Skip/Take sobre una consulta sin orden estable puede devolver la misma fila en
-    // dos páginas y saltarse otra. No se ve con pocos datos y es un infierno de depurar.
+    // Un Skip/Take sin orden estable puede devolver la misma fila en dos páginas y
+    // saltarse otra.
     using var admin = await factory.AsAdminAsync();
     for (var i = 0; i < 3; i++)
       await admin.PostAsJsonAsync("/api/v1/category", new { name = VersioningAndHealthTests.Unique("Order") });
@@ -78,9 +77,8 @@ public class PaginationTests(ApiFactory factory)
   [Fact]
   public async Task ThePagedProductListingBringsTheCategoryName()
   {
-    // Sin el .Include(p => p.Category), CategoryName sale null EN SILENCIO: no falla
-    // nada, simplemente el cliente recibe el campo vacío. Es el motivo de que
-    // ProductService no delegue estas dos lecturas en el CRUD genérico.
+    // Sin el .Include(p => p.Category), CategoryName sale null en silencio: es el motivo
+    // de que ProductService no delegue estas dos lecturas en el CRUD genérico.
     using var admin = await factory.AsAdminAsync();
     await AuthorizationTests.CreateProductAsync(admin, stock: 3);
 
@@ -111,20 +109,14 @@ public class PaginationTests(ApiFactory factory)
   [Fact]
   public async Task PagingThroughRowsCreatedInTheSameTickNeverRepeatsNorSkips()
   {
-    // ⭐ ⚠️ El desempate estable del orden por defecto. `CreatedAt` NO es único —lo estampa
-    // `DateTime.Now` y varias filas creadas seguidas lo comparten—, así que sin un
-    // `ThenBy` por clave primaria el orden no es total: SQL Server puede devolver las
-    // empatadas en distinto orden en cada consulta y, como cada página es un OFFSET/FETCH
-    // independiente, una fila sale en DOS páginas y otra en NINGUNA.
-    //
-    // Lo destapó la verificación de la documentación: la regla estaba escrita a mano en los
-    // repositorios que paginan de verdad y faltaba justo en el camino genérico, que es el
-    // que sirve `GET /api/v1/category/paged`.
+    // `CreatedAt` no es único, así que sin desempate por clave primaria el orden no es
+    // total: cada página es un OFFSET/FETCH independiente y una fila puede salir en dos
+    // páginas y otra en ninguna.
     using var admin = await factory.AsAdminAsync();
 
     var created = new List<int>();
 
-    // Sin await entre medias: se crean lo bastante seguidas como para compartir `CreatedAt`.
+    // Seguidas a propósito, para que compartan `CreatedAt`.
     for (var i = 0; i < 12; i++)
     {
       var response = await admin.PostAsJsonAsync("/api/v1/category",
@@ -145,7 +137,7 @@ public class PaginationTests(ApiFactory factory)
       seen.AddRange(ids);
     }
 
-    // Ni duplicados en toda la travesía, ni ninguna de las nuestras perdida por el camino.
+    // Ni duplicados en toda la travesía, ni ninguna de las nuestras perdida.
     Assert.Equal(seen.Count, seen.Distinct().Count());
     Assert.All(created, id => Assert.Contains(id, seen));
   }

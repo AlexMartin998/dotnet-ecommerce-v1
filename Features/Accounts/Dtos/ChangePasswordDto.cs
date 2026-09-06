@@ -6,17 +6,14 @@ namespace ApiEcommerce.Features.Accounts.Dtos;
 /// <summary>Cambio de contraseña del propio usuario.</summary>
 public class ChangePasswordDto
 {
-  /// <summary>
-  /// La contraseña actual. <b>Se exige siempre</b>, aunque el usuario ya esté autenticado.
-  /// </summary>
+  /// <summary>La contraseña actual. Se exige siempre, aunque ya esté autenticado.</summary>
   /// <remarks>
-  /// Sin ella, quien se siente un minuto delante de una sesión abierta puede cambiar la
-  /// contraseña y quedarse con la cuenta. Un access token demuestra que <i>alguien</i>
-  /// entró hace un rato, no que quien está ahora sea el dueño.
+  /// Sin ella, quien alcance una sesión abierta un minuto podría quedarse con la cuenta.
   /// </remarks>
   [Required]
   public string CurrentPassword { get; set; } = string.Empty;
 
+  /// <summary>La contraseña nueva. Debe cumplir además la política de Identity.</summary>
   [Required]
   [MinLength(8)]
   [MaxLength(128)]

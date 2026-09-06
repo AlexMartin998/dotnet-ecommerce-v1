@@ -8,26 +8,16 @@ namespace ApiEcommerce.Shared.Persistence;
 
 
 /// <summary>
-/// Registro de la capa de persistencia. Vive <b>junto al <see cref="AppDbContext"/></b>
-/// que registra: añadir algo a esta capa toca una sola carpeta.
+/// Registro de la capa de persistencia. Vive junto al <see cref="AppDbContext"/> que
+/// registra, para que añadir algo a esta capa toque una sola carpeta.
 /// </summary>
 public static class PersistenceExtensions
 {
   /// <summary>EF Core + SQL Server, con reintentos ante fallos transitorios.</summary>
   /// <remarks>
-  /// <para>
-  /// <b><c>EnableRetryOnFailure</c> no es opcional.</b> Sin él,
-  /// <c>Database.CreateExecutionStrategy()</c> devuelve una estrategia
-  /// <i>no reintentante</i>, y eso deja sin efecto el
-  /// <c>Shared/Db/TransactionalAttribute</c>, que está escrito precisamente para
-  /// sobrevivir a un corte transitorio. Contra un SQL Server en contenedor o
-  /// gestionado, cada micro-corte de red se convertía en un 500.
-  /// </para>
-  /// <para>
-  /// Contrapartida a conocer: con una estrategia reintentante, EF <b>prohíbe</b>
-  /// abrir una transacción a mano fuera de <c>strategy.ExecuteAsync(...)</c>.
-  /// El <c>[Transactional]</c> ya lo hace así; cualquier transacción nueva también debe.
-  /// </para>
+  /// <c>EnableRetryOnFailure</c> no es opcional: sin él, <c>CreateExecutionStrategy()</c>
+  /// devuelve una estrategia no reintentante y <c>[Transactional]</c> queda sin efecto. A
+  /// cambio, EF prohíbe abrir transacciones fuera de <c>strategy.ExecuteAsync(...)</c>.
   /// </remarks>
   public static IServiceCollection AddPersistence(
       this IServiceCollection services, IConfiguration configuration)
@@ -40,13 +30,8 @@ public static class PersistenceExtensions
                 maxRetryDelay: TimeSpan.FromSeconds(5),
                 errorNumbersToAdd: null)));
 
-    // Los datos de arranque son de esta capa: DataSeeder vive aquí al lado.
-    //
-    // La validación es CONDICIONAL: solo se exige contraseña de admin si el seeding
-    // está encendido. Con `[Required]` en la propiedad, un despliegue con
-    // `Seed__Enabled=false` (lo normal en producción, sin contraseña definida) moría
-    // al arrancar en bucle, porque leer .Value valida antes de que nadie pueda mirar
-    // el flag.
+    // La validación del seeding es condicional: con `[Required]` en la propiedad, un
+    // despliegue con `Seed__Enabled=false` moría al arrancar en bucle.
     services.AddOptions<SeedOptions>()
         .Bind(configuration.GetSection(SeedOptions.SectionName))
         .ValidateDataAnnotations()
@@ -58,19 +43,16 @@ public static class PersistenceExtensions
                   "Seed:AdminEmail must be a valid address when Seed:Enabled is true")
         .ValidateOnStart();
 
-    // Genérico ABIERTO: permite inyectar IBaseRepository<X> sin escribir un repositorio
-    // específico. Es mecanismo transversal, no de ningún slice; los repositorios propios
-    // de cada contexto acotado se registran en su AddXxxFeature().
+    // Genérico abierto: permite inyectar IBaseRepository<X> sin escribir un repositorio
+    // específico. Los repositorios propios de cada slice se registran en su AddXxxFeature().
     services.AddScoped(typeof(IBaseRepository<>), typeof(BaseRepository<>));
 
     // Scoped: comparte el AppDbContext del request, que es lo que hace que la
     // transacción cubra al repositorio y al outbox a la vez.
     services.AddScoped<ITransactionRunner, TransactionRunner>();
 
-    // Scoped y aquí, no en AddDistributedCaching: es la GARANTÍA de idempotencia y vive
-    // en la base de datos, no en la cache. Registrarla junto a Redis daría a entender que
-    // se apaga cuando no hay Redis — y es justo al revés: la marca se escribe en la misma
-    // transacción que el efecto, así que no hay nada que apagar.
+    // Aquí y no en AddDistributedCaching: es la garantía de idempotencia y vive en la
+    // base, así que no se apaga cuando no hay Redis.
     services.AddScoped<ICommandLog, CommandLog>();
 
     return services;

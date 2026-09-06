@@ -4,10 +4,8 @@ namespace ApiEcommerce.Exceptions;
 
 
 /// <summary>
-/// 422 — validación de <b>negocio</b> con detalle por campo. No sustituye a las
-/// DataAnnotations del DTO (esas producen un 400 vía <c>ValidationProblem(ModelState)</c>);
-/// es para reglas que solo se pueden evaluar contra la base y que conviene devolver
-/// agrupadas por campo.
+/// 422 — validación de negocio con detalle por campo, para reglas que solo se pueden
+/// evaluar contra la base. Las DataAnnotations del DTO siguen dando un 400.
 /// </summary>
 public sealed class ValidationAppException(IReadOnlyDictionary<string, string[]> errors)
     : AppException("validation_error", "One or more business validation rules failed.", HttpStatusCode.UnprocessableEntity)

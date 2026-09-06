@@ -9,8 +9,8 @@ namespace ApiEcommerce.Tests.Features.Catalog;
 
 
 /// <summary>
-/// El decorador de cache. Lo que hay que fijar no es "cachea", es <b>cuándo invalida</b>:
-/// ahí es donde viven los bugs de cache que se manifiestan como datos rancios eternos.
+/// El decorador de cache. Lo que se fija no es que cachee sino cuándo invalida, que es
+/// donde viven los datos rancios eternos.
 /// </summary>
 public class CachedCategoryServiceTests
 {
@@ -31,16 +31,14 @@ public class CachedCategoryServiceTests
 
     await Sut().GetAllAsync();
 
-    // La clave que se LEE tiene que ser exactamente la que luego se invalida. Que
-    // ambas salgan de CacheKeys es lo que lo garantiza; el test lo fija.
+    // La clave que se lee tiene que ser exactamente la que luego se invalida.
     _cache.VerifyAll();
   }
 
   [Fact]
   public async Task GetPagedAsync_DoesNotTouchTheCache()
   {
-    // Decisión explícita: cada combinación page/pageSize sería una clave que ninguna
-    // invalidación conoce. Si alguien "mejora" esto cacheando páginas, este test cae.
+    // Cada combinación page/pageSize sería una clave que ninguna invalidación conoce.
     _inner.Setup(s => s.GetPagedAsync(It.IsAny<PageQuery>(), It.IsAny<CancellationToken>()))
           .ReturnsAsync(PagedResult<CategoryDto>.Empty(1, 10));
 
@@ -69,9 +67,8 @@ public class CachedCategoryServiceTests
   [Fact]
   public async Task WhenTheInnerServiceThrows_TheCacheIsNotInvalidated()
   {
-    // ⚠️ El orden importa en las dos direcciones. Invalidar ANTES de escribir tira una
-    // cache que sigue siendo válida cuando la escritura falla (409 por duplicado, 404…),
-    // y encima repuebla con los datos viejos en la siguiente lectura.
+    // Invalidar antes de escribir tira una cache que sigue siendo válida cuando la
+    // escritura falla, y la repuebla con los datos viejos en la siguiente lectura.
     _inner.Setup(s => s.CreateAsync(It.IsAny<CreateCategoryDto>(), It.IsAny<CancellationToken>()))
           .ThrowsAsync(new ConflictAppException("ya existe"));
 
@@ -84,8 +81,8 @@ public class CachedCategoryServiceTests
   [Fact]
   public async Task UpdateAsync_InvalidatesBothTheItemAndTheCollection()
   {
-    // Solo la clave del item deja el listado sirviendo el nombre viejo; solo la del
-    // listado deja el GET por id rancio. Hay que tirar las dos.
+    // Solo el item deja el listado con el nombre viejo; solo el listado deja rancio el
+    // GET por id.
     await Sut().UpdateAsync(7, new UpdateCategoryDto { Name = "Snacks" });
 
     _cache.Verify(c => c.RemoveAsync(

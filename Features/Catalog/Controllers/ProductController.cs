@@ -13,23 +13,14 @@ using ApiEcommerce.Features.Catalog.Service;
 namespace ApiEcommerce.Features.Catalog.Controllers;
 
 
+/// <summary>Endpoints de productos: CRUD, búsqueda, imagen y compra.</summary>
 [ApiController]
 [ApiVersion("1.0")]
 [Route("api/v{version:apiVersion}/[controller]")] // api/v1/product
 [Produces("application/json")]
-// Cerrado por defecto: sin ningún atributo, una acción de este controller exige
-// estar autenticado. Los GET públicos se abren con [AllowAnonymous] y las
-// escrituras se restringen con [Authorize(Roles = ...)] una a una.
-//
-// OJO con la semántica de ASP.NET Core: varios [Authorize] se COMBINAN (AND), no se
-// sobreescriben. Poner [Authorize(Roles = "admin")] en la clase y [Authorize] en una
-// acción NO relaja nada: la acción seguiría exigiendo el rol admin. El único atributo
-// que gana sobre la clase es [AllowAnonymous]. Por eso la clase lleva el requisito
-// más DÉBIL (estar autenticado) y cada acción añade el suyo.
-//
-// La compra es justo el caso que obliga a este diseño: solo pide estar autenticado,
-// con cualquier rol. Exigir admin para comprar —como hacía el código de referencia—
-// no tiene sentido en una tienda.
+// Cerrado por defecto. Varios [Authorize] se combinan (AND) y solo [AllowAnonymous]
+// gana sobre la clase, así que aquí va el requisito más débil (estar autenticado) y
+// cada acción añade el suyo.
 [Authorize]
 public class ProductController : ControllerBase
 {
@@ -74,8 +65,7 @@ public class ProductController : ControllerBase
     {
         var product = await _service.GetByIdAsync(id, ct);
 
-        // ETag: la versión del recurso, para que el cliente pueda devolverla en If-Match
-        // y no pisar el cambio de otro. Entre comillas porque el RFC 9110 lo exige.
+        // Entre comillas porque el RFC 9110 lo exige para un ETag.
         if (product.RowVersion is not null)
             Response.Headers.ETag = $"\"{product.RowVersion}\"";
 
@@ -105,17 +95,14 @@ public class ProductController : ControllerBase
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
-    // La respuesta central de If-Match, y el 400 del token ilegible. Sin declararlas,
-    // Swagger no documenta lo único que un cliente necesita saber para usar la feature.
     [ProducesResponseType(StatusCodes.Status412PreconditionFailed)]
     public async Task<IActionResult> UpdateProduct(int id, [FromBody] UpdateProductDto dto, CancellationToken ct)
     {
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
-        // La versión viaja por cabecera, no en el cuerpo: es una precondición de HTTP.
-        // Se rellena aquí para que el servicio y las reglas no tengan que conocer
-        // HttpContext. Es OPCIONAL: sin If-Match, el PATCH se comporta como siempre.
+        // Se rellena aquí para que el servicio no conozca HttpContext. Es opcional:
+        // sin If-Match el PATCH se comporta como siempre.
         dto.IfMatch = IfMatchTags();
 
         await _service.UpdateAsync(id, dto, ct);
@@ -145,7 +132,7 @@ public class ProductController : ControllerBase
         return Ok(result);
     }
 
-    // Sin resultados devuelve 200 con [], no 404 (regla 7 de 04-error-handling.md)
+    /// <summary>Búsqueda por nombre. Sin resultados devuelve 200 con lista vacía, no 404.</summary>
     [AllowAnonymous]
     [HttpGet("search", Name = "SearchProducts")]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -158,10 +145,8 @@ public class ProductController : ControllerBase
 
     /// <summary>Sube o reemplaza la imagen del producto.</summary>
     /// <remarks>
-    /// <c>[Consumes]</c> es explícito para que Swagger pinte el selector de archivo y
-    /// para que un cliente que mande JSON reciba un 415 claro en vez de un 400 raro.
-    /// El <c>[RequestSizeLimit]</c> corta la petición <b>antes</b> de leerla entera:
-    /// validar el tamaño solo después de haber recibido 500 MB no protege de nada.
+    /// <c>[Consumes]</c> hace que un cliente que mande JSON reciba un 415 claro, y
+    /// <c>[RequestSizeLimit]</c> corta la petición antes de leerla entera.
     /// </remarks>
     [Authorize(Roles = Roles.Admin)]
     [HttpPost("{id:int}/image", Name = "SetProductImage")]
@@ -178,8 +163,7 @@ public class ProductController : ControllerBase
         if (file is null || file.Length == 0)
             return ValidationProblem("A file is required.");
 
-        // El controller adapta el tipo del framework (IFormFile) al del dominio
-        // (FileUpload): el servicio no debe conocer ASP.NET Core.
+        // IFormFile se adapta a FileUpload: el servicio no debe conocer ASP.NET Core.
         await using var content = file.OpenReadStream();
 
         var result = await _service.SetImageAsync(
@@ -188,16 +172,11 @@ public class ProductController : ControllerBase
         return Ok(result);
     }
 
-    /// <summary>Descuenta stock por SKU.</summary>
-    // Sin atributo: hereda el [Authorize] de la clase = cualquier usuario autenticado.
+    /// <summary>Descuenta stock por SKU. Hereda el [Authorize] de la clase: cualquier usuario autenticado.</summary>
     [HttpPost("buy", Name = "BuyProduct")]
-    // ATAJO, no la garantía: responde un reintento sin tocar la base y frena una tormenta
-    // de duplicados antes de que se apile sobre la misma fila. Si Redis no contesta, esto
-    // se salta y no pasa nada: quien garantiza que no se compra dos veces es el servicio,
-    // que escribe la marca en la MISMA transacción que el descuento de stock.
+    // Atajo, no la garantía: corta el reintento sin tocar la base. Quien garantiza que no
+    // se compra dos veces es ProductService, que abre además su propia transacción.
     [Idempotent]
-    // Sin [Transactional]: la transacción la abre ProductService con ITransactionRunner,
-    // que sí es compatible con la estrategia de reintentos de EF.
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -208,16 +187,13 @@ public class ProductController : ControllerBase
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
-        // El controller es quien traduce el protocolo al dominio: la cabecera del cliente
-        // se convierte aquí en una intención, y el servicio ya no sabe que existe HTTP.
+        // La cabecera de idempotencia se traduce aquí a una intención de dominio.
         var intent = HttpContext.CommandIntentFor("catalog.buy-product");
 
         // SKU inexistente -> 404 ; stock insuficiente -> 409 ; clave reusada -> 422
         var outcome = await _service.BuyAsync(dto, intent, User.GetUserId(), ct);
 
-        // El servicio reporta un hecho ("esto ya estaba ejecutado") y el adaptador lo
-        // traduce al protocolo. Así la cabecera marca TODOS los replays y no solo los
-        // que resuelve el atajo de Redis.
+        // Marca todos los replays, no solo los que resuelve el atajo de Redis.
         if (outcome.WasReplayed)
             Response.Headers[IdempotentAttribute.ReplayedHeader] = "true";
 
@@ -225,31 +201,19 @@ public class ProductController : ControllerBase
     }
 
     /// <summary>
-    /// Lee <c>If-Match</c> y le quita el envoltorio del RFC (comillas y el prefijo
-    /// <c>W/</c> de las etiquetas débiles).
+    /// Lee <c>If-Match</c> y devuelve los tokens fuertes ya sin comillas.
     /// </summary>
     /// <remarks>
-    /// Sin quitarlo, el token no casaría nunca con el de la base y todo PATCH con
-    /// <c>If-Match</c> devolvería 412 — un fallo especialmente desagradable porque parece
-    /// un conflicto real.
+    /// Se parsea con el tipo del framework porque la cabecera admite una lista y la
+    /// precondición se cumple si alguna etiqueta casa.
     /// </remarks>
     private IReadOnlyList<string>? IfMatchTags()
     {
-        // ⚠️ Se parsea con el tipo del framework y no a mano. `If-Match` admite una LISTA
-        // (`If-Match: "a", "b"`) y la precondición se cumple si ALGUNA casa; tratarlo como
-        // un token único devolvía 400 a un cliente conforme —y a cualquiera que mandara la
-        // cabecera dos veces, porque StringValues las une con coma—.
-        //
-        // El `TrimStart('W', '/')` anterior además era una trampa latente: con un ETag sin
-        // comillas que empezara por 'W' o '/' se comía caracteres del token. Hoy no podía
-        // pasar (el base64 de un rowversion empieza siempre por 'A'), pero dependía de un
-        // detalle del formato del dato, no del código.
         if (!EntityTagHeaderValue.TryParseList(Request.Headers.IfMatch, out var tags) || tags is null)
             return null;
 
         var strong = tags
-            // El RFC 9110 §13.1.1 exige comparación FUERTE en If-Match: un validador débil
-            // (`W/"..."`) no puede satisfacer la precondición. Antes se aceptaba.
+            // RFC 9110 §13.1.1: If-Match exige comparación fuerte, un W/"..." no vale.
             .Where(tag => !tag.IsWeak && tag.Tag.HasValue && tag.Tag != "*")
             .Select(tag => tag.Tag.Value!.Trim('"'))
             .ToList();

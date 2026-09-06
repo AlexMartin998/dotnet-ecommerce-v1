@@ -5,13 +5,10 @@ using System.Text.Json;
 namespace ApiEcommerce.Tests.Integration;
 
 
-/// <summary>
-/// Administración de cuentas: roles y bloqueo.
-/// </summary>
+/// <summary>Administración de cuentas: roles y bloqueo.</summary>
 /// <remarks>
-/// Lo que más importa aquí no son los caminos felices sino las <b>reglas duras</b>: las
-/// que impiden que un clic deje el sistema sin nadie que pueda administrarlo. Son
-/// exactamente las que un refactor descuidado se lleva por delante sin que nada más falle.
+/// Lo que importa son las reglas duras: las que impiden que un clic deje el sistema sin
+/// nadie que pueda administrarlo.
 /// </remarks>
 [Collection(IntegrationCollection.Name)]
 public class UserAdminTests(ApiFactory factory)
@@ -31,8 +28,7 @@ public class UserAdminTests(ApiFactory factory)
     Assert.True(page.GetProperty("items").GetArrayLength() <= 5);
     Assert.True(page.GetProperty("totalItems").GetInt32() >= 1);
 
-    // El DTO no tiene dónde meter una credencial, pero es justo el descuido que hay que
-    // impedir que vuelva: un campo añadido "por comodidad" y ya está publicado.
+    // Un campo añadido al DTO "por comodidad" bastaría para publicar una credencial.
     Assert.DoesNotContain("passwordHash", body, StringComparison.OrdinalIgnoreCase);
     Assert.DoesNotContain("securityStamp", body, StringComparison.OrdinalIgnoreCase);
   }
@@ -54,8 +50,7 @@ public class UserAdminTests(ApiFactory factory)
 
     Assert.Equal(HttpStatusCode.NoContent, (await Grant(admin, id, "admin")).StatusCode);
 
-    // Otra vez: no es un error, es que ya está como se quería. Un 409 aquí obligaría al
-    // cliente a consultar antes de cada asignación.
+    // Repetir no es un error: un 409 obligaría a consultar antes de cada asignación.
     Assert.Equal(HttpStatusCode.NoContent, (await Grant(admin, id, "admin")).StatusCode);
 
     Assert.Contains("admin", await RolesOf(admin, id));
@@ -64,8 +59,7 @@ public class UserAdminTests(ApiFactory factory)
   [Fact]
   public async Task AnUnknownRoleIsRejected()
   {
-    // Identity crearía el rol al vuelo si se le dejara, y acabaríamos con roles fantasma
-    // que no protegen nada porque ningún [Authorize] los nombra.
+    // Identity crearía el rol al vuelo, y un rol que ningún [Authorize] nombra no protege.
     using var admin = await factory.AsAdminAsync();
     var (_, id) = await NewUserAsync();
 
@@ -78,7 +72,7 @@ public class UserAdminTests(ApiFactory factory)
   [Fact]
   public async Task AnAdministratorCannotRemoveTheirOwnAdminRole()
   {
-    // ⭐ REGLA DURA. Es el clic con el que un admin se deja fuera de su propio panel.
+    // Es el clic con el que un admin se deja fuera de su propio panel.
     using var admin = await factory.AsAdminAsync();
 
     var me = await MyIdAsync(admin);
@@ -94,9 +88,8 @@ public class UserAdminTests(ApiFactory factory)
   [Fact]
   public async Task TheLastAdministratorCannotBeDemoted()
   {
-    // ⭐ REGLA DURA. Se prueba con un admin RECIÉN creado al que se le quita el rol: como
-    // el sembrado sigue siendo admin, no es el último y la operación debe pasar. Lo que
-    // fija el test es que la regla cuenta admins de verdad y no rechaza siempre.
+    // Con el admin sembrado todavía en pie, este no es el último y la operación pasa: lo
+    // que se fija es que la regla cuenta admins de verdad y no rechaza siempre.
     using var admin = await factory.AsAdminAsync();
     var (_, id) = await NewUserAsync();
 
@@ -111,8 +104,7 @@ public class UserAdminTests(ApiFactory factory)
   [Fact]
   public async Task AnAdministratorCannotLockThemselves()
   {
-    // ⭐ REGLA DURA, y la más fácil de olvidar: bloquearse a uno mismo deja el panel
-    // inaccesible para su propio dueño.
+    // Bloquearse a uno mismo deja el panel inaccesible para su propio dueño.
     using var admin = await factory.AsAdminAsync();
 
     var me = await MyIdAsync(admin);
@@ -124,9 +116,8 @@ public class UserAdminTests(ApiFactory factory)
   [Fact]
   public async Task LockingAnAccountAlsoKillsItsOpenSessions()
   {
-    // ⭐ Sin esto, bloquear una cuenta NO SIRVE DE NADA: el usuario sigue dentro con su
-    // access token y —lo grave— podría seguir renovándolo indefinidamente, porque renovar
-    // no vuelve a pedir credenciales.
+    // Sin esto bloquear no sirve de nada: renovar no vuelve a pedir credenciales, así que
+    // el usuario seguiría dentro indefinidamente.
     using var admin = await factory.AsAdminAsync();
     var (victim, id) = await NewUserAsync();
 
@@ -160,7 +151,7 @@ public class UserAdminTests(ApiFactory factory)
     var blocked = await anonymous.PostAsJsonAsync("/api/v1/auth/login",
         new { username, password = NewUserPassword });
 
-    // 403 y no 401: la contraseña es correcta, lo que pasa es que la cuenta está cerrada.
+    // 403 y no 401: la contraseña es correcta, la cuenta está cerrada.
     Assert.Equal(HttpStatusCode.Forbidden, blocked.StatusCode);
 
     Assert.Equal(HttpStatusCode.NoContent,

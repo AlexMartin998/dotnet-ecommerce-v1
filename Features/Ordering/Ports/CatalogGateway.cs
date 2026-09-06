@@ -4,13 +4,10 @@ namespace ApiEcommerce.Features.Ordering.Ports;
 
 
 /// <summary>
-/// Adaptador contra el catálogo. <b>Es el único punto de todo el slice que conoce
-/// <c>Catalog</c></b>.
+/// Adaptador contra el catálogo. Es el único punto del slice que conoce <c>Catalog</c>.
 /// </summary>
 /// <remarks>
-/// Si mañana el catálogo es otro servicio, lo que cambia es esta clase —pasaría a hacer
-/// una llamada HTTP o a publicar un comando— y ni el servicio de órdenes ni el controller
-/// se enteran. Esa es toda la razón de que exista el puerto.
+/// Si el catálogo pasa a ser otro servicio, solo cambia esta clase.
 /// </remarks>
 public sealed class CatalogGateway(IProductRepository products) : ICatalogGateway
 {
@@ -21,12 +18,10 @@ public sealed class CatalogGateway(IProductRepository products) : ICatalogGatewa
 
     if (product is null) return null;
 
-    // El descuento y la comprobación ocurren en la MISMA sentencia SQL: entre comprobar
-    // y descontar cabe otra compra, y se vendería dos veces la última unidad.
+    // Comprobar y descontar van en la misma sentencia SQL: entremedias cabe otra compra.
     if (!await products.TryDecrementStockAsync(product.Id, quantity, ct)) return null;
 
-    // Se copia lo que la orden tiene que congelar. A partir de aquí, que el producto
-    // cambie de precio o de nombre no altera esta compra.
+    // Se copia lo que la orden congela: a partir de aquí el producto puede cambiar.
     return new OrderableItem(product.Id, product.SKU, product.Name, product.Price);
   }
 }

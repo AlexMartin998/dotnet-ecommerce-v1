@@ -5,7 +5,7 @@ using Microsoft.Extensions.Options;
 namespace ApiEcommerce.Tests.Integration;
 
 
-/// <summary>Arranque con el seeding APAGADO y sin contraseña de admin, como en producción.</summary>
+/// <summary>Arranque con el seeding apagado y sin contraseña de admin, como en producción.</summary>
 public sealed class ProductionLikeFactory : ApiFactory
 {
   protected override IDictionary<string, string?> Overrides => new Dictionary<string, string?>
@@ -28,16 +28,11 @@ public sealed class NoJwtSecretFactory : ApiFactory
 }
 
 
-/// <summary>
-/// El arranque. Estos dos tests cubren un P0 real y su reverso.
-/// </summary>
+/// <summary>El arranque: lo que debe tolerar y lo que debe impedir.</summary>
 /// <remarks>
-/// El P0: un <c>[Required]</c> sobre <c>SeedOptions.AdminPassword</c> se validaba
-/// <b>siempre que alguien leyera <c>.Value</c></b>, aunque el seeding estuviera apagado.
-/// Un despliegue en producción sin esa variable moría con
-/// <c>OptionsValidationException</c> y, con <c>restart: unless-stopped</c>, entraba en
-/// <b>crash-loop</b>. La lección: una regla CONDICIONAL no se expresa con un atributo,
-/// va en <c>.Validate(...)</c>.
+/// Una regla condicional no se expresa con un atributo sino con <c>.Validate(...)</c>: un
+/// <c>[Required]</c> sobre <c>SeedOptions.AdminPassword</c> se valida aunque el seeding
+/// esté apagado, y en producción eso es un crash-loop al arrancar.
 /// </remarks>
 [Collection(IntegrationCollection.Name)]
 public class StartupTests
@@ -48,16 +43,15 @@ public class StartupTests
     await using var factory = new ProductionLikeFactory();
     using var client = factory.Anonymous();
 
-    // Que responda es todo el test: antes ni llegaba a levantar.
+    // Que responda es todo el test: lo que se comprueba es que llega a levantar.
     Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
   }
 
   [Fact]
   public async Task ItRefusesToStartWithoutASigningKey()
   {
-    // El reverso, y no es simetría: una clave ausente NO puede degradar en abierto.
-    // Sin `ValidateOnStart` el proceso arrancaría tan feliz y el fallo aparecería en el
-    // primer login — o peor, firmaría con una clave vacía.
+    // Una clave ausente no puede degradar en abierto: sin `ValidateOnStart` el proceso
+    // arranca y el fallo aparece en el primer login, o firma con una clave vacía.
     await using var factory = new NoJwtSecretFactory();
 
     var exception = Record.Exception(() => factory.Anonymous());

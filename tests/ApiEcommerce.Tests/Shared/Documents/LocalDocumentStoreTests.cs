@@ -9,13 +9,11 @@ namespace ApiEcommerce.Tests.Shared.Documents;
 
 
 /// <summary>
-/// El almacén de documentos <b>privados</b>: comprobantes que llevan el nombre del
-/// cliente, su dirección y lo que pagó.
+/// El almacén de documentos privados: comprobantes con nombre, dirección e importe.
 /// </summary>
 /// <remarks>
-/// Cada test de aquí cubre una decisión de diseño con consecuencias, no una comprobación
-/// de formulario: que la clave no se pueda adivinar, que no se pueda salir de la raíz, y
-/// que «no está» sea una condición tratable y no una excepción.
+/// Cubre las tres decisiones que lo sostienen: clave no adivinable, imposible salir de la
+/// raíz, y «no está» como condición tratable en vez de excepción.
 /// </remarks>
 public sealed class LocalDocumentStoreTests : IDisposable
 {
@@ -65,9 +63,8 @@ public sealed class LocalDocumentStoreTests : IDisposable
   [Fact]
   public async Task SaveAsync_WritesOutsideAnyPubliclyServedFolder()
   {
-    // ⚠️ La razón de que este almacén exista aparte de IFileStorage. Si el fichero
-    // acabara bajo wwwroot/, UseStaticFiles lo serviría a quien adivinara la ruta y las
-    // tres barreras de acceso se quedarían en dos.
+    // Es la razón de que este almacén exista aparte de IFileStorage: bajo wwwroot/,
+    // UseStaticFiles serviría el comprobante a quien adivinara la ruta.
     var saved = await Sut().SaveAsync(Pdf());
 
     var written = Directory.GetFiles(_root, "*.pdf", SearchOption.AllDirectories);
@@ -88,9 +85,8 @@ public sealed class LocalDocumentStoreTests : IDisposable
   [Fact]
   public async Task SaveAsync_GivesEveryDocumentAnUnpredictableKey()
   {
-    // La clave NO se deriva de la orden ni del usuario: si fuera deducible, cualquier
-    // despiste futuro en el control de acceso pasaría de filtrar un documento a filtrarlos
-    // todos.
+    // Si la clave fuera deducible, un despiste en el control de acceso pasaría de filtrar
+    // un documento a filtrarlos todos.
     var store = Sut();
 
     var keys = new HashSet<string>();
@@ -110,17 +106,15 @@ public sealed class LocalDocumentStoreTests : IDisposable
   [InlineData("")]
   public async Task OpenAsync_WithAKeyThatEscapesTheRoot_ReturnsNull(string key)
   {
-    // La clave viene de la base, pero basta una fila manipulada, una migración descuidada
-    // o un endpoint futuro que la acepte del cliente. Se compara la ruta ya
-    // canonicalizada: filtrar por la cadena ".." no cubre rutas absolutas.
+    // Se compara la ruta ya canonicalizada: filtrar por la cadena ".." no cubre rutas
+    // absolutas, y basta una fila manipulada para que la clave no sea de fiar.
     Assert.Null(await Sut().OpenAsync(key));
   }
 
   [Fact]
   public async Task OpenAsync_WithASiblingFolderThatSharesThePrefix_ReturnsNull()
   {
-    // El separador final del chequeo es lo que impide que "/tmp/docs-otro" pase por estar
-    // "dentro" de "/tmp/docs". Sin él, la comprobación se salta con un nombre parecido.
+    // El separador final impide que "/tmp/docs-otro" pase por estar dentro de "/tmp/docs".
     Assert.Null(await Sut().OpenAsync("../" + Path.GetFileName(_root) + "-otro/x.pdf"));
   }
 
@@ -129,8 +123,7 @@ public sealed class LocalDocumentStoreTests : IDisposable
   [Fact]
   public async Task OpenAsync_WhenTheDocumentIsNotThere_ReturnsNullInsteadOfThrowing()
   {
-    // Que un documento no esté es una condición que quien llama tiene que poder tratar
-    // —acaba en un 404, no en un 500—, no un fallo del sistema.
+    // Que no esté es una condición tratable —acaba en 404—, no un fallo del sistema.
     Assert.Null(await Sut().OpenAsync("2026/09/noexiste.pdf"));
   }
 
@@ -167,10 +160,8 @@ public sealed class LocalDocumentStoreTests : IDisposable
   [Fact]
   public async Task ARelativeRootIsResolvedAgainstTheContentRootAndNotTheWorkingDirectory()
   {
-    // ⚠️ `Path.GetFullPath` usa el DIRECTORIO DE TRABAJO. Con eso, dónde acaban los
-    // comprobantes dependería de desde dónde se lanzó el proceso —un
-    // `dotnet /app/ApiEcommerce.dll` desde otra carpeta escribiría en otro sitio— y todas
-    // las claves ya guardadas darían 404.
+    // `Path.GetFullPath` resuelve contra el directorio de trabajo: sin fijar la base, dónde
+    // acaban los comprobantes dependería de desde dónde se lanzó el proceso.
     var relative = Path.GetFileName(_root);
 
     var saved = await Sut(relative).SaveAsync(Pdf("resuelto contra el content root"));
@@ -183,10 +174,8 @@ public sealed class LocalDocumentStoreTests : IDisposable
   [Fact]
   public async Task OpenAsync_ThroughASymlinkThatLeavesTheRoot_ReturnsNull()
   {
-    // ⚠️ `Path.GetFullPath` normaliza `.` y `..` pero **no sigue los enlaces**. Sin
-    // resolverlos, un enlace dentro del almacén (`2026 -> ../secretos`) produce una ruta
-    // que EMPIEZA por la raíz, pasa el filtro, y lee un fichero de fuera. Lo destapó la
-    // revisión de seguridad reproduciéndolo, no leyéndolo.
+    // `Path.GetFullPath` normaliza `.` y `..` pero no sigue los enlaces: sin resolverlos,
+    // un `2026 -> ../secretos` da una ruta que empieza por la raíz y lee de fuera.
     var secrets = Path.Combine(Path.GetTempPath(), $"apiecommerce-secretos-{Guid.NewGuid():N}");
     Directory.CreateDirectory(secrets);
     await File.WriteAllTextAsync(Path.Combine(secrets, "robado.pdf"), "no deberia leerse");
@@ -207,8 +196,8 @@ public sealed class LocalDocumentStoreTests : IDisposable
   [Fact]
   public async Task OpenAsync_ThroughASymlinkThatStaysInsideTheRoot_StillWorks()
   {
-    // La otra mitad: resolver enlaces no puede romper un almacén que use uno por dentro
-    // (un montaje, una carpeta movida). Solo se rechaza lo que SALE de la raíz.
+    // Resolver enlaces no puede romper un almacén que use uno por dentro (un montaje):
+    // solo se rechaza lo que sale de la raíz.
     var store = Sut();
     var saved = await store.SaveAsync(Pdf("dentro del almacén"));
 
@@ -232,10 +221,8 @@ public sealed class LocalDocumentStoreTests : IDisposable
   [Fact]
   public async Task ARootWithATrailingSeparator_StillWorks()
   {
-    // ⚠️ `GetFullPath` CONSERVA la barra final y la comprobación concatena una: sin
-    // recortarla, la raíz quedaba como ".../docs//" y NINGUNA clave pasaba el filtro.
-    // Guardar lanzaría y abrir devolvería null para todo — todos los comprobantes en 404
-    // permanente mientras la orden dice "available". Un carácter, y en silencio.
+    // `GetFullPath` conserva la barra final y la comprobación concatena otra: sin
+    // recortarla ninguna clave pasa el filtro y todo comprobante da 404 en silencio.
     var store = Sut(_root + Path.DirectorySeparatorChar);
 
     var saved = await store.SaveAsync(Pdf("con barra final"));
@@ -246,9 +233,8 @@ public sealed class LocalDocumentStoreTests : IDisposable
   [Fact]
   public void ARootInsideTheWebRoot_RefusesToStart()
   {
-    // Es toda la premisa de esta clase: dentro de wwwroot, UseStaticFiles serviría cada
-    // comprobante a quien adivinara la ruta. Nada más lo impide —es una cadena en un
-    // fichero de configuración— así que se comprueba y se revienta.
+    // Dentro de wwwroot, UseStaticFiles serviría cada comprobante a quien adivinase la
+    // ruta, y nada más lo impide: es una cadena en un fichero de configuración.
     var webRoot = Path.GetDirectoryName(_root)!;
 
     var boom = Assert.Throws<InvalidOperationException>(() => Sut(webRoot: webRoot));

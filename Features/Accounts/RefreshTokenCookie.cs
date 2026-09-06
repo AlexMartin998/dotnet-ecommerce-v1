@@ -5,26 +5,18 @@ namespace ApiEcommerce.Features.Accounts;
 
 
 /// <summary>
-/// Pone y quita la cookie del refresh token. Es la costura entre el protocolo y el
-/// servicio: <c>IRefreshTokenService</c> devuelve un valor y no sabe qué es una cookie.
+/// Pone y quita la cookie del refresh token: la costura entre el protocolo y
+/// <c>IRefreshTokenService</c>, que solo devuelve un valor.
 /// </summary>
 /// <remarks>
-/// <para>
-/// ⚠️ <b>Por qué cookie y no cuerpo de la respuesta.</b> Con <c>HttpOnly</c>, el JavaScript
-/// de la página <b>no puede leerla</b>: un XSS puede hacer peticiones en nombre del
-/// usuario mientras la pestaña esté abierta, pero no puede robarse la sesión y usarla
-/// desde otro sitio durante semanas. El access token sí viaja en el cuerpo porque dura 15
-/// minutos y no puede renovarse solo; el refresh es el que de verdad hay que proteger.
-/// </para>
-/// <para>
-/// El precio, que conviene tener presente: exige CORS con credenciales, obliga a HTTPS y
-/// complica a un cliente móvil o de escritorio, que no tiene cookies de balde.
-/// </para>
+/// Va en cookie <c>HttpOnly</c> y no en el cuerpo para que un XSS no pueda robar la sesión.
+/// El precio: CORS con credenciales, HTTPS, y clientes nativos que no tienen cookies de balde.
 /// </remarks>
 public sealed class RefreshTokenCookie(IOptions<RefreshTokenOptions> options)
 {
   private readonly RefreshTokenOptions _options = options.Value;
 
+  /// <summary>Lee el refresh token de la cookie, o <c>null</c> si no vino.</summary>
   public string? Read(HttpRequest request)
   {
     ArgumentNullException.ThrowIfNull(request);
@@ -32,6 +24,7 @@ public sealed class RefreshTokenCookie(IOptions<RefreshTokenOptions> options)
     return request.Cookies.TryGetValue(_options.CookieName, out var value) ? value : null;
   }
 
+  /// <summary>Escribe el refresh token recién emitido en la cookie.</summary>
   public void Write(HttpResponse response, IssuedRefreshToken token)
   {
     ArgumentNullException.ThrowIfNull(response);
@@ -41,9 +34,8 @@ public sealed class RefreshTokenCookie(IOptions<RefreshTokenOptions> options)
 
   /// <summary>Borra la cookie del navegador.</summary>
   /// <remarks>
-  /// ⚠️ Con <b>las mismas opciones</b> con las que se escribió. Un `Delete` con Path o
-  /// SameSite distintos no borra nada: el navegador lo trata como otra cookie y la
-  /// original sigue ahí. Es un fallo silencioso clásico del logout.
+  /// Con las mismas opciones con las que se escribió: un <c>Delete</c> con otro Path o
+  /// SameSite no borra nada, el navegador lo trata como otra cookie.
   /// </remarks>
   public void Clear(HttpResponse response)
   {
@@ -57,27 +49,15 @@ public sealed class RefreshTokenCookie(IOptions<RefreshTokenOptions> options)
     // Que el JS de la página no pueda leerla es la razón entera de usar cookie.
     HttpOnly = true,
 
-    // ⚠️ Se decide por el ESQUEMA de la petición, no por el entorno. Una cookie `Secure`
-    // sobre HTTP el cliente **ni la guarda**: el login respondería 200, la cookie no se
-    // guardaría y el refresh fallaría SIEMPRE, sin un solo error en el servidor.
-    //
-    // La primera versión miraba `IsDevelopment()`, y eso rompía en cuanto el entorno se
-    // llamaba de otra forma: el host de tests usa "Testing" y sirve por HTTP, así que
-    // marcaba la cookie como Secure y ningún test de sesión podía pasar. Lo cazaron ellos.
-    //
-    // Con el esquema real se ajusta solo: en producción se sirve por HTTPS (hay HSTS), así
-    // que la cookie sale `Secure`; en local y en los tests, que van por HTTP, no.
-    // ⚠️ Detrás de un proxy TLS esto depende de `UseForwardedHeaders`, que ya está puesto:
-    // sin él, `IsHttps` sería false y la cookie viajaría sin `Secure` en producción.
+    // Por el esquema real, no por el entorno: una cookie Secure sobre HTTP el cliente ni la
+    // guarda, y el refresh fallaría siempre sin un solo error en el servidor. Detrás de un
+    // proxy TLS depende de `UseForwardedHeaders`, que ya está puesto.
     Secure = response.HttpContext.Request.IsHttps,
 
-    // Strict: el navegador no la manda en peticiones que vengan de otro sitio, que es
-    // lo que corta el CSRF de raíz. `Lax` bastaría para navegación de primer nivel, pero
-    // aquí no hace falta: el refresh siempre lo dispara la propia aplicación.
+    // Strict corta el CSRF de raíz; el refresh siempre lo dispara la propia aplicación.
     SameSite = SameSiteMode.Strict,
 
-    // Solo se manda a los endpoints que la necesitan. No hay razón para que viaje en
-    // cada petición al catálogo.
+    // Solo a los endpoints que la necesitan; no tiene que viajar con cada petición al catálogo.
     Path = "/api/v1/auth",
 
     Expires = expiresAt

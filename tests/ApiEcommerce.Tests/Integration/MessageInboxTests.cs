@@ -7,23 +7,13 @@ namespace ApiEcommerce.Tests.Integration;
 
 
 /// <summary>
-/// El inbox: procesar un mensaje <b>exactamente una vez</b>, con la marca y el efecto en
-/// la misma transacción.
+/// El inbox: procesar un mensaje exactamente una vez, con la marca y el efecto en la
+/// misma transacción.
 /// </summary>
 /// <remarks>
-/// <para>
-/// ⭐ <b>Estos son los tests del P0 de la revisión del 2026-09-06</b>, y llevaban desde
-/// entonces sin poder escribirse. El bug: la marca se confirmaba <i>antes</i> del efecto,
-/// así que si el efecto fallaba, la reentrega se reconocía como duplicado, se hacía ack y
-/// el mensaje <b>desaparecía sin procesarse</b>. Se arregló y se verificó a mano que no
-/// rompía el camino feliz, pero el caso que de verdad importa —el efecto que revienta— no
-/// tenía red.
-/// </para>
-/// <para>
-/// Se podían escribir ahora porque la unidad transaccional salió del <c>BackgroundService</c>
-/// a <see cref="IMessageInbox"/>: <b>no hace falta broker</b>, solo un efecto que lance.
-/// Mientras vivió dentro del consumidor, probar esto exigía RabbitMQ en la CI.
-/// </para>
+/// Si la marca se confirmara antes del efecto, un efecto fallido dejaría el mensaje por
+/// duplicado y desaparecería sin procesarse. La unidad transaccional vive en
+/// <see cref="IMessageInbox"/> y no en el consumidor, así que no hace falta broker.
 /// </remarks>
 [Collection(IntegrationCollection.Name)]
 public class MessageInboxTests(ApiFactory factory)
@@ -47,8 +37,8 @@ public class MessageInboxTests(ApiFactory factory)
   [Fact]
   public async Task AFailingEffectLeavesNoMarkBehind()
   {
-    // ⭐ EL test del P0. Si la marca sobreviviera a un efecto fallido, la reentrega se
-    // tomaría por duplicado y el mensaje se perdería en silencio.
+    // Si la marca sobreviviera a un efecto fallido, la reentrega se tomaría por duplicado
+    // y el mensaje se perdería en silencio.
     var messageId = Guid.NewGuid();
 
     var boom = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -64,9 +54,7 @@ public class MessageInboxTests(ApiFactory factory)
   [Fact]
   public async Task AfterAFailureTheRetryActuallyRunsTheEffectAgain()
   {
-    // La otra mitad, y la que le da sentido a la anterior: que NO quede marca es un medio;
-    // el fin es que el reintento vuelva a ejecutar de verdad. Con el bug original, esta
-    // segunda pasada devolvía "duplicado" y el efecto no corría nunca.
+    // Que no quede marca es el medio; el fin es que el reintento ejecute de verdad.
     var messageId = Guid.NewGuid();
     var runs = 0;
 
@@ -88,8 +76,7 @@ public class MessageInboxTests(ApiFactory factory)
   [Fact]
   public async Task ASecondDeliveryOfAProcessedMessageDoesNotRunTheEffect()
   {
-    // El camino feliz del at-least-once: el broker VA a reentregar, y reprocesar tiene
-    // que ser inofensivo.
+    // El broker va a reentregar: reprocesar tiene que ser inofensivo.
     var messageId = Guid.NewGuid();
     var runs = 0;
 
@@ -107,16 +94,9 @@ public class MessageInboxTests(ApiFactory factory)
   [Fact]
   public async Task OnlyOneOfTwoConcurrentDeliveriesRunsTheEffectAndTheLoserIsRecognisable()
   {
-    // Dos réplicas procesando el mismo mensaje a la vez. Quien arbitra es la clave
-    // primaria: la que pierde revienta al insertar y su efecto se deshace con ella.
-    //
-    // ⚠️ Simultáneas de verdad: en secuencia esto lo cumple hasta el atajo del `Any`,
-    // que NO es la garantía.
-    //
-    // Y se afirma algo más que «solo una ejecutó»: que la perdedora **lanza**, y que el
-    // inbox sabe reconocer esa excepción como un duplicado. De eso depende el consumidor
-    // para hacer ack en vez de gastar un reintento — si `IsConcurrentDuplicate` dejara de
-    // reconocerlo, el mensaje daría vueltas hasta la DLQ sin que nada fallara a la vista.
+    // Simultáneas, porque en secuencia esto lo cumple hasta el atajo del `Any`. Y la
+    // perdedora tiene que lanzar algo reconocible: de eso depende el consumidor para
+    // hacer ack en vez de gastar reintentos.
     var messageId = Guid.NewGuid();
     var runs = 0;
 
