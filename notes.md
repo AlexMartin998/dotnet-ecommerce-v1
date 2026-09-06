@@ -1432,12 +1432,50 @@ POST /api/v1/product/buy
   - -- **el correcto para publicar es `apiecommerce.events`**; el `.dlx` no se publica a mano nunca,
        solo recibe lo que el consumidor rechaza
 
+- --- Glosario: que es cada termino y **donde vive EN ESTE REPO**
+  - -- **vhost** — namespace del broker: exchanges y colas viven dentro de uno. Aqui el
+       default, `/`. En la HTTP API va URL-encoded como `%2F`, de ahi las URLs raras del curl
+  - -- **exchange** — donde PUBLICAS. Recibe el mensaje, decide a que colas va y se olvida.
+       Aqui `apiecommerce.events` (`RabbitMq:Exchange`)
+  - -- **routing key** — la etiqueta que lleva el mensaje al publicarse, y lo unico que el
+       exchange mira para decidir. Aqui `"product.purchased"`
+  - -- **binding** — la regla que une cola y exchange: *"mandame lo que case con este patron"*.
+       La declara la COLA, no el publicador. Aqui `RabbitMq:RoutingKey`
+  - -- **queue** — el buzon, y **lo unico que guarda mensajes**. Aqui
+       `apiecommerce.product-purchased` (`RabbitMq:Queue`)
+  - -- **tipos de exchange** — como se compara la routing key con el binding:
+```
+direct   igualdad exacta
+topic    patron:  *  = una palabra,  #  = varias      -> `product.*` casa `product.purchased`
+fanout   a TODAS las colas atadas, ignora la clave
+headers  por cabeceras en vez de por clave            (no se usa aqui)
+```
+  - -- **DLX / DLQ** (dead letter) — el exchange y la cola a donde cae lo que el consumidor
+       rechaza. Aqui `apiecommerce.events.dlx` -> `apiecommerce.product-purchased.dlq`.
+       No se publica ahi a mano nunca: el broker lo hace por el `x-dead-letter-exchange` de la cola
+  - -- **publisher confirm** — el ack **del broker al publicador**: "lo tengo yo". Distinto
+       del ack del consumidor de abajo: son dos confirmaciones en extremos opuestos
+  - -- **ack / nack** — el ack **del consumidor al broker**: "procesado, borralo". `nack` con
+       `requeue: false` es lo que dispara el dead-lettering
+  - -- **prefetch (QoS)** — cuantos mensajes sin confirmar te entrega el broker a la vez.
+       Aqui 10 (`RabbitMq:PrefetchCount`)
+  - -- **connection / channel** — una conexion TCP por proceso, N canales dentro (ver abajo)
+  - -- **mandatory** — al publicar: "si no hay ninguna cola destino, **devuelvemelo**" en vez
+       de descartarlo en silencio
+  - -- ⚠️ **durable ≠ persistent**, y hacen falta las DOS
+```
+durable     -> propiedad del EXCHANGE y de la COLA: sobreviven al reinicio del broker
+persistent  -> propiedad del MENSAJE (DeliveryMode): se escribe a disco
+```
+  - -- **propiedades del mensaje** — cabeceras AMQP que viajan aparte del cuerpo. Aqui dos
+       llevan peso: `MessageId` (el Id del outbox) y `Type` (el nombre del evento)
+
 - --- ⭐ La idea de fondo: **el publicador NUNCA conoce la cola**
   - -- publica en un exchange con una routing key; **quien escucha lo decide el BINDING**
   - -- añadir un segundo consumidor = otra cola con otro binding, y **cero cambios en la API**
-  - -- por eso `topic` y no `direct`: permite suscribirse por patron (`product.*`) sin
-       tocar al publicador. Hoy el binding es exacto, pero el tipo ya lo deja abierto
-  - -- el DLX es `fanout` porque ahi no hay nada que enrutar: todo lo rechazado va al mismo sitio
+  - -- por eso `topic` y no `direct`: deja suscribirse a `product.*` sin tocar al publicador.
+       Hoy el binding es exacto, pero el tipo ya lo permite
+  - -- y por eso el DLX es `fanout`: ahi no hay nada que enrutar, todo lo rechazado va al mismo sitio
 
 - --- ⚠️ La routing key con la que se PUBLICA sale del EVENTO, no de la configuracion
 ```csharp
