@@ -158,10 +158,16 @@ compilador**; pero son las costuras exactas por donde se parte la solución en p
 
 ## 5. Configuración y secretos
 
-- **Los secretos NO se commitean.** `appsettings.json` lleva los valores **vacíos**;
-  los de desarrollo van en `appsettings.Development.json`; el resto en user-secrets
-  (`dotnet user-secrets set "Jwt:SecretKey" "…"`) o variables de entorno (`Jwt__SecretKey`,
-  doble guion bajo por cada `:`).
+- **Los secretos NO se commitean. Ninguno, tampoco los de desarrollo.**
+  `appsettings.json` y `appsettings.Development.json` llevan **solo configuración no
+  sensible** y ambos se commitean. Los tres valores sensibles —cadena de conexión, clave
+  JWT y contraseña del admin sembrado— viven en **user-secrets**
+  (`dotnet user-secrets set "Jwt:SecretKey" "…"`), y en cualquier otro entorno en variables
+  de entorno (`Jwt__SecretKey`, doble guion bajo por cada `:`).
+  > Cambiado el 2026-09-06. Antes los de desarrollo vivían en
+  > `appsettings.Development.json`, que **está commiteado**: cómodo en local, pero
+  > convierte cada clon del repo en una copia de las credenciales. Los comandos de puesta
+  > en marcha están en `README_init.md`.
 - Toda sección se enlaza a una **clase tipada con DataAnnotations** y se valida con
   `AddOptions<T>().Bind(...).ValidateDataAnnotations().ValidateOnStart()`.
 - ⚠️ **Una regla condicional no se expresa con un atributo.** `[Required]` se evalúa
@@ -284,8 +290,10 @@ roadmap. Cada `Scenario` debería poder convertirse en un test.
 
 ## 11. Verificación — el suelo innegociable
 
-- **`dotnet build` limpio (0 warnings, 0 errores)** tras cada cambio estructural. Hoy es
-  el único check automático: **no hay proyecto de tests** (paso 7 del roadmap).
+- **`dotnet build` limpio (0 warnings, 0 errores)** tras cada cambio estructural.
+- **`dotnet test tests/ApiEcommerce.Tests` en verde** (153 tests). Los de integración
+  necesitan SQL Server y Redis arriba; usan base y prefijo propios y no tocan los de
+  desarrollo. GitHub Actions corre ambos en cada push y PR (`.github/workflows/ci.yml`).
 - **Lo que toque concurrencia, dependencias externas o el arranque se prueba de verdad**,
   no solo compilando. Concretamente:
   - concurrencia → peticiones **simultáneas** (`for … & done; wait`), no secuenciales;

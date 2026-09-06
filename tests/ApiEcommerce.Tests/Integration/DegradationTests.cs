@@ -14,7 +14,9 @@ public sealed class RedisDownFactory : ApiFactory
 {
   protected override IDictionary<string, string?> Overrides => new Dictionary<string, string?>
   {
-    ["Redis:Configuration"] = "172.17.0.1:6998"   // nadie escucha ahí
+    // Mismo host que el Redis real pero un puerto donde no escucha nadie: así funciona
+    // igual en el dev container y en CI, sin depender de parar ningún servicio.
+    ["Redis:Configuration"] = $"{Environment.GetEnvironmentVariable("TEST_REDIS_DOWN") ?? "172.17.0.1:6998"}"
   };
 }
 

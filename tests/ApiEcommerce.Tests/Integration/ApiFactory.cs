@@ -33,13 +33,36 @@ namespace ApiEcommerce.Tests.Integration;
 /// </remarks>
 public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
-  private const string Host = "172.17.0.1";
+  /// <summary>
+  /// Dónde vive la infraestructura de pruebas. Por variable de entorno, con el valor
+  /// local por defecto.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// En el dev container es <c>172.17.0.1</c> (la gateway del bridge de Docker, o sea el
+  /// host); en CI los <c>services</c> del runner escuchan en <c>localhost</c>. Sin esto,
+  /// el mismo fichero no puede servir en los dos sitios.
+  /// </para>
+  /// <para>
+  /// La contraseña por defecto es la del SQL Server <b>local</b> del autor, no un secreto
+  /// de producción: sirve para que <c>dotnet test</c> funcione recién clonado y sin
+  /// preparar nada. Cualquier entorno real —CI incluido— la pasa por
+  /// <c>TEST_SQL_PASSWORD</c>.
+  /// </para>
+  /// </remarks>
+  private static string Env(string name, string fallback)
+      => Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value : fallback;
+
+  private static string SqlHost => Env("TEST_SQL_HOST", "172.17.0.1");
+  private static string SqlPort => Env("TEST_SQL_PORT", "1434");
+  private static string SqlPassword => Env("TEST_SQL_PASSWORD", "YourStrong@Passw0rd");
+  private static string RedisEndpoint => Env("TEST_REDIS", "172.17.0.1:6999");
 
   public const string AdminUsername = "admin";
   public const string AdminPassword = "Admin123!";
 
   private static string ConnectionString =>
-      $"Server={Host},1434;Database=ApiEcommerceNET8_Tests;User ID=sa;Password=YourStrong@Passw0rd;" +
+      $"Server={SqlHost},{SqlPort};Database=ApiEcommerceNET8_Tests;User ID=sa;Password={SqlPassword};" +
       "TrustServerCertificate=true;MultipleActiveResultSets=true";
 
   /// <summary>
@@ -78,7 +101,7 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
           ["Jwt:ExpirationMinutes"] = "60",
 
           // Redis real, con prefijo propio: comparte servidor con desarrollo pero no claves.
-          ["Redis:Configuration"] = $"{Host}:6999",
+          ["Redis:Configuration"] = RedisEndpoint,
           ["Redis:InstanceName"] = "apiecommerce-tests:",
           ["Redis:DefaultTtlSeconds"] = "60",
 

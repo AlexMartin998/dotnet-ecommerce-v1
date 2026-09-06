@@ -37,6 +37,15 @@ dotnet watch run --urls "http://0.0.0.0:8021"         # dev
 ASPNETCORE_ENVIRONMENT=Development dotnet ef database update
 ```
 
+⚠️ **La app NO arranca sin user-secrets.** El repo no lleva ningún secreto, tampoco los de
+desarrollo. Tras clonar hay que poner tres valores (`ConnectionStrings:ConexionSql`,
+`Jwt:SecretKey`, `Seed:AdminPassword`); los comandos exactos están en `README_init.md`.
+`UserSecretsId` = `apiecommerce-dev-2026`. Sin la clave JWT, el arranque falla con
+`OptionsValidationException` — es lo correcto, no un fallo de configuración del entorno.
+
+**CI**: `.github/workflows/ci.yml` corre build (`-warnaserror`) + los 153 tests en cada
+push y PR, con SQL Server y Redis como `services` del runner, y construye el `Dockerfile`.
+
 ### Los tests (paso 11, fases 1–5; falta la 6, CI)
 
 `tests/ApiEcommerce.Tests` — xunit + Moq, TFM `net9.0`, estructura espejo del slicing.
@@ -48,6 +57,10 @@ y Redis reales**, con recursos propios que **no pisan los de desarrollo**:
 | Base de datos | `ApiEcommerceNET8_Tests` — **se borra y se migra en cada corrida** |
 | Prefijo en Redis | `apiecommerce-tests:` |
 | Broker | desactivado (`RabbitMq:ConnectionString` vacío) |
+
+Los endpoints salen de `TEST_SQL_HOST` / `TEST_SQL_PORT` / `TEST_SQL_PASSWORD` /
+`TEST_REDIS`, con los valores locales por defecto: así el mismo código sirve en el dev
+container (`172.17.0.1`) y en CI (`localhost`).
 
 **No hay Testcontainers**: no hay Docker dentro del dev container. Entra en la fase 6 (CI),
 donde el runner sí lo tiene.
@@ -212,6 +225,22 @@ Capítulos 15–20 son la referencia de estilo más reciente.
 
 ---
 
+## 6.bis ⚠️ Lo más urgente del repo (2026-09-06)
+
+**El remoto de git lleva un token de GitHub en texto plano** dentro de `.git/config`:
+`https://ghp_…@github.com/AlexMartin998/dotnet-ecommerce-v1.git`. Aparece en cualquier
+`git remote -v`, en logs y en cualquier transcripción. Mientras siga sin revocarse, el
+resto del trabajo sobre secretos vale poco:
+
+```sh
+# 1) revocarlo en GitHub: Settings -> Developer settings -> Personal access tokens
+# 2) quitarlo del remoto y volver a autenticar
+git remote set-url origin https://github.com/AlexMartin998/dotnet-ecommerce-v1.git
+gh auth login            # o pasar el remoto a SSH
+```
+
+---
+
 ## 7. Decisiones tomadas que NO hay que reabrir
 
 - **AutoMapper, no Mapster.** El curso migró a Mapster en su sección 15; aquí no, porque
@@ -225,6 +254,9 @@ Capítulos 15–20 son la referencia de estilo más reciente.
   El stock usa un UPDATE condicional atómico.
 - **`DateTime.Now` local** (no UTC) en todo el modelo. Es una decisión ya tomada; migrar a
   `DateTimeOffset` está en el roadmap como cambio de todo a la vez.
+- **Los secretos de desarrollo van en user-secrets**, no en `appsettings.Development.json`
+  (cambiado el 2026-09-06). El fichero sigue commiteado, pero solo con configuración no
+  sensible. `rules.md` §5.
 - **Testcontainers, no todavía.** Los tests de integración usan la infraestructura del
   host con base y prefijo propios, porque **no hay Docker en el dev container**. No es
   pereza: es la única opción aquí. En CI sí se usarán.

@@ -22,7 +22,7 @@
 | 08 | Idempotencia de peticiones | ✅ | [`features/08`](features/08_idempotencia.feature) · [`planning/08`](planning/08_idempotencia.md) | `63269ac` |
 | 09 | Eventos de dominio (outbox + RabbitMQ) | ✅ | [`features/09`](features/09_eventos-de-dominio.feature) · [`planning/09`](planning/09_eventos-de-dominio.md) | `63269ac` + fix |
 | 10 | Límites, salud y despliegue | ✅ | [`features/10`](features/10_limites-y-salud.feature) · [`planning/10`](planning/10_limites-y-salud.md) | `63269ac` |
-| 11 | **Tests** | 🟡 fases 1–5 (**153 tests**); falta CI | [`planning/11`](planning/11_proyecto-de-tests.md) | `14c9e76` + |
+| 11 | **Tests** | ✅ fases 1–6 (**153 tests** + CI) | [`planning/11`](planning/11_proyecto-de-tests.md) | `14c9e76` + |
 | 12 | Deuda de la revisión 2026-08-30 | ❌ | [`planning/12`](planning/12_deuda-revision-multiagente.md) | — |
 | 13 | Refresh tokens y revocación | ❌ | [`planning/13`](planning/13_refresh-tokens.md) | — |
 | 14 | Administración de usuarios | ❌ | [`planning/14`](planning/14_admin-usuarios.md) | — |
@@ -34,6 +34,32 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 ---
 
 ## 2. Bitácora
+
+### 2026-09-06 — CI (fase 6) y los secretos fuera del repo
+
+**CI** — `.github/workflows/ci.yml`: build + los 153 tests en cada push y PR, con SQL
+Server y Redis como `services` del runner (no Testcontainers: mismo camino de código que en
+local, sin Docker-in-Docker). Lleva `-warnaserror` —la regla de "0 warnings" dura
+exactamente hasta el primer warning que nadie mire— y un job que **construye el
+`Dockerfile`**, que nunca se había construido por no haber Docker en el entorno de trabajo.
+Para que el mismo `ApiFactory` sirva aquí y allí, los endpoints salen de `TEST_SQL_HOST` /
+`TEST_SQL_PORT` / `TEST_SQL_PASSWORD` / `TEST_REDIS`, con los valores locales por defecto.
+
+**Secretos** — `appsettings.Development.json` estaba commiteado con la clave JWT y la
+contraseña de SQL. Los tres valores sensibles pasan a **user-secrets**
+(`UserSecretsId` en el `.csproj`); el fichero se queda con la configuración no sensible y
+sigue commiteado. `rules.md` §5 y §11 actualizadas, y `README_init.md` lleva los comandos
+de puesta en marcha.
+
+Verificado en los dos sentidos: la app arranca leyendo los secretos del almacén (login
+`admin` 200, `/health/ready` Healthy, 0 errores), y **sin ellos se niega a arrancar** con
+`OptionsValidationException: 'Jwt:SecretKey is required'` — que es lo correcto: una clave
+de firma no puede degradar en abierto. Suite completa en verde y build `Release` con
+`-warnaserror` limpio.
+
+🔴 **Hallazgo aparte, y más grave que lo anterior**: el remoto de git tiene un **token de
+GitHub en texto plano** dentro de `.git/config` (`https://ghp_…@github.com/...`). No lo
+toca este commit —`.git/` no se versiona— pero **hay que revocarlo en GitHub**: ver §5.
 
 ### 2026-09-06 — Paso 11: fases 3, 4 y 5. **153 tests**, y tres bugs que destaparon
 
@@ -315,5 +341,6 @@ Docker en el dev container, los ejecuta el owner en el host.
 |---|---|
 | **Licencia de AutoMapper** | La 15.1.1 exige licencia comercial en producción (avisa por log). ¿Comprar, fijar ≤13.x (última MIT), o migrar a Mapperly? |
 | **Política de commits** | `rules.md` §12 dice que el agente commitea (práctica de este repo). En el repo de frontend del owner la regla es la contraria. ¿Se confirma? |
-| **Secretos de desarrollo** | `appsettings.Development.json` está commiteado con la clave JWT y la password de SQL. Aceptable en local; hay que moverlo a user-secrets antes de que el repo salga de la máquina. |
+| 🔴 **Token de GitHub en `.git/config`** | El remoto es `https://ghp_…@github.com/AlexMartin998/dotnet-ecommerce-v1.git`: un **PAT en texto plano** que aparece en cualquier `git remote -v`. **Revocarlo en GitHub** (Settings → Developer settings → Personal access tokens) y volver a autenticar con `gh auth login` o con SSH. Es lo más urgente del repo. |
+| **Secretos ya en el historial** | Resuelto para adelante (user-secrets), pero la clave JWT y la password de SQL **siguen en los commits anteriores**. La JWT ya se rotó al migrar; la de SQL es la del contenedor local compartido. Limpiar el historial (`git filter-repo`) solo compensa si el repo se hace público. |
 | **Migrar a `net10.0`** | Resuelto por ahora instalando el runtime 9 (el owner quiso mantener el 10 para lo demás). Sigue abierto a futuro: alinearía el proyecto con el SDK y con `dotnet-ef` 10, hoy desalineados. |
