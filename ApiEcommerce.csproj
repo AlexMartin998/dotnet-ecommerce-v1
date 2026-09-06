@@ -9,6 +9,10 @@
     <!-- 1591 = "falta comentario XML en miembro público": aquí se documenta lo no
          obvio, no todo (ver AGENTS/docs/05-convenciones.md). -->
     <NoWarn>$(NoWarn);1591</NoWarn>
+    <!-- Los secretos de desarrollo NO se commitean: viven en el almacen de user-secrets
+         de la maquina (~/.microsoft/usersecrets/<id>/secrets.json), fuera del repo.
+         Ver README_init.md para los comandos de puesta en marcha. -->
+    <UserSecretsId>apiecommerce-dev-2026</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>

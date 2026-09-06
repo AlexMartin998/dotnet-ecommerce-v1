@@ -102,9 +102,13 @@ idempotencia, las **tres carreras** con `Task.WhenAll` (que secuencialmente pasa
 también con la implementación defectuosa), la degradación con Redis caído y el
 arranque en `Production` y sin clave de firma.
 
-**Falta la CI**: hoy no existe pipeline; nada corre `dotnet build` ni `dotnet test`
-antes de un merge, así que la red está tendida pero nadie obliga a usarla. Y ahí
-sí conviene migrar la integración a Testcontainers, porque el runner tiene Docker.
+**CI hecha**: `.github/workflows/ci.yml` corre build con `-warnaserror` y los 153
+tests en cada push y PR, con SQL Server y Redis como `services` del runner, y
+construye el `Dockerfile` (que nunca se había construido). ⚠️ Queda que el owner lo
+suba y active la protección de rama: el agente no hace `push`.
+
+Migrar la integración a Testcontainers sigue siendo una opción —en el runner sí hay
+Docker— pero ya no es necesaria: los `services` dan lo mismo con menos piezas.
 
 ⚠️ **Un test que pasa contra el código roto no vale nada.** La suite unitaria se
 validó por mutación: reintroducidos dos bugs reales ya corregidos (el `MapFrom`

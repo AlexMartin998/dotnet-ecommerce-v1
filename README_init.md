@@ -299,7 +299,33 @@ AppDbContext
 SQL Server
 ```
 
+---
 
+## Puesta en marcha tras clonar (⚠️ obligatorio)
 
+El repo **no lleva ningún secreto**, tampoco los de desarrollo. Sin estos tres valores la
+aplicación **no arranca** — y es a propósito: `JwtOptions` usa `ValidateOnStart`, así que
+una clave de firma ausente falla en el arranque con un mensaje claro en vez de aparecer en
+el primer login.
 
+```sh
+dotnet user-secrets set "ConnectionStrings:ConexionSql" \
+  "Server=172.17.0.1,1434;Database=ApiEcommerceNET8;User ID=SA;Password=<la tuya>;TrustServerCertificate=true;MultipleActiveResultSets=true"
 
+# 32+ caracteres. Generar una: openssl rand -base64 48
+dotnet user-secrets set "Jwt:SecretKey" "<clave larga>"
+
+# Solo si Seed:Enabled es true (lo es en desarrollo)
+dotnet user-secrets set "Seed:AdminPassword" "Admin123!"
+
+dotnet user-secrets list      # comprobar
+```
+
+Se guardan en `~/.microsoft/usersecrets/apiecommerce-dev-2026/secrets.json`, **fuera del
+repo**. El resto de la configuración de desarrollo (Redis, RabbitMQ, CORS, Serilog) sí está
+en `appsettings.Development.json`, commiteado, porque no es sensible.
+
+Para los **tests** no hace falta nada: usan su propia base (`ApiEcommerceNET8_Tests`) y
+traen los valores por defecto de la infraestructura local. Se pueden apuntar a otro sitio
+con `TEST_SQL_HOST`, `TEST_SQL_PORT`, `TEST_SQL_PASSWORD` y `TEST_REDIS`, que es lo que
+hace la CI.

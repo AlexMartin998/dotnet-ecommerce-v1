@@ -1,0 +1,122 @@
+# CI: build + tests en cada push y cada PR.
+#
+# Hasta ahora nada obligaba a que los 153 tests estuvieran en verde antes de un merge:
+# la red estaba tendida, pero solo si alguien se acordaba de correrla.
+#
+# ⚠️ Los tests de integracion necesitan SQL Server y Redis DE VERDAD. Aqui se levantan
+# como `services` del runner en vez de con Testcontainers: es mas simple, no necesita
+# Docker-in-Docker y usa exactamente el mismo camino de codigo que en local (el
+# ApiFactory lee TEST_SQL_HOST / TEST_REDIS del entorno). Migrar a Testcontainers sigue
+# siendo una opcion valida y aqui SI seria posible, porque el runner tiene Docker.
+
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+# Un push nuevo sobre la misma rama cancela la corrida anterior: no tiene sentido
+# esperar a un commit que ya esta obsoleto.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          # Contraseña efimera, solo viva durante el job. No es un secreto del repo.
+          MSSQL_SA_PASSWORD: "CiPassw0rd!2026"
+        ports:
+          - 1433:1433
+        # ⚠️ La imagen `mssql` NO trae healthcheck propio y tarda ~20 s en aceptar
+        # conexiones. Sin esto, el primer test falla por "connection refused" y parece
+        # un fallo del codigo.
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'CiPassw0rd!2026' -C -Q 'SELECT 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 30s
+
+      redis:
+        image: redis:7.0
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          # El proyecto es net9.0. Se instala el SDK 9 y no el 10 del dev container:
+          # en CI conviene el SDK que corresponde al TFM, sin roll-forward de por medio.
+          dotnet-version: '9.0.x'
+
+      # Cachear ~/.nuget baja el restore de ~40 s a unos pocos. La clave incluye el hash
+      # de los .csproj: si cambian las dependencias, se invalida sola.
+      - name: Cachear paquetes NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restaurar
+        run: dotnet restore ApiEcommerce.sln
+
+      # ⚠️ -warnaserror: la regla del repo es "build limpio, 0 warnings". Si no falla el
+      # pipeline, esa regla dura exactamente hasta el primer warning que nadie mire.
+      - name: Compilar
+        run: dotnet build ApiEcommerce.sln --configuration Release --no-restore -warnaserror
+
+      - name: Tests
+        env:
+          TEST_SQL_HOST: localhost
+          TEST_SQL_PORT: "1433"          # puerto INTERNO del service, no el 1434 de local
+          TEST_SQL_PASSWORD: "CiPassw0rd!2026"
+          TEST_REDIS: localhost:6379
+          TEST_REDIS_DOWN: localhost:6398   # puerto muerto, para los tests de degradacion
+        run: >-
+          dotnet test ApiEcommerce.sln
+          --configuration Release
+          --no-build
+          --logger "trx;LogFileName=test-results.trx"
+          --results-directory ./TestResults
+
+      # Sin esto, un fallo en CI obliga a reproducirlo en local para ver que fallo.
+      - name: Publicar resultados
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: ./TestResults
+          retention-days: 7
+
+  # El Dockerfile nunca se ha construido (no hay Docker en el entorno de trabajo del
+  # autor). Aqui si se puede: se construye para comprobar que sigue siendo valido, sin
+  # publicar nada a ningun registro.
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Construir la imagen
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: apiecommerce:ci

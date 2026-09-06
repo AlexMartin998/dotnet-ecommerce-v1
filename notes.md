@@ -2341,3 +2341,74 @@ services.AddSingleton<IConnectionMultiplexer>(_ => multiplexer.Value);
   - -- lo destapo el test de "arranca en Production con el seeding apagado", que era
        literalmente el test escrito para el bug anterior
   - -- **la regla condicional va en `.Validate(...)`, nunca en un atributo.** Otra vez
+
+
+
+
+
+
+## 27. Secretos fuera del repo, y CI
+- --- ⭐ **user-secrets**: los secretos de DESARROLLO tampoco se commitean
+```sh
+# en el .csproj
+<UserSecretsId>apiecommerce-dev-2026</UserSecretsId>
+
+dotnet user-secrets set "Jwt:SecretKey" "$(openssl rand -base64 48)"
+dotnet user-secrets set "ConnectionStrings:ConexionSql" "Server=...;Password=..."
+dotnet user-secrets set "Seed:AdminPassword" "..."
+dotnet user-secrets list
+```
+  - -- se guardan en `~/.microsoft/usersecrets/<id>/secrets.json`, **fuera del repo**
+  - -- `appsettings.Development.json` sigue commiteado, pero solo con lo NO sensible
+       (Redis, RabbitMQ, CORS, Serilog): sirve de documentacion del entorno de dev
+  - -- ⚠️ user-secrets **solo se cargan en Development**. En cualquier otro entorno son
+       variables de entorno (`Jwt__SecretKey`). No es un despiste del framework: es que en
+       produccion no debe existir un fichero de secretos en el disco del desarrollador
+  - -- comprobar las DOS direcciones, no solo que arranca:
+```sh
+ASPNETCORE_ENVIRONMENT=Production dotnet bin/Debug/net9.0/ApiEcommerce.dll
+# -> OptionsValidationException: 'Jwt:SecretKey is required'   <- CORRECTO
+```
+    - una clave de firma **no puede degradar en abierto**. Si el arranque sin clave no
+      falla, es que se esta firmando con algo que no es una clave
+
+- --- ⚠️ Quitar el secreto del fichero **no lo quita del historial**
+  - -- sigue en los commits anteriores. Limpiarlo de verdad es `git filter-repo`, que
+       reescribe hashes; solo compensa si el repo se hace publico
+  - -- lo barato y efectivo es **rotar** la credencial, que es lo que se hizo con la JWT
+
+- --- 🔴 Y la peor: **un token de GitHub en `.git/config`**
+```sh
+git remote -v
+# origin  https://ghp_XXXXXXXX@github.com/usuario/repo.git   <- PAT en texto plano
+```
+  - -- lo escribe `git clone https://<token>@github.com/...`, que es comodo y se olvida
+  - -- aparece en cualquier `git remote -v`: logs, capturas, pantallas compartidas
+  - -- `.git/` no se versiona, asi que **ningun .gitignore te protege de esto**
+  - -- se arregla revocando el token en GitHub y volviendo a autenticar:
+```sh
+git remote set-url origin https://github.com/usuario/repo.git
+gh auth login          # o pasar el remoto a SSH
+```
+
+- --- CI: `.github/workflows/ci.yml`
+  - -- SQL Server y Redis como **`services` del runner**, no Testcontainers: mismo camino
+       de codigo que en local y sin Docker-in-Docker
+```yaml
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    options: >-
+      --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P '...' -C -Q 'SELECT 1'"
+      --health-start-period 30s
+```
+  - -- ⚠️ la imagen `mssql` **no trae healthcheck propio** y tarda ~20 s en aceptar
+       conexiones: sin `--health-cmd`, el primer test falla por "connection refused" y
+       parece un fallo del codigo
+  - -- ⚠️ dentro del job, el service escucha en su puerto **INTERNO** (1433), no en el
+       1434 que se publica en local. De ahi que el `ApiFactory` lea `TEST_SQL_HOST`,
+       `TEST_SQL_PORT`, `TEST_SQL_PASSWORD` y `TEST_REDIS` del entorno
+  - -- ⭐ `-warnaserror` en el build: la regla de "0 warnings" dura exactamente hasta el
+       primer warning que nadie mire. O algo la obliga, o no es una regla
+  - -- job aparte que **construye el Dockerfile**: aqui nunca se habia podido construir
+       por no haber Docker en el dev container

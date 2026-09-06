@@ -1,4 +1,4 @@
-# 11 — Proyecto de tests `ApiEcommerce.Tests`  🟡 **EN CURSO** (fases 1–5 hechas; falta la 6, CI)
+# 11 — Proyecto de tests `ApiEcommerce.Tests`  ✅ **COMPLETO** (fases 1–6)
 
 > **Por qué es el siguiente y no es opcional**: casi todos los bugs que encontró la revisión
 > multiagente (`progress.md` §2) compilaban limpio y pasaban el smoke test manual. Solo
@@ -93,5 +93,11 @@ Tres cosas que ni el build ni los 105 unitarios veían:
    Movido a `.Validate(...)`.
 
 ## Fase 6 — CI
-- [ ] GitHub Actions: `dotnet build` + `dotnet test` en cada push
-- [ ] Que el pipeline falle si algún test falla (obvio, pero hoy no existe pipeline)
+> `.github/workflows/ci.yml`. SQL Server y Redis como **`services` del runner** en vez de
+> Testcontainers: mismo camino de código que en local (el `ApiFactory` lee
+> `TEST_SQL_HOST` / `TEST_REDIS` del entorno), sin Docker-in-Docker. Añade además
+> `-warnaserror` —la regla de "0 warnings" solo dura si algo la obliga— y un job que
+> **construye el Dockerfile**, que nunca se había construido por no haber Docker aquí.
+> ⚠️ Falta que el owner lo suba y active la protección de rama: el agente no hace `push`.
+- [x] GitHub Actions: `dotnet build` + `dotnet test` en cada push
+- [x] Que el pipeline falle si algún test falla (obvio, pero hoy no existe pipeline)
