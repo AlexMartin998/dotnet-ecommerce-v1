@@ -1387,14 +1387,73 @@ modelBuilder.Entity<OutboxMessage>()
 dotnet add package RabbitMQ.Client   # 7.2.2, API async
 ```
 
+- --- ⭐ EL FLUJO COMPLETO, de la peticion HTTP al ack (esto es el mapa; lo de abajo, el detalle)
+```
+POST /api/v1/product/buy
+   |
+   |  (1) UNA SOLA transaccion de negocio (cap. 17)
+   |      descuenta stock  +  INSERT en OutboxMessages
+   v
+[ SQL Server ]  ---> 200 al cliente AQUI. La compra ya esta confirmada.
+   |                 El broker todavia no sabe nada, y da igual: si esta caido, la
+   |                 compra igual se completa y el evento espera en la tabla.
+   |
+   |  (2) OutboxPublisher (BackgroundService, cada RabbitMq:PublishIntervalSeconds = 5s)
+   |      SELECT ... WHERE ProcessedAt IS NULL AND Attempts < MaxPublishAttempts
+   v
++----------------------------------------------------------+
+|  exchange  apiecommerce.events        (topic, durable)    |   <- AQUI publica la app
++----------------------------------------------------------+
+   |   routing key = "product.purchased"   (= ProductPurchased.EventType)
+   |
+   |  (3) binding: la cola se suscribio al patron "product.purchased"
+   v
++----------------------------------------------------------+
+|  queue  apiecommerce.product-purchased  (durable)         |
+|         x-dead-letter-exchange = apiecommerce.events.dlx  |
++----------------------------------------------------------+
+   |
+   |  (4) ProductPurchasedConsumer: prefetch 10, autoAck FALSE
+   |      comprueba Type -> deduplica por MessageId -> aplica efecto
+   v
+  ack  (OK)                       nack sin requeue  (mensaje malo)
+                                          |
+                                          v
+                        exchange  apiecommerce.events.dlx   (fanout)
+                                          |
+                                          v
+                        queue  apiecommerce.product-purchased.dlq
+```
+
+- --- ⚠️ En la UI (`:15672` -> Exchanges) veras **9 exchanges y 7 NO son tuyos**
+  - -- `(AMQP default)` y los `amq.*` (direct, fanout, headers, match, topic, rabbitmq.trace)
+       los crea RabbitMQ solo en CADA vhost. Estan siempre. Ignoralos
+  - -- los tuyos son exactamente dos: `apiecommerce.events` (topic) y `apiecommerce.events.dlx` (fanout)
+  - -- **el correcto para publicar es `apiecommerce.events`**; el `.dlx` no se publica a mano nunca,
+       solo recibe lo que el consumidor rechaza
+
+- --- ⭐ La idea de fondo: **el publicador NUNCA conoce la cola**
+  - -- publica en un exchange con una routing key; **quien escucha lo decide el BINDING**
+  - -- añadir un segundo consumidor = otra cola con otro binding, y **cero cambios en la API**
+  - -- por eso `topic` y no `direct`: permite suscribirse por patron (`product.*`) sin
+       tocar al publicador. Hoy el binding es exacto, pero el tipo ya lo deja abierto
+  - -- el DLX es `fanout` porque ahi no hay nada que enrutar: todo lo rechazado va al mismo sitio
+
+- --- ⚠️ La routing key con la que se PUBLICA sale del EVENTO, no de la configuracion
+```csharp
+routingKey: eventType   // = ProductPurchased.EventType = "product.purchased"
+```
+  - -- `RabbitMq:RoutingKey` de `appsettings.json` solo declara el **binding** (el paso 3)
+  - -- es facil leerlo al reves y creer que la config decide con que clave se publica
+
+- --- ⚠️ **Un exchange no guarda nada.** Es una tabla de enrutado, no un buzon
+  - -- si un mensaje no casa con ningun binding, se **pierde en silencio**
+  - -- por eso el publicador usa `mandatory: true`: el broker lo DEVUELVE en vez de tragarselo
+
 - --- Topologia (se declara sola al conectar, es idempotente)
-```
-exchange `apiecommerce.events` (topic, durable)
-   └── routing key `product.purchased`
-        └── queue `apiecommerce.product-purchased` (durable)
-             └── x-dead-letter-exchange -> `apiecommerce.events.dlx` -> `...dlq`
-```
-  - -- `topic` para que un consumidor se suscriba a `product.*` sin que el publicador sepa quien escucha
+  - -- declarar algo que ya existe con los mismos parametros no hace nada; declararlo con
+       parametros DISTINTOS da error 406 y cierra el canal
+  - -- todo `durable` y los mensajes persistentes: si no, reiniciar el broker se lleva la cola
   - -- **DLQ obligatoria**: sin ella un mensaje envenenado se reencola PARA SIEMPRE y bloquea la cola
 
 - --- ⚠️ Conexiones vs canales
