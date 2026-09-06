@@ -2,8 +2,10 @@ using ApiEcommerce.Data;
 using ApiEcommerce.Features.Accounts;
 using ApiEcommerce.Features.Catalog;
 using ApiEcommerce.Features.Catalog.Mapping;
+using ApiEcommerce.Features.Ordering;
 using ApiEcommerce.Shared.Caching;
 using ApiEcommerce.Shared.Crud;
+using ApiEcommerce.Shared.Documents;
 using ApiEcommerce.Shared.Http;
 using ApiEcommerce.Shared.Http.Health;
 using ApiEcommerce.Shared.Mapping;
@@ -61,7 +63,12 @@ public static class ServiceCollectionExtensions
           // pasa desde aquí y no se resuelve dentro de Shared/Mapping.
           .AddObjectMapping(typeof(CategoryProfile).Assembly)  // Shared/Mapping — AutoMapper
           .AddDistributedCaching(configuration) // Shared/Caching      — Redis + idempotencia
-          .AddFileStorage(configuration)        // Shared/Storage      — almacenamiento de archivos
+          .AddFileStorage(configuration)        // Shared/Storage      — imagenes PUBLICAS (wwwroot)
+          // ⚠️ Es OTRO almacén, no una duplicación del de arriba: aquel sirve estáticos
+          // públicos desde wwwroot y este guarda documentos PRIVADOS fuera de él. Ver
+          // IDocumentStore. Este método es además el único sitio a tocar el día que los
+          // comprobantes vivan en S3, R2, MinIO o Cloudinary.
+          .AddDocumentStorage(configuration)    // Shared/Documents    — documentos PRIVADOS
           .AddMessaging(configuration)          // Shared/Messaging    — outbox + RabbitMQ
           .AddObservability(configuration);     // Shared/Observability — trazas y métricas
 
@@ -73,7 +80,8 @@ public static class ServiceCollectionExtensions
       this IServiceCollection services, IConfiguration configuration)
       => services
           .AddAccountsFeature(configuration)    // Features/Accounts — identidad, JWT, autorización
-          .AddCatalogFeature(configuration);    // Features/Catalog  — categorías y productos
+          .AddCatalogFeature(configuration)     // Features/Catalog  — categorías y productos
+          .AddOrderingFeature(configuration);   // Features/Ordering — órdenes y comprobantes
 
 
   /// <summary>

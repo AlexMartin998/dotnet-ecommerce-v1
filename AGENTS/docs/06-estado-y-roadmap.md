@@ -9,7 +9,7 @@ paginación y seeding.
 
 | Componente | Estado | Nota |
 | --- | --- | --- |
-| `AppDbContext` + migraciones | ✅ | 8 migraciones aplicadas (la última, `OutboxAndProcessedMessages`); auditoría automática en `SaveChangesAsync` |
+| `AppDbContext` + migraciones | ✅ | 10 migraciones aplicadas (la última, `AddOrdering`); auditoría automática en `SaveChangesAsync` |
 | `IEntity` / `IAuditable` | ✅ | implementadas por `Category` y `Product`; sin reflexión en los genéricos |
 | `IBaseRepository<T>` / `BaseRepository<T>` | ✅ | `where T : class, IEntity`, `CancellationToken`, orden genérico por `CreatedAt` |
 | `CategoryRepository` | ✅ | `NameExistsAsync(excludeId)`, `HasProductsAsync` |
@@ -49,13 +49,17 @@ paginación y seeding.
 | Outbox transaccional | ✅ | `OutboxMessage` en la misma transacción que el negocio; la API funciona con el broker caído |
 | Publicación a RabbitMQ | ✅ | `OutboxPublisher` (BackgroundService) con publisher confirms y mensajes persistentes |
 | Reintentos del outbox | ✅ | **un broker caído no consume intentos**: solo los cuenta el fallo atribuible a un mensaje (`BrokerUnavailableException`) |
-| Consumidor | ✅ | `ProductPurchasedConsumer`: ack manual, prefetch, DLQ, dedupe por `ProcessedMessage` |
+| Consumidor | ✅ | `EventConsumer<TConsumer,TEvent>` (fontanería AMQP compartida) + `ProductPurchasedConsumer` y `OrderPlacedConsumer`: ack manual, prefetch, DLQ, dedupe por `ProcessedMessage` |
+| Varias colas / varios consumidores | ✅ | cada slice declara su `EventSubscription`; `RabbitMqConnection` declara la topología de todas, con **una DLX por cola** |
+| **Órdenes** (`Features/Ordering`) | ✅ | slice completo: `Order`/`OrderItem`, número por secuencia, puerto `ICatalogGateway`, `POST /api/v1/order` transaccional e idempotente |
+| Comprobante en PDF | ✅ | **asíncrono** por `OrderPlaced` → `IReceiptGenerator`; QuestPDF detrás de `IReceiptRenderer` |
+| Almacén de documentos privados | ✅ | `IDocumentStore` + `LocalDocumentStore`, **fuera de `wwwroot`**, clave opaca; cambiar a S3/R2/MinIO/Cloudinary es una implementación y una línea |
 | Dockerfile + compose | ✅ | multi-stage, usuario `$APP_UID` de la imagen base, `curl` instalado para el healthcheck |
 | Migraciones al arrancar | ✅ | `MigrateAsync()` en el scope de arranque (la imagen runtime no lleva `dotnet-ef`) |
 | Idempotencia de la config | ✅ | validación condicional de `SeedOptions`; `ValidateOnStart` en todas las secciones |
 | `UseForwardedHeaders` | ✅ | el rate limiter particiona por la IP real, no por la del proxy |
 | Sonda de backlog del outbox | ✅ | `outbox-backlog` → `Degraded` si hay eventos que agotaron reintentos; el umbral sale de `RabbitMq:MaxPublishAttempts`, el mismo que aplica el publicador |
-| Tests | ❌ | sin proyecto de pruebas |
+| Tests | ✅ | `tests/ApiEcommerce.Tests`: **261** (unitarios + integración + concurrencia + degradación y arranque) |
 
 ## Lo que se verificó (2026-08-30)
 
@@ -260,6 +264,35 @@ bloqueo en el login, pero el usuario seguía dentro con su access token y podía
 credenciales. Cerrado por los dos lados: bloquear revoca las sesiones, y renovar
 comprueba el bloqueo.
 
+### Paso 11.bis — Órdenes y comprobante en PDF — ✅ **hecho** (2026-09-06)
+
+Detalle en [`planning/20`](../planning/20_ordenes-y-comprobante.md). Cuarto contexto
+acotado (`Ordering`), el primero que se añade con el slicing ya asentado: crear la
+carpeta y **una línea** en `AddFeatures()`.
+
+Las tres decisiones que lo ordenan: el PDF **no se genera en la petición** (evento por
+el outbox y un consumidor aparte), la base guarda una **clave opaca** y no una ruta, y
+lo que se copia en la orden **se congela**.
+
+Lo que hubo que resolver por debajo: `Shared/Messaging` servía a **una** cola. Publicar
+un segundo evento sin tocarlo fallaba en silencio —`312 NO_ROUTE`, el outbox agotando
+intentos, la compra bien y el comprobante nunca—. Ahora cada slice declara su
+`EventSubscription` y la fontanería AMQP se hereda de `EventConsumer<,>`.
+
+🔴 Y una medición destapó algo **anterior a esta tarea**: cada 4xx de dominio escribía un
+«unhandled exception» a nivel Error con traza. 30 compras simultáneas sobre stock 20
+dejaban 10 incidentes falsos; un 404 de categoría, lo mismo. Silenciada la línea
+duplicada del framework — `GlobalExceptionHandler` ya registraba todo, y mejor.
+
+🔴 La **revisión multiagente** (`rules.md` §9) encontró dos defectos serios que ni el build
+ni los tests veían: `ReceiptStatus.Failed` era **inalcanzable** (un comprobante muerto en la
+DLQ dejaba al cliente con un 409 «vuelve luego» para siempre) y el descuento de stock
+recorría las líneas en el orden del carrito, o sea un **deadlock** entre carritos con los
+mismos SKU en distinto orden. Además: la canonicalización de rutas no seguía enlaces
+simbólicos, una barra final en `Documents:RootPath` rompía el almacén en silencio, y
+`?page=2147483647` daba un 500 en **todos** los `/paged` (previo). Todo corregido y con
+test.
+
 ### Paso 12 — Deudas conocidas y anotadas
 
 - **`DateTime.Now` → `DateTimeOffset`/UTC.** Ya se nota la inconsistencia: los
@@ -282,6 +315,25 @@ comprueba el bloqueo.
 - **La retención de `ExecutedCommands` va con `Outbox:RetentionDays`**, que ahora
   gobierna tres tablas. ⚠️ Ese plazo tiene que cubrir el peor reintento de un
   cliente: a partir de ahí, la misma clave vuelve a ejecutar de verdad.
+- **Documentos huérfanos.** El comprobante se escribe dentro de la transacción del inbox
+  y un fichero no se deshace con ella: si el commit falla, queda un PDF que ninguna orden
+  referencia. Es la dirección correcta del error (basura recolectable frente a un
+  comprobante perdido), pero falta el job que recolecte. Y desde el arreglo de `SaveAsync`
+  puede haber además alguno **truncado**, que el recolector tendría que distinguir. Hoy no
+  hay volumen que lo justifique.
+- **Nadie consume la DLQ.** El aviso de «agotado» ya marca la orden como `failed`, así que
+  el cliente deja de esperar; pero el mensaje se queda en la dead-letter y reemitir un
+  comprobante es una operación manual. Un endpoint de administración que lo reencole es lo
+  natural, y encaja con `RetryAttempts`, que ya permite el replay desde la DLQ.
+- **La transacción del inbox sigue abierta durante el render del PDF.** No sostiene locks
+  (el `SELECT` los suelta al terminar la sentencia y el `UPDATE` viene después), así que hoy
+  el coste es una conexión del pool ocupada. Vale la pena mirarlo si se sube el prefetch o
+  el documento se vuelve pesado; moverlo fuera exigiría que `ProcessOnceAsync` aceptara una
+  fase previa no transaccional, y eso debilita la garantía.
+- **Un solo vendedor por orden.** La imagen de referencia era un marketplace con
+  sub-órdenes por *seller*. Cuando haya sellers, la orden se parte y el comprobante también.
+- **Cancelar o devolver una orden.** Devolver stock tiene sus propias invariantes; no se
+  improvisa junto a esto.
 - **Rotación de `Jwt:SecretKey` en caliente.** `JwtTokenService` es singleton y
   materializa las `SigningCredentials` en el constructor, así que rotar la clave
   exige reiniciar. Se resuelve cambiando `IOptions` por `IOptionsMonitor`.

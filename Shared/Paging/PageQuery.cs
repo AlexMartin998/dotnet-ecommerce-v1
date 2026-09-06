@@ -20,5 +20,13 @@ public class PageQuery
   public int PageSize { get; set; } = 10;
 
   /// <summary>Elementos a saltar. Se calcula aquí para no repetir la fórmula en cada repositorio.</summary>
-  public int Skip => (Page - 1) * PageSize;
+  /// <remarks>
+  /// ⚠️ El cálculo se hace en <c>long</c> y se satura. <c>(Page - 1) * PageSize</c> en
+  /// <c>int</c> **desborda** con `?page=2147483647`, da un número negativo, y SQL Server
+  /// responde «The offset specified in a OFFSET clause may not be negative»: un **500** con
+  /// traza a partir de un query string. Saturando, la página fuera de rango devuelve
+  /// **200 con `[]`**, que es la regla que ya fija <c>PagedResult.Empty</c> — el recurso
+  /// existe, lo que no hay son resultados.
+  /// </remarks>
+  public int Skip => (int)Math.Min((long)(Page - 1) * PageSize, int.MaxValue);
 }

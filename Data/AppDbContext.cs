@@ -7,6 +7,7 @@ using ApiEcommerce.Features.Accounts.Models;
 using ApiEcommerce.Features.Catalog.Models;
 using ApiEcommerce.Features.Catalog.Repository;
 using ApiEcommerce.Shared.Idempotency;
+using ApiEcommerce.Features.Ordering.Models;
 
 namespace ApiEcommerce.Data;
 
@@ -52,6 +53,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
   /// y emitir el siguiente ocurren en la misma transacción.
   /// </summary>
   public DbSet<RefreshToken> RefreshTokens { get; set; }
+
+  public DbSet<Order> Orders { get; set; }
+
+  public DbSet<OrderItem> OrderItems { get; set; }
 
 
   /// <summary>
@@ -123,6 +128,43 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     modelBuilder.Entity<RefreshToken>()
         .HasIndex(t => t.ExpiresAt)
         .HasDatabaseName("IX_RefreshTokens_ExpiresAt");
+
+    // ---- órdenes ------------------------------------------------------------
+
+    // Secuencia para el número de orden. ⚠️ Una SECUENCIA y no un MAX()+1: eso último es
+    // un leer-y-escribir y dos compras simultáneas se llevarían el mismo número, que
+    // además tiene índice único — una de las dos reventaría.
+    modelBuilder.HasSequence<long>(Features.Ordering.Repository.OrderRepository.NumberSequence)
+        .StartsAt(1)
+        .IncrementsBy(1);
+
+    // Único: es el número que cita el cliente, y dos órdenes con el mismo lo convierten
+    // en inservible.
+    modelBuilder.Entity<Order>()
+        .HasIndex(o => o.Number)
+        .IsUnique()
+        .HasDatabaseName("IX_Orders_Number");
+
+    // Por aquí consulta "mis órdenes", que es la lectura más frecuente del slice.
+    modelBuilder.Entity<Order>()
+        .HasIndex(o => new { o.BuyerUserId, o.PlacedAt })
+        .HasDatabaseName("IX_Orders_Buyer_PlacedAt");
+
+    // ⚠️ `decimal` sin precisión explícita cae a decimal(18,2) por convención de EF, que
+    // aquí vale, pero dejarlo implícito hace que un cambio de convención mueva dinero sin
+    // que nadie lo note. Se fija.
+    foreach (var money in new[] { "Subtotal", "Discount", "Tax", "Shipping", "Total" })
+      modelBuilder.Entity<Order>().Property(money).HasPrecision(18, 2);
+
+    modelBuilder.Entity<OrderItem>().Property(i => i.UnitPrice).HasPrecision(18, 2);
+    modelBuilder.Entity<OrderItem>().Property(i => i.LineTotal).HasPrecision(18, 2);
+
+    // Borrar una orden se lleva sus líneas: no tienen sentido sueltas.
+    modelBuilder.Entity<Order>()
+        .HasMany(o => o.Items)
+        .WithOne(i => i.Order!)
+        .HasForeignKey(i => i.OrderId)
+        .OnDelete(DeleteBehavior.Cascade);
   }
 
 

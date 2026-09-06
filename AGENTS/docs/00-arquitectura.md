@@ -100,17 +100,26 @@ ApiEcommerce/
 │   │   ├── Messaging/              quién REACCIONA a esos eventos (los consumidores)
 │   │   ├── Controllers/            capa HTTP. Solo DTOs.
 │   │   └── CatalogExtensions.cs    AddCatalogFeature(): el DI del slice
-│   └── Accounts/                   identidad, JWT, autorización
-│       ├── Models/ Dtos/ Service/ Controllers/
-│       ├── JwtOptions.cs  ConfigureJwtBearerOptions.cs
-│       └── AccountsExtensions.cs
+│   ├── Accounts/                   identidad, JWT, autorización
+│   │   ├── Models/ Dtos/ Service/ Controllers/
+│   │   ├── JwtOptions.cs  ConfigureJwtBearerOptions.cs
+│   │   └── AccountsExtensions.cs
+│   └── Ordering/                   órdenes y su comprobante
+│       ├── Models/ Dtos/ Repository/ Service/ Controllers/
+│       ├── Ports/                  ICatalogGateway: LO ÚNICO del slice que conoce Catalog
+│       ├── Events/                 OrderPlaced
+│       ├── Messaging/              OrderPlacedConsumer + IReceiptGenerator (el EFECTO)
+│       ├── Documents/              QuestPdfReceiptRenderer (la librería de PDF, aislada)
+│       └── OrderingExtensions.cs
 ├── Shared/                   # transversal: de ningún dominio
 │   ├── Persistence/          IEntity, IBaseRepository, BaseRepository, ITransactionRunner
 │   ├── Crud/                 ICrudService, CrudService, IEntityRules, NoEntityRules
 │   ├── Caching/              ICacheService, RedisCacheService, NoCacheService, CacheKeys
 │   ├── Idempotency/          IIdempotencyStore, IdempotentAttribute
-│   ├── Messaging/            MECANISMO: outbox, RabbitMq/, IDomainEvent, AddEventConsumer<T>
-│   ├── Storage/              IFileStorage, LocalFileStorage
+│   ├── Messaging/            MECANISMO: outbox, RabbitMq/, IDomainEvent, EventConsumer<,>,
+│   │                         AddEventConsumer<T>(config, EventSubscription)
+│   ├── Storage/              IFileStorage: imágenes PÚBLICAS (dentro de wwwroot)
+│   ├── Documents/            IDocumentStore: documentos PRIVADOS (FUERA de wwwroot)
 │   ├── Paging/               PagedResult<T>, PageQuery
 │   ├── Db/                   TransactionalAttribute
 │   ├── Mapping/              AddObjectMapping (escanea los Profile de los slices)
@@ -136,6 +145,10 @@ lenguaje ubicuo y sus propias invariantes, o es parte del vocabulario de otro co
 Un slice por entidad reproduce la dispersión que el slicing venía a quitar, con más carpetas.
 
 Contextos previstos según crezca: `Catalog`, `Accounts`, `Ordering`, `Payments`, `Shipping`.
+Los tres primeros ya existen. `Ordering` fue el primero que se añadió con el slicing ya
+asentado, y sirvió para comprobar que el coste es el prometido: **crear la carpeta y una
+línea en `AddFeatures()`**. Toda su dependencia hacia `Catalog` cabe en una clase
+(`Ports/CatalogGateway`), que es lo que hace que el slice sea movible.
 
 ## Slice vertical
 

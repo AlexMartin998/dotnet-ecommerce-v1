@@ -57,7 +57,8 @@ public static class MessagingExtensions
 
 
   /// <summary>
-  /// Registra un consumidor de eventos, <b>solo si hay broker configurado</b>.
+  /// Registra un consumidor de eventos <b>con su cola</b>, y solo si hay broker
+  /// configurado.
   /// </summary>
   /// <remarks>
   /// <para>
@@ -69,19 +70,40 @@ public static class MessagingExtensions
   /// <b>Web → Features → Shared</b> se invertiría.
   /// </para>
   /// <para>
+  /// <b>La suscripción la trae el slice</b>, y por el mismo motivo: el nombre de la cola
+  /// dice a qué reacciona ese contexto, así que es suyo. La suscripción se registra dos
+  /// veces a propósito — como <see cref="EventSubscription"/> para que
+  /// <see cref="RabbitMq.RabbitMqConnection"/> declare su topología sin conocer al
+  /// consumidor, y como <see cref="EventSubscriptionOf{TConsumer}"/> para que el consumidor
+  /// pida <b>la suya</b> sin poder recibir la de otro.
+  /// </para>
+  /// <para>
   /// La condición de "hay broker" se evalúa en ESTE método y no en cada slice: es la
   /// misma decisión para todos, y duplicarla es garantizar que algún día un slice la
-  /// comprueba distinto.
+  /// comprueba distinto. ⚠️ Y por eso la suscripción se registra <b>dentro</b> del
+  /// <c>if</c>: sin broker no hay topología que declarar, y dejarla registrada haría que
+  /// una réplica sin mensajería declarara colas que nadie consume.
   /// </para>
   /// </remarks>
+  /// <typeparam name="TConsumer">El <c>BackgroundService</c> que consume.</typeparam>
+  /// <param name="services">Contenedor.</param>
+  /// <param name="configuration">Configuración, para decidir si hay broker.</param>
+  /// <param name="subscription">Su cola, su routing key y su dead-letter.</param>
   public static IServiceCollection AddEventConsumer<TConsumer>(
-      this IServiceCollection services, IConfiguration configuration)
+      this IServiceCollection services, IConfiguration configuration,
+      EventSubscription subscription)
       where TConsumer : class, IHostedService
   {
+    ArgumentNullException.ThrowIfNull(subscription);
+
     var options = configuration.GetSection(RabbitMqOptions.SectionName).Get<RabbitMqOptions>()
                   ?? new RabbitMqOptions();
 
-    if (options.IsEnabled) services.AddHostedService<TConsumer>();
+    if (!options.IsEnabled) return services;
+
+    services.AddSingleton(subscription);
+    services.AddSingleton(new EventSubscriptionOf<TConsumer>(subscription));
+    services.AddHostedService<TConsumer>();
 
     return services;
   }

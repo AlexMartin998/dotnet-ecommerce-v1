@@ -13,55 +13,51 @@
 nunca hace push (`rules.md` §12).
 
 ### Qué se hizo en la última sesión
-1. **`planning/16` + `17`** — la idempotencia validada bajo carga real y luego convertida
-   en **garantía transaccional**: la marca del comando vive en `ExecutedCommands`, en la
-   misma transacción que el efecto. Verificado **con Redis apuntando a un puerto muerto**:
-   40 simultáneas con la misma clave descuentan 1 y todas dan 200.
-2. **`planning/18`** — cerrada la deuda de mensajería (`planning/12` §12.5 **completa**).
-   El patrón de casi todos los puntos era el mismo: **lo que no se podía probar vivía
-   dentro de un `BackgroundService`**. El efecto sale a `IProductPurchasedHandler`, la
-   unidad transaccional a `IMessageInbox` y el contador de intentos a `RetryAttempts`.
-3. Además: contador de reintentos en cabecera propia (el replay desde la DLQ ya funciona),
-   `RetryDelaySeconds` deja de ser inmutable (el TTL va en el nombre de la cola), canal
-   AMQP reutilizado, y `global.json` + CI con los dos SDK.
-4. 🔴 **Un bug encontrado ejecutando**: al versionar la cola de espera, cada reintento se
-   copiaba a **todas** las colas de espera ligadas al exchange. Arreglado publicando al
-   exchange por defecto con el nombre de la cola como routing key.
-5. **186 tests** (eran 160 al empezar la sesión), build sin warnings.
 
-5.bis **`planning/19`** — los «errores» que no eran errores: un cliente que cuelga sale
-   ahora como **499** a nivel Information (antes: 500 con traza, porque SqlClient lanza un
-   `SqlException` y no una OCE), y un timeout de base como **503 + `Retry-After`**.
-   ⚠️ El middleware va **por debajo** de `UseExceptionHandler`, o el framework ya ha
-   escrito su línea de Error antes de llamarte.
+**`planning/20` — órdenes y su comprobante en PDF.** Cuarto contexto acotado
+(`Features/Ordering/`), el primero añadido con el slicing ya asentado: carpeta + una línea
+en `AddFeatures()`, y toda la dependencia hacia `Catalog` en **una** clase (`CatalogGateway`).
 
-6. **`planning/13` — sesiones revocables**. Refresh token en **cookie `HttpOnly`**
-   (decisión del owner), con rotación y detección de reuso: reusar un token gastado fuera
-   de la ventana de gracia revoca **la familia entera**. `Jwt:ExpirationMinutes` baja de 60
-   a **15**. La garantía es la familia revocada en la BASE; la denylist de `jti` en Redis
-   solo adelanta la muerte del access token que el cliente ya tiene.
-   ⚠️ Dos trampas de cookies que fallan **en silencio** (login 200, cookie no guardada,
-   refresh siempre 401, cero errores en el servidor): el prefijo `__Host-` exige `Path=/`
-   y `Secure`; y decidir `Secure` por `IsDevelopment()` rompe el host de tests, que usa
-   `"Testing"` sobre HTTP. Se decide por `Request.IsHttps`.
-
-7. **`planning/14` — administración de usuarios**: listado paginado, roles, bloqueo.
-   🔴 Y destapó que **bloquear una cuenta no servía de nada**: Identity comprueba el
-   bloqueo en el login, pero renovar no vuelve a pedir credenciales, así que una cuenta
-   bloqueada con la sesión abierta se quedaba dentro **para siempre**. Cerrado por los dos
-   lados (bloquear revoca sesiones; renovar comprueba el bloqueo).
+1. **El PDF NO se genera en la petición**: la compra emite `OrderPlaced` por el outbox que
+   ya existía y `OrderPlacedConsumer` lo genera aparte. La orden nace con
+   `receiptStatus: "pending"`.
+2. **`IDocumentStore`** (`Shared/Documents/`) — almacén de documentos **privados**, FUERA de
+   `wwwroot`, con **clave opaca** en la base. Cambiar a S3/R2/MinIO/Cloudinary = otra
+   implementación y una línea en `AddDocumentStorage`. ⚠️ **No se fusiona con
+   `IFileStorage`**: aquel sirve imágenes públicas desde `wwwroot`, y ahí un comprobante lo
+   descargaría cualquiera que adivinara la ruta.
+3. **QuestPDF** detrás de `IReceiptRenderer` (validado: Community es gratis por debajo de
+   1 M USD anuales — es un **umbral**, decisión del owner el día que aplique).
+4. 🔴 **Había que generalizar la mensajería**: servía a UNA cola. `order.placed` volvía como
+   **312 NO_ROUTE** y se agotaba en el outbox — compra bien, comprobante nunca. Ahora cada
+   slice declara su `EventSubscription` y la fontanería AMQP se hereda de
+   `EventConsumer<TConsumer,TEvent>`.
+5. 🔴 **Y midiendo apareció un defecto ANTERIOR**: cada 4xx de dominio escribía un
+   «unhandled exception» a nivel Error con traza. 30 compras simultáneas sobre stock 20 →
+   **10 incidentes falsos**; un 404 de categoría, igual. Silenciada la línea duplicada del
+   framework (`GlobalExceptionHandler` ya lo registraba, y mejor): de 10 a **0**.
+6. **Revisión multiagente** (`rules.md` §9): 🔴 `ReceiptStatus.Failed` era **inalcanzable**
+   (comprobante muerto en la DLQ = 409 `receipt_not_ready` eterno) → hook `OnExhaustedAsync`
+   en `EventConsumer`; 🔴 **deadlock evitable** descontando stock en el orden del carrito →
+   se ordenan las líneas por SKU; la canonicalización de rutas **no seguía enlaces
+   simbólicos**; una barra final en `Documents:RootPath` rompía el almacén en silencio; y
+   `?page=MAXINT` daba **500** en todos los `/paged` (previo).
+7. **261 tests** (eran 202), build sin warnings. Verificado ejecutando: ciclo completo
+   compra → evento → PDF, **30 simultáneas → 20 órdenes con 20 números únicos**, y el ciclo
+   de reintentos con un fallo real → DLQ → orden `failed` (la compra sigue válida).
 
 ### Por dónde seguir (en este orden)
 
-**El roadmap se ha quedado sin pendientes salvo el 15, que está diferido a propósito.**
-Lo que hay son deudas menores, todas anotadas:
+**El roadmap sigue sin pendientes salvo el 15, diferido a propósito.** Lo que hay son
+deudas menores, todas anotadas en `docs/06` §Paso 12:
 
-1. **Cambio de contraseña** — no existe el endpoint, y debería revocar las sesiones al
-   usarlo (`RevokeAllSessionsAsync` ya está). Junto con «cerrar sesión en todos mis
-   dispositivos», que es exponer lo que ya hay. `planning/14`.
-2. **Deuda menor viva**: `planning/13` (la cookie es una decisión para SPA: un cliente
-   móvil no está cubierto), `planning/17` §17.4, `planning/19` §19.4 (EF loguea a Error sus
-   fallos de conexión — se deja a propósito).
+1. **Deuda nueva de `planning/20`**: nadie recolecta los **documentos huérfanos** —el PDF se
+   escribe dentro de la transacción del inbox y un fichero no se deshace con ella—, y con el
+   arreglo de `SaveAsync` puede haber además alguno **truncado**. Tampoco hay quien consuma
+   la DLQ (el aviso de agotado ya marca la orden, pero el mensaje se queda ahí).
+2. **Deuda menor viva**: `planning/13` (la cookie es una decisión para SPA: un cliente móvil
+   no está cubierto), `planning/17` §17.4, `planning/19` §19.4 (EF loguea a Error sus fallos
+   de conexión — se deja a propósito).
 3. `planning/15` (partir en proyectos) sigue **diferido a propósito**. La señal para
    retomarlo está en `docs/06`.
 
@@ -74,6 +70,7 @@ binding), pero se ven en la UI. Se borran a mano cuando estorben.
 |---|---|
 | 🔴 **Token de GitHub en `.git/config`** | Un PAT en texto plano en el remoto. **Revocarlo.** Ver §6.bis |
 | **Licencia de AutoMapper** | La 15.1.1 exige licencia comercial en producción. Es lo único que queda de `planning/12` |
+| **Umbral de QuestPDF** | Community es gratis —también comercialmente— **por debajo de 1 M USD** de ingresos brutos anuales, con 90 días de transición. No es «gratis para siempre» |
 | **Subir la CI** | El workflow está commiteado pero **sin push**; falta activarlo y proteger la rama |
 | **Migrar a `net10.0`** | Hoy resuelto instalando el runtime 9 |
 | **IP del host en `appsettings.Development.json`** | Quedó `192.168.3.82` (la LAN del autor), que **cambia con DHCP**, en un fichero commiteado. `172.17.0.1` —la puerta del bridge— es estable desde el dev container. Decidir cuál se deja |
@@ -105,7 +102,7 @@ autoridad**: se trajo la *feature*, nunca el *código*.
 
 ```sh
 dotnet build                                          # build de la solución (API + tests)
-dotnet test tests/ApiEcommerce.Tests                  # 153 tests, ~18 s
+dotnet test tests/ApiEcommerce.Tests                  # 261 tests, ~85 s
 dotnet watch run --urls "http://0.0.0.0:8021"         # dev
 ASPNETCORE_ENVIRONMENT=Development dotnet ef database update
 ```
@@ -116,7 +113,7 @@ desarrollo. Tras clonar hay que poner tres valores (`ConnectionStrings:ConexionS
 `UserSecretsId` = `apiecommerce-dev-2026`. Sin la clave JWT, el arranque falla con
 `OptionsValidationException` — es lo correcto, no un fallo de configuración del entorno.
 
-**CI**: `.github/workflows/ci.yml` corre build (`-warnaserror`) + los 153 tests en cada
+**CI**: `.github/workflows/ci.yml` corre build (`-warnaserror`) + los 261 tests en cada
 push y PR, con SQL Server y Redis como `services` del runner, y construye el `Dockerfile`.
 
 ### Los tests (paso 11, fases 1–5; falta la 6, CI)
@@ -210,17 +207,27 @@ Features/
   Accounts/      <- contexto: identidad, JWT, autorizacion
     Models/ Dtos/ Service/ Controllers/
     JwtOptions.cs ConfigureJwtBearerOptions.cs AccountsExtensions.cs
+  Ordering/      <- contexto: ordenes y su comprobante
+    Models/ Dtos/ Repository/ Service/ Controllers/
+    Ports/                      <- ICatalogGateway: LO UNICO del slice que sabe de Catalog
+    Events/                     <- OrderPlaced
+    Messaging/                  <- OrderPlacedConsumer + IReceiptGenerator (el EFECTO)
+    Documents/                  <- QuestPdfReceiptRenderer (la libreria de PDF, aislada)
+    OrderingExtensions.cs
 Shared/          <- transversal, de ningun dominio
   Persistence/   IEntity, IBaseRepository, BaseRepository, PersistenceExtensions
   Crud/          ICrudService, CrudService, IEntityRules, NoEntityRules
-  Caching/ Db/ Idempotency/ Paging/ Storage/ Mapping/ Auth/
-  Messaging/     MECANISMO: outbox, RabbitMq/, IDomainEvent, AddEventConsumer<T>
-                 (los eventos y sus consumidores viven en el SLICE que los emite)
+  Caching/ Db/ Idempotency/ Paging/ Mapping/ Auth/
+  Storage/       imagenes PUBLICAS (dentro de wwwroot, las sirve UseStaticFiles)
+  Documents/     documentos PRIVADOS (FUERA de wwwroot, los sirve un endpoint) <- NO es lo mismo
+  Messaging/     MECANISMO: outbox, RabbitMq/, IDomainEvent, EventConsumer<,>,
+                 AddEventConsumer<T>(config, EventSubscription)
+                 (los eventos, sus colas y sus consumidores viven en el SLICE que los emite)
   Http/          GlobalExceptionHandler, Swagger, CORS, rate limit + Health/
   DependencyInjection/   composition root (NO registra nada)
 Data/            AppDbContext + DataSeeder
 Exceptions/      jerarquia AppException (dominio -> HTTP)
-Migrations/      EF Core (8 aplicadas)
+Migrations/      EF Core (10 aplicadas)
 AGENTS/          docs/ features/ planning/ context/ + memory.md progress.md rules.md
 notes.md         <- el log de aprendizaje del autor. MUY importante, ver §6
 ```
@@ -293,6 +300,11 @@ Piezas que conviene conocer antes de tocar nada:
 | **Runtime .NET** | El SDK del dev container es **10.0.400** y el proyecto es `net9.0`: compila, pero necesita el **runtime 9** instalado o no arranca. Ya está (9.0.19 y 10.0.11 conviven). Si el contenedor se recrea, se pierde: reinstalar con el comando de abajo. |
 | `pkill -f ApiEcommerce` | **Se mata a sí mismo**: el cwd y la propia línea de comando contienen esa cadena. Guardar el PID (`echo $! > api.pid`) y `kill` por PID. Ya ha pasado dos veces. |
 | Arrancar la app | `dotnet run` deja un proceso hijo que no muere con el padre. Mejor `dotnet bin/Debug/net9.0/ApiEcommerce.dll`, que sí da el PID real. |
+| **Un segundo consumidor de eventos** | El publicador usa `mandatory: true` con confirms: un evento que **no encaja con ninguna cola** vuelve como **312 NO_ROUTE**, el outbox lo cuenta como intento fallido y se agota. La compra funciona y el consumidor no se entera **nunca**. Cada slice declara su `EventSubscription`; sin ella no hay binding. |
+| **Redeclarar una cola existente** | Cambiar cualquier argumento (`x-dead-letter-exchange`, `x-message-ttl`) da **406 PRECONDITION_FAILED** y deja la mensajería abajo. Por eso la cola del catálogo conserva su DLX heredada y los slices nuevos usan una **por cola** (la heredada es `fanout` y repartiría los muertos de uno a la DLQ del otro). |
+| **Comentarios `//` en `Serilog:MinimumLevel:Override`** | Serilog resuelve **cada clave** como nombre de logger: el arranque muere con `No LoggingLevelSwitch has been declared with name "…"`. Van un nivel más arriba. |
+| **QuestPDF** | La licencia se declara al **arrancar** o lanza **al generar** (la API arranca sana y los comprobantes fallan uno a uno). En Linux necesita **`libfontconfig1`** en la imagen. Y **no se pide `FontFamily`**: Calibri no existe en Linux; la de QuestPDF va **embebida**. |
+| **`Documents:RootPath`** | Es **relativo al content root**. Sin sobreescribirlo, los tests dejarían PDFs dentro del repo. |
 | `POST /api/v1/category` | Devuelve **201 sin cuerpo** (`CreatedAtRoute(..., null)`): el id sale de la cabecera `Location`, no del JSON. No es un fallo. |
 
 ---
@@ -354,16 +366,18 @@ gh auth login            # o pasar el remoto a SSH
 
 ## 8. Estado en una línea
 
-Category y Product tienen el slice vertical completo. Hay auth con Identity+JWT,
-versionado, CORS, cache Redis con decorador, paginación, subida de imágenes, seeding,
-rate limiting, Serilog, health checks, protección de carreras, idempotencia **transaccional** (`ExecutedCommands`, en la
-misma transacción que el efecto) y outbox +
-RabbitMQ — este último **verificado de punta a punta contra un broker real** el
-2026-09-05, incluidos deduplicación y DLQ.
+Tres contextos acotados con el slice vertical completo: **Catalog** (categorías y
+productos), **Accounts** (identidad, sesiones revocables, administración de usuarios) y
+**Ordering** (órdenes + comprobante en PDF asíncrono). Auth con Identity+JWT y refresh en
+cookie `HttpOnly`, versionado, CORS, cache Redis con decorador, paginación, subida de
+imágenes, seeding, rate limiting, Serilog, health checks, protección de carreras,
+idempotencia **transaccional** (`ExecutedCommands`, en la misma transacción que el efecto),
+outbox + RabbitMQ **con varias colas** —verificado de punta a punta contra un broker real—
+y un almacén de documentos privados sustituible (`IDocumentStore`).
 
-**Tests y CI hechos**: `tests/ApiEcommerce.Tests`, **202** (unitarios + integración +
-concurrencia + degradación y arranque) y `.github/workflows/ci.yml`. **`planning/12`
-cerrado** salvo la licencia de AutoMapper. Lo siguiente es `planning/12` §12.5 (la deuda
-nueva) y luego refresh tokens y administración de usuarios.
+**Tests y CI**: `tests/ApiEcommerce.Tests`, **261** (unitarios + integración + concurrencia
++ degradación y arranque) y `.github/workflows/ci.yml`. El roadmap está **sin pendientes
+salvo el 15** (partir en proyectos, diferido a propósito); lo que queda son deudas menores,
+anotadas en §0.
 
 Ver `progress.md` para el detalle de qué está hecho, qué está a medias y qué falta.

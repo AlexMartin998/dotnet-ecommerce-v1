@@ -30,13 +30,28 @@ public sealed class TransactionRunner(AppDbContext db) : ITransactionRunner
 
       await using var tx = await db.Database.BeginTransactionAsync(ct);
 
-      var result = await operation(ct);
+      try
+      {
+        var result = await operation(ct);
 
-      // El commit va SIN token a propósito: cancelar un commit a medias es peor que
-      // esperar a que termine.
-      await tx.CommitAsync(CancellationToken.None);
+        // El commit va SIN token a propósito: cancelar un commit a medias es peor que
+        // esperar a que termine.
+        await tx.CommitAsync(CancellationToken.None);
 
-      return result;
+        return result;
+      }
+      catch
+      {
+        // ⚠️ Y cada intento tiene que TERMINAR limpio, no solo empezar limpio. La
+        // transacción se deshace sola al disponerse el `tx`, pero el change tracker NO:
+        // las entidades del intento fallido siguen en `Added` sobre el DbContext del
+        // scope. Con el código de hoy no explota —nadie más llama a SaveChanges en ese
+        // request—, pero es una mina: cualquier SaveChanges posterior (un filtro, una
+        // auditoría futura) insertaría esas filas **fuera de toda transacción**. Y afecta
+        // a todo el que use el runner, no a un servicio concreto, así que se limpia aquí.
+        db.ChangeTracker.Clear();
+        throw;
+      }
     });
   }
 }

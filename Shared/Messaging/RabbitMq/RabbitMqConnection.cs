@@ -24,9 +24,22 @@ namespace ApiEcommerce.Shared.Messaging.RabbitMq;
 /// </remarks>
 public sealed class RabbitMqConnection(
     IOptions<RabbitMqOptions> options,
+    IEnumerable<EventSubscription> subscriptions,
     ILogger<RabbitMqConnection> logger) : IAsyncDisposable
 {
   private readonly RabbitMqOptions _options = options.Value;
+
+  /// <summary>
+  /// Las colas a declarar, una por consumidor registrado.
+  /// </summary>
+  /// <remarks>
+  /// Llegan por DI desde <c>AddEventConsumer</c>, o sea desde los slices: aquí no se
+  /// nombra ninguna. Es lo que permite añadir un consumidor sin tocar <c>Shared</c>.
+  /// Vacío es un estado legítimo —una réplica que solo publica— y entonces solo se declara
+  /// el exchange.
+  /// </remarks>
+  private readonly IReadOnlyList<EventSubscription> _subscriptions = [.. subscriptions];
+
   private readonly SemaphoreSlim _gate = new(1, 1);
 
   private IConnection? _connection;
@@ -135,54 +148,68 @@ public sealed class RabbitMqConnection(
   }
 
   /// <summary>
-  /// Declara exchange, cola, dead-letter y binding. Es idempotente: declarar algo que
-  /// ya existe con los mismos parámetros no hace nada.
+  /// Declara el exchange de eventos y, por cada suscripción registrada, su cola con su
+  /// dead-letter y su cola de espera. Es idempotente: declarar algo que ya existe con los
+  /// mismos parámetros no hace nada.
   /// </summary>
   /// <remarks>
-  /// Todo <c>durable</c> y los mensajes persistentes: sin eso, reiniciar el broker
-  /// pierde la cola y su contenido.
+  /// Todo <c>durable</c> y los mensajes persistentes: sin eso, reiniciar el broker pierde
+  /// la cola y su contenido.
   /// </remarks>
   private async Task DeclareTopologyAsync(IConnection connection, CancellationToken ct)
   {
     await using var channel = await connection.CreateChannelAsync(cancellationToken: ct);
 
     // Exchange de eventos: `topic` para que un consumidor pueda suscribirse a
-    // `product.*` sin que el publicador sepa quién escucha.
+    // `product.*` sin que el publicador sepa quién escucha. Es lo ÚNICO compartido entre
+    // suscripciones; todo lo demás es por cola.
     await channel.ExchangeDeclareAsync(
         _options.Exchange, ExchangeType.Topic, durable: true, autoDelete: false,
         cancellationToken: ct);
 
+    foreach (var subscription in _subscriptions)
+      await DeclareSubscriptionAsync(channel, subscription, ct);
+  }
+
+  /// <summary>Cola principal, dead-letter y cola de espera de una suscripción.</summary>
+  private async Task DeclareSubscriptionAsync(
+      IChannel channel, EventSubscription subscription, CancellationToken ct)
+  {
     // Dead letter: donde acaban los mensajes que agotaron sus reintentos. Sin DLQ,
     // un mensaje envenenado se reencola para siempre y bloquea la cola.
+    //
+    // ⚠️ UNA POR SUSCRIPCIÓN. Es fanout, así que dos colas apuntando a la misma DLX
+    // repartirían cada mensaje muerto a las DOS dead-letters: un fallo de órdenes
+    // aparecería también en la DLQ del catálogo. Mismo defecto que se midió en
+    // planning/18 con las colas de espera ligadas a un exchange.
     await channel.ExchangeDeclareAsync(
-        _options.DeadLetterExchange, ExchangeType.Fanout, durable: true, autoDelete: false,
+        subscription.DeadLetterExchange, ExchangeType.Fanout, durable: true, autoDelete: false,
         cancellationToken: ct);
 
     await channel.QueueDeclareAsync(
-        _options.DeadLetterQueue, durable: true, exclusive: false, autoDelete: false,
+        subscription.DeadLetterQueue, durable: true, exclusive: false, autoDelete: false,
         cancellationToken: ct);
 
     await channel.QueueBindAsync(
-        _options.DeadLetterQueue, _options.DeadLetterExchange, routingKey: string.Empty,
+        subscription.DeadLetterQueue, subscription.DeadLetterExchange, routingKey: string.Empty,
         cancellationToken: ct);
 
     await channel.QueueDeclareAsync(
-        _options.Queue, durable: true, exclusive: false, autoDelete: false,
+        subscription.Queue, durable: true, exclusive: false, autoDelete: false,
         arguments: new Dictionary<string, object?>
         {
           // Un nack sin requeue manda el mensaje aquí automáticamente.
-          ["x-dead-letter-exchange"] = _options.DeadLetterExchange
+          ["x-dead-letter-exchange"] = subscription.DeadLetterExchange
         },
         cancellationToken: ct);
 
     await channel.QueueBindAsync(
-        _options.Queue, _options.Exchange, _options.RoutingKey, cancellationToken: ct);
+        subscription.Queue, _options.Exchange, subscription.RoutingKey, cancellationToken: ct);
 
     // ---- reintento con espera -------------------------------------------------
     // Cola de ESPERA, sin consumidor. El mensaje entra, caduca por `x-message-ttl` y el
     // broker lo dead-letterea de vuelta al exchange principal, donde la cola principal lo
-    // recoge otra vez. Cada vuelta el broker incrementa `x-death[].count`, que es el
-    // contador real de intentos que antes no existía.
+    // recoge otra vez.
     //
     // ⚠️ Se añade como topología NUEVA en vez de cambiar el `x-dead-letter-exchange` de la
     // cola principal. Redeclarar una cola existente con argumentos distintos da
@@ -194,22 +221,25 @@ public sealed class RabbitMqConnection(
     // él recibirían una copia de cada reintento — y como el nombre lleva el TTL dentro
     // (para poder cambiarlo sin un 406), las de plazos anteriores siguen existiendo y
     // ligadas. Medido: un reintento aparecía a la vez en las tres colas de espera.
+    var retryQueue = subscription.RetryQueue(_options.RetryDelaySeconds);
+
     await channel.QueueDeclareAsync(
-        _options.RetryQueue, durable: true, exclusive: false, autoDelete: false,
+        retryQueue, durable: true, exclusive: false, autoDelete: false,
         arguments: new Dictionary<string, object?>
         {
           ["x-message-ttl"] = _options.RetryDelaySeconds * 1000,
           ["x-dead-letter-exchange"] = _options.Exchange,
           // Sin esto conservaría la routing key con la que entró aquí, y el mensaje no
           // encontraría la cola principal al volver.
-          ["x-dead-letter-routing-key"] = _options.RoutingKey
+          ["x-dead-letter-routing-key"] = subscription.RoutingKey
         },
         cancellationToken: ct);
 
     logger.LogInformation(
-        "RabbitMQ topology ready: {Exchange} -> {Queue} (retry {Retry} every {Delay}s, dlq {Dlq})",
-        _options.Exchange, _options.Queue, _options.RetryQueue, _options.RetryDelaySeconds,
-        _options.DeadLetterQueue);
+        "RabbitMQ topology ready: {Exchange} -[{RoutingKey}]-> {Queue} " +
+        "(retry {Retry} every {Delay}s, dlq {Dlq})",
+        _options.Exchange, subscription.RoutingKey, subscription.Queue, retryQueue,
+        _options.RetryDelaySeconds, subscription.DeadLetterQueue);
   }
 
   public async ValueTask DisposeAsync()
