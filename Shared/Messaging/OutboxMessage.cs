@@ -41,6 +41,20 @@ public class OutboxMessage
   [Required]
   public required string Payload { get; set; }
 
+  /// <summary>
+  /// Orden de inserción, asignado por la BASE (columna <c>IDENTITY</c>).
+  /// </summary>
+  /// <remarks>
+  /// ⚠️ El publicador ordena por esto y <b>no</b> por <see cref="OccurredAt"/>.
+  /// <c>OccurredAt</c> es <c>DateTime.Now</c> del proceso que escribió la fila: con dos
+  /// réplicas, el orden de publicación dependía del reloj de cada máquina, y dos eventos
+  /// del mismo agregado podían salir invertidos. Un <c>IDENTITY</c> lo asigna un único
+  /// árbitro —el servidor SQL— y además desempata las filas del mismo milisegundo, que
+  /// con inserciones en lote es lo normal.
+  /// </remarks>
+  public long Sequence { get; set; }
+
+  /// <summary>Cuándo ocurrió el hecho de negocio. Informativo: el ORDEN lo da <see cref="Sequence"/>.</summary>
   public DateTime OccurredAt { get; set; } = DateTime.Now;
 
   /// <summary>Momento en que se publicó con éxito. <c>null</c> = pendiente.</summary>

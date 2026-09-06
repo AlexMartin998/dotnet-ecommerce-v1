@@ -10,13 +10,22 @@
       → *retry queue* con `x-message-ttl` que dead-letterea de vuelta a la principal, y
       leer `x-death[0].count`. Se quitó `MaxDeliveryAttempts` de la configuración por no
       dejar una opción muerta que documenta algo que no ocurre.
-- [ ] **Claim en el `OutboxPublisher`.** El `SELECT` no tiene `UPDLOCK`/`READPAST` ni columna
-      de reserva: con dos réplicas, ambas leen el mismo lote y publican duplicados. No
-      corrompe (el consumidor deduplica) pero dobla el tráfico.
-      → `sp_getapplock`, o `UPDATE TOP(n) ... OUTPUT` que reserve el lote.
-- [ ] **Purga.** `OutboxMessages` procesados y `ProcessedMessages` crecen sin límite.
-- [ ] **Orden del outbox.** Se ordena por `OccurredAt` (`DateTime.Now`, local) **sin
-      desempate**: entre réplicas depende del reloj de cada máquina.
+- [x] **Claim en el `OutboxPublisher`.** Resuelto con **`sp_getapplock` exclusivo**
+      (`@LockOwner='Transaction'`, `@LockTimeout=0`) en vez de un claim por filas.
+      ⚠️ **La decisión importa**: un claim con `LockedUntil` permitiría a dos réplicas
+      drenar *en paralelo*, y eso destruye la garantía de orden que da `Sequence`; además
+      obliga a gestionar la expiración para que una réplica muerta no deje filas
+      bloqueadas. Serializar el drenaje no cuesta nada (lote acotado, cada 5 s) y sale más
+      simple **y** más correcto. Verificado: reteniendo el lock desde otra sesión, la
+      compra sigue dando **200** y no se publica nada; al soltarlo, se publica.
+- [x] **Purga.** `OutboxCleaner` (BackgroundService), retención configurable, borrado en
+      tandas de 5.000 con `ExecuteDeleteAsync` para no escalar el bloqueo a toda la tabla.
+      ⚠️ **Nunca toca lo no procesado**: un evento que agotó reintentos sigue pendiente de
+      revisión y borrarlo sería perder el hecho de negocio en silencio. Verificado con una
+      fila de 30 días agotada: sobrevive; la procesada de al lado se borra.
+- [x] **Orden del outbox.** Columna `Sequence` (`bigint IDENTITY`): el orden lo asigna un
+      único árbitro —el servidor SQL— y desempata las filas del mismo milisegundo. El
+      índice filtrado de pendientes pasa a ir por `Sequence`.
 
 ## 12.2 Concurrencia y contrato
 - [ ] **`ETag` / `If-Match` para el *lost update* entre admins.** `RowVersion` existe pero no
@@ -29,11 +38,13 @@
 ## 12.3 Observabilidad y operación
 - [ ] **OpenTelemetry**: trazas y métricas, más un correlation id por request. Es lo primero
       que se pide en un incidente y no se puede añadir *después* del incidente.
-- [ ] **CI**: nada corre `dotnet build` antes de un merge.
-- [ ] **Construir la imagen**: el `Dockerfile` nunca se ha construido (no hay Docker aquí).
+- [x] **CI**: `.github/workflows/ci.yml` (build con `-warnaserror` + 153 tests en cada push y PR).
+- [x] **Construir la imagen**: job `docker-build` en la CI.
 - [ ] `UseHsts()` en no-Development.
-- [ ] Unificar las **tres** conexiones a Redis (`AddStackExchangeRedisCache`, el
-      `IConnectionMultiplexer` propio, y el health check) pasando el multiplexer a las otras.
+- [~] Unificar las conexiones a Redis. **Hecho** para `AddStackExchangeRedisCache` y el
+      `IConnectionMultiplexer` propio (un solo multiplexer vía `ConnectionMultiplexerFactory`);
+      lo destapó medir la degradación: el de la cache se quedaba con los timeouts de
+      fábrica y esperaba 5 s. **Falta** el health check.
 
 ## 12.4 Decisión de producto pendiente
 - [ ] **Licencia de AutoMapper.** La 15.1.1 exige licencia comercial en producción y lo avisa

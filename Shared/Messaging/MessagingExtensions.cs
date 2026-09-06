@@ -17,6 +17,12 @@ public static class MessagingExtensions
   public static IServiceCollection AddMessaging(
       this IServiceCollection services, IConfiguration configuration)
   {
+    // El outbox tiene su propia sección: no depende de que haya broker ni de cuál sea.
+    services.AddOptions<OutboxOptions>()
+        .Bind(configuration.GetSection(OutboxOptions.SectionName))
+        .ValidateDataAnnotations()
+        .ValidateOnStart();
+
     services.AddOptions<RabbitMqOptions>()
         .Bind(configuration.GetSection(RabbitMqOptions.SectionName))
         .ValidateDataAnnotations()
@@ -25,6 +31,10 @@ public static class MessagingExtensions
     // Scoped: comparte el AppDbContext del request, que es justo lo que hace que el
     // evento se confirme en la misma transacción que el cambio de negocio.
     services.AddScoped<IEventOutbox, EventOutbox>();
+
+    // La purga tampoco depende del broker: las tablas crecen aunque no haya nadie
+    // publicando, y con RabbitMQ apagado crecen MÁS. Va fuera del `if` de abajo.
+    services.AddHostedService<OutboxCleaner>();
 
     var options = configuration.GetSection(RabbitMqOptions.SectionName).Get<RabbitMqOptions>()
                   ?? new RabbitMqOptions();
