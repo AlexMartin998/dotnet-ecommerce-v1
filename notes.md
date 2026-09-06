@@ -2882,3 +2882,95 @@ grep -cE "^\[[0-9:]+ ERR\]"    # el bueno
        es lo ultimo que uno quiere no ver
   - -- un error correlado con su explicacion en la linea siguiente es mucho mejor que una
        categoria silenciada
+
+
+---
+---
+
+
+## 33. Sesiones revocables  <- y dos cookies que fallan en silencio
+
+- --- **El problema de fondo de un JWT: es autocontenido**
+  - -- firma buena + no expirado = valido, y no hay estado del servidor que consultar
+  - -- por eso un token robado valia los 60 min enteros: ni el logout ni cambiar la
+       contraseña lo invalidaban
+  - -- la solucion no es "revocar el JWT" (no se puede sin romper lo que lo hace util):
+       es **acortarlo** (60 -> 15 min) y darle un mecanismo de renovacion que SI sea
+       revocable
+
+- --- ⭐ **Rotacion: lo que convierte un robo en algo DETECTABLE**
+```
+cada refresco gasta el token y entrega otro
+   -> si reaparece uno YA GASTADO, o hay dos copias circulando o el cliente
+      lanzo dos refrescos a la vez
+```
+  - -- sin rotacion no hay nada que detectar: el ladron usa el token y nadie se entera
+  - -- al detectar reuso se revoca **la familia entera**: con dos copias circulando no se
+       sabe cual es la del dueño. Duro a proposito
+
+- --- ⚠️ **Y la ventana de gracia, que NO es un parche**
+  - -- sin ella la deteccion es **inutilizable en la practica**: un movil o una SPA lanzan
+       peticiones en paralelo, dos reciben 401 casi a la vez, las dos refrescan con el
+       mismo token y la segunda parece un ladron
+  - -- resultado: cerrar la sesion de usuarios legitimos constantemente
+  - -- dentro de la ventana se rechaza igual (ese token esta gastado) pero **no** se revoca
+       la familia, asi que el token nuevo que ya recibio la otra peticion sigue valiendo
+  - -- es el *leeway* de Auth0. El precio: un ladron que reuse en los primeros segundos
+       pasa desapercibido — a cambio de poder tener el mecanismo ENCENDIDO
+
+- --- **`UPDATE ... WHERE RevokedAt IS NULL`, no leer-y-escribir**
+  - -- entre "compruebo que esta vivo" y "lo marco" cabe otra peticion, y entonces las dos
+       rotan el mismo token: dos sesiones validas donde debia haber una
+  - -- misma forma que el descuento de stock. La condicion va DENTRO de la sentencia
+
+- --- **La misma division del cap. 30, otra vez**
+```
+GARANTIA      "esta sesion no se puede extender"  -> familia revocada en la BASE
+OPTIMIZACION  "y el token que ya tienes muere ya" -> denylist de jti en Redis
+```
+  - -- verificado con Redis muerto: el logout **sigue cortando la sesion**; lo unico que
+       sobrevive es el access token actual, y dura como mucho 15 min
+  - -- que la denylist falle en abierto es correcto: corre en CADA peticion autenticada, y
+       fallar en cerrado ahi convierte un corte de Redis en "nadie puede usar la API"
+
+- --- 🔴 **DOS trampas de cookies con la MISMA forma**
+```
+login responde 200 -> la cookie NO se guarda -> el refresh falla SIEMPRE
+   y en el servidor no hay ni un error
+```
+  - -- **1) el prefijo `__Host-`**: obliga al navegador a exigir `Secure` **y** `Path=/`
+       **y** ningun `Domain`; si algo no cuadra **descarta la cookie sin avisar**. Aqui
+       chocaba dos veces (Path acotado a `/api/v1/auth`, y HTTP en local)
+  - -- **2) `Secure` decidido por el ENTORNO**: puse `!IsDevelopment()`, y el host de tests
+       usa `"Testing"` y sirve por HTTP -> cookie `Secure` sobre HTTP -> **ningun test de
+       sesion podia pasar**. Lo cazaron los tests
+  - -- lo correcto es el **esquema real**: `Request.IsHttps`. Se ajusta solo en local, en
+       tests y en produccion. ⚠️ Detras de un proxy TLS depende de `UseForwardedHeaders`
+  - -- leccion: una condicion sobre el ENTORNO se rompe en cuanto alguien llama al entorno
+       de otra forma. Una condicion sobre el HECHO, no
+
+- --- ⚠️ **`AllowCredentials()` en CORS o la cookie no viaja**
+  - -- sin eso el navegador **no manda** la cookie a otro origen ni acepta la respuesta que
+       la establece
+  - -- y combinarlo con `AllowAnyOrigin()` esta **prohibido por la especificacion** (ASP.NET
+       lanza en ejecucion): es la mejor razon retrospectiva para no haber puesto el comodin
+
+- --- **Detalles pequeños que evitan agujeros**
+  - -- `Cookies.Delete` hay que llamarlo con **las mismas opciones** con las que se escribio
+       (Path, SameSite): si no, el navegador lo trata como otra cookie y la original sigue
+  - -- `logout` es `[AllowAnonymous]`: el caso mas habitual de cerrar sesion es que el
+       access token YA haya expirado. Exigirlo dejaria al usuario sin poder salir
+  - -- el logout es **idempotente**: dos veces, o sin cookie, devuelve 204. Un error dejaria
+       al usuario sin saber si esta dentro o fuera
+  - -- `FamilyId` en vez de seguir `ReplacedByToken`: recorrer la cadena es una consulta por
+       eslabon y basta que falte uno para dejar media sesion viva
+  - -- SHA-256 **a secas** para la huella, no bcrypt: el valor ya son 256 bits de un CSPRNG,
+       no hay nada que adivinar por fuerza bruta y un hash lento solo añade latencia
+  - -- la purga va **en el slice** (`RefreshTokenCleaner`), no en `OutboxCleaner`: meterla
+       ahi haria que `Shared/Messaging` nombrara una entidad de `Accounts`
+
+- --- ✏️ **Y otra vez el falso negativo del que mide**
+  - -- mi comprobacion decia `HttpOnly=False`. Kestrel emite `httponly` en **minuscula** y yo
+       comparaba sensible a mayusculas
+  - -- segundo caso en dos dias (el otro, `grep "[ERR]"`). El patron: **cuando algo sale
+       "mal" en una comprobacion propia, sospechar primero de la comprobacion**

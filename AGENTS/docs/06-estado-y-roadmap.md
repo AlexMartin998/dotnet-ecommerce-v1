@@ -231,11 +231,23 @@ Los tres bloques del composition root (`AddApplication` / `AddInfrastructure` /
 partir en proyectos la convierte en algo que impone el compilador. **No es
 urgente**: hacerlo antes de que el proyecto lo pida solo añade fricción.
 
-### Paso 10 — Refresh tokens y revocación
+### Paso 10 — Refresh tokens y revocación — ✅ **hecho** (2026-09-06)
 
-El access token dura 60 min y no se puede revocar. El claim `jti` ya se emite: con
-él, una denylist en Redis (la misma instancia que ya está conectada) permite
-invalidar un token concreto. Un refresh token rotatorio en base cierra el ciclo.
+Detalle en [`planning/13`](../planning/13_refresh-tokens.md).
+
+Hasta ahora un access token robado valía 60 minutos y no había forma de invalidarlo.
+Ahora el access token dura **15 minutos** y se renueva con un refresh token que viaja
+en **cookie `HttpOnly`** (decisión del owner), con **rotación y detección de reuso**:
+reusar un token ya gastado fuera de la ventana de gracia revoca la familia entera.
+
+⚠️ La ventana de gracia no es un parche: sin ella, dos refrescos en paralelo de un
+cliente legítimo —lo normal en un móvil o una SPA— parecen un robo y cierran la
+sesión sin parar.
+
+Misma división que la idempotencia: la **garantía** («esta sesión no se puede
+extender») es la familia revocada en la base, en una transacción; la **optimización**
+es la denylist de `jti` en Redis, que solo adelanta la muerte del access token que el
+cliente ya tiene. Verificado con Redis muerto: el logout sigue cortando la sesión.
 
 ### Paso 11 — Endpoint de administración de usuarios
 

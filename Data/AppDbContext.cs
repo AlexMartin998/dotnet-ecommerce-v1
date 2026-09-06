@@ -47,6 +47,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
   /// </summary>
   public DbSet<ExecutedCommand> ExecutedCommands { get; set; }
 
+  /// <summary>
+  /// Refresh tokens emitidos. Es la GARANTÍA de que una sesión se puede cortar: revocar
+  /// y emitir el siguiente ocurren en la misma transacción.
+  /// </summary>
+  public DbSet<RefreshToken> RefreshTokens { get; set; }
+
 
   /// <summary>
   /// <c>base.OnModelCreating</c> es <b>obligatorio</b>: es quien mapea las tablas de
@@ -99,6 +105,24 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     modelBuilder.Entity<ExecutedCommand>()
         .HasIndex(c => c.ExecutedAt)
         .HasDatabaseName("IX_ExecutedCommands_ExecutedAt");
+
+    // ÚNICO: por aquí se busca en cada refresh, y además impide que dos tokens
+    // distintos acaben con la misma huella.
+    modelBuilder.Entity<RefreshToken>()
+        .HasIndex(t => t.TokenHash)
+        .IsUnique()
+        .HasDatabaseName("IX_RefreshTokens_TokenHash");
+
+    // Por aquí se revoca la familia entera cuando se detecta un reuso; sin índice sería
+    // un scan de la tabla justo en el momento en el que hay que reaccionar deprisa.
+    modelBuilder.Entity<RefreshToken>()
+        .HasIndex(t => t.FamilyId)
+        .HasDatabaseName("IX_RefreshTokens_FamilyId");
+
+    // La purga borra por fecha de expiración.
+    modelBuilder.Entity<RefreshToken>()
+        .HasIndex(t => t.ExpiresAt)
+        .HasDatabaseName("IX_RefreshTokens_ExpiresAt");
   }
 
 

@@ -21,10 +21,15 @@ namespace ApiEcommerce.Features.Accounts.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly IAuthService _service;
+    private readonly IRefreshTokenService _sessions;
+    private readonly RefreshTokenCookie _cookie;
 
-    public AuthController(IAuthService service)
+    public AuthController(
+        IAuthService service, IRefreshTokenService sessions, RefreshTokenCookie cookie)
     {
         _service = service;
+        _sessions = sessions;
+        _cookie = cookie;
     }
 
     /// <summary>Alta de un usuario nuevo. Siempre con rol <c>user</c>.</summary>
@@ -49,6 +54,10 @@ public class AuthController : ControllerBase
         // username/email repetido -> 409 ; política de password -> 422
         var result = await _service.RegisterAsync(dto, ct);
 
+        // Registrarse deja la sesión abierta, igual que el login: si no, el cliente
+        // recibiría un access token que no puede renovar y en 15 minutos estaría fuera.
+        await OpenSessionAsync(result.User.Id, ct);
+
         return CreatedAtRoute("GetProfile", new { version = "1.0" }, result);
     }
 
@@ -67,8 +76,77 @@ public class AuthController : ControllerBase
 
         // credenciales inválidas -> 401 ; cuenta bloqueada -> 403
         var result = await _service.LoginAsync(dto, ct);
+
+        await OpenSessionAsync(result.User.Id, ct);
+
         return Ok(result);
     }
+
+    /// <summary>Cambia un refresh token por un access token nuevo (y otro refresh token).</summary>
+    /// <remarks>
+    /// El refresh token NO viaja en el cuerpo: se lee de la cookie <c>HttpOnly</c>, que es
+    /// justo lo que impide que un XSS se lo lleve. Por eso este endpoint no recibe DTO.
+    /// </remarks>
+    [AllowAnonymous]
+    [HttpPost("refresh", Name = "RefreshToken")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<AuthResponseDto>> Refresh(CancellationToken ct)
+    {
+        var current = _cookie.Read(Request);
+
+        if (string.IsNullOrEmpty(current))
+            return Unauthorized(Problem(
+                "No refresh token was provided.", "missing_refresh_token"));
+
+        // No existe, gastado o caducado -> 401. Y si es un reuso fuera de la ventana de
+        // gracia, el servicio ya habrá revocado la familia entera antes de lanzar.
+        var (auth, refreshed) = await _sessions.RotateAsync(current, ClientIp(), ct);
+
+        _cookie.Write(Response, refreshed);
+
+        return Ok(auth);
+    }
+
+    /// <summary>Cierra la sesión: revoca la familia de refresh tokens y borra la cookie.</summary>
+    /// <remarks>
+    /// <c>[AllowAnonymous]</c> a propósito: el caso más habitual de cerrar sesión es que
+    /// el access token ya haya expirado. Exigir uno válido dejaría al usuario sin poder
+    /// cerrar justo cuando más falta le hace.
+    /// </remarks>
+    [AllowAnonymous]
+    [HttpPost("logout", Name = "Logout")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public async Task<IActionResult> Logout(CancellationToken ct)
+    {
+        // Si venía un access token válido, su `jti` entra en la denylist para que muera
+        // ya en vez de al expirar. Es un extra: la sesión se corta con o sin él.
+        await _sessions.LogoutAsync(
+            _cookie.Read(Request), User.GetTokenId(), User.GetTokenExpiry(), ct);
+
+        _cookie.Clear(Response);
+
+        // 204 siempre, incluso sin cookie o con una ya revocada: cerrar sesión dos veces
+        // tiene que ser inofensivo, y un error dejaría al usuario sin saber si salió.
+        return NoContent();
+    }
+
+    // ---- helpers -----------------------------------------------------------
+
+    /// <summary>Emite el refresh token de una sesión nueva y lo deja en la cookie.</summary>
+    private async Task OpenSessionAsync(string userId, CancellationToken ct)
+        => _cookie.Write(Response, await _sessions.IssueAsync(userId, ClientIp(), ct));
+
+    /// <summary>Solo para investigar incidentes; no se usa para decidir nada.</summary>
+    private string? ClientIp() => HttpContext.Connection.RemoteIpAddress?.ToString();
+
+    private static ProblemDetails Problem(string detail, string code) => new()
+    {
+        Status = StatusCodes.Status401Unauthorized,
+        Title = "Unauthorized",
+        Detail = detail,
+        Extensions = { ["code"] = code }
+    };
 
     /// <summary>Perfil del portador del token.</summary>
     [Authorize]

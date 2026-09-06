@@ -61,5 +61,25 @@ public sealed class ConfigureJwtBearerOptions(IOptions<JwtOptions> jwtOptions)
       // 5 minutos más. Con reloj sincronizado, 30 s sobra.
       ClockSkew = TimeSpan.FromSeconds(30)
     };
+
+    // Firma buena y sin expirar NO significa "sigue valiendo": un logout puede haberlo
+    // invalidado antes de tiempo. Es el precio de que un JWT sea autocontenido — no hay
+    // estado del lado del servidor a menos que se añada aquí.
+    options.Events = new JwtBearerEvents
+    {
+      OnTokenValidated = async context =>
+      {
+        var tokenId = context.Principal?.GetTokenId();
+
+        if (string.IsNullOrEmpty(tokenId)) return;
+
+        var denylist = context.HttpContext.RequestServices.GetRequiredService<IAccessTokenDenylist>();
+
+        if (await denylist.IsRevokedAsync(tokenId, context.HttpContext.RequestAborted))
+          // `Fail` y no una excepción: el pipeline lo convierte en un 401 limpio, que es
+          // lo que el cliente debe ver — su token ya no vale, punto.
+          context.Fail("The access token has been revoked.");
+      }
+    };
   }
 }
