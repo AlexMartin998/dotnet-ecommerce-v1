@@ -38,6 +38,15 @@ public sealed class RefreshTokenRepository(AppDbContext db) : IRefreshTokenRepos
         .ExecuteUpdateAsync(setters => setters.SetProperty(t => t.RevokedAt, now), ct);
   }
 
+  public Task<int> RevokeAllForUserAsync(string userId, CancellationToken ct = default)
+  {
+    var now = DateTime.Now;
+
+    return db.RefreshTokens
+        .Where(t => t.UserId == userId && t.RevokedAt == null)
+        .ExecuteUpdateAsync(setters => setters.SetProperty(t => t.RevokedAt, now), ct);
+  }
+
   public Task SaveChangesAsync(CancellationToken ct = default) => db.SaveChangesAsync(ct);
 
   public Task<int> DeleteExpiredBeforeAsync(DateTime cutoff, int batchSize, CancellationToken ct = default)

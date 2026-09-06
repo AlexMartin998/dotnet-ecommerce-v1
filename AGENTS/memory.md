@@ -45,13 +45,25 @@ nunca hace push (`rules.md` §12).
    y `Secure`; y decidir `Secure` por `IsDevelopment()` rompe el host de tests, que usa
    `"Testing"` sobre HTTP. Se decide por `Request.IsHttps`.
 
+7. **`planning/14` — administración de usuarios**: listado paginado, roles, bloqueo.
+   🔴 Y destapó que **bloquear una cuenta no servía de nada**: Identity comprueba el
+   bloqueo en el login, pero renovar no vuelve a pedir credenciales, así que una cuenta
+   bloqueada con la sesión abierta se quedaba dentro **para siempre**. Cerrado por los dos
+   lados (bloquear revoca sesiones; renovar comprueba el bloqueo).
+
 ### Por dónde seguir (en este orden)
-1. **`planning/14`** administración de usuarios. Hoy el único camino para tener un admin es
-   el seeder. Se lleva de paso dos cosas de `planning/13`: revocar todas las sesiones al
-   cambiar la contraseña, y un «cerrar sesión en todos los dispositivos».
-2. `planning/15` (partir en proyectos) sigue **diferido a propósito**.
-3. Deuda menor viva, toda anotada: `planning/13` (no hay cliente móvil cubierto: la cookie
-   es una decisión para SPA), `planning/17` §17.4 y `planning/19` §19.4.
+
+**El roadmap se ha quedado sin pendientes salvo el 15, que está diferido a propósito.**
+Lo que hay son deudas menores, todas anotadas:
+
+1. **Cambio de contraseña** — no existe el endpoint, y debería revocar las sesiones al
+   usarlo (`RevokeAllSessionsAsync` ya está). Junto con «cerrar sesión en todos mis
+   dispositivos», que es exponer lo que ya hay. `planning/14`.
+2. **Deuda menor viva**: `planning/13` (la cookie es una decisión para SPA: un cliente
+   móvil no está cubierto), `planning/17` §17.4, `planning/19` §19.4 (EF loguea a Error sus
+   fallos de conexión — se deja a propósito).
+3. `planning/15` (partir en proyectos) sigue **diferido a propósito**. La señal para
+   retomarlo está en `docs/06`.
 
 ⚠️ **Colas huérfanas en el broker de desarrollo**: al cambiar `RetryDelaySeconds` quedan
 colas `…retry.<N>s` de plazos anteriores. Están vacías y **ya no reciben nada** (no tienen
@@ -349,7 +361,7 @@ misma transacción que el efecto) y outbox +
 RabbitMQ — este último **verificado de punta a punta contra un broker real** el
 2026-09-05, incluidos deduplicación y DLQ.
 
-**Tests y CI hechos**: `tests/ApiEcommerce.Tests`, **193** (unitarios + integración +
+**Tests y CI hechos**: `tests/ApiEcommerce.Tests`, **202** (unitarios + integración +
 concurrencia + degradación y arranque) y `.github/workflows/ci.yml`. **`planning/12`
 cerrado** salvo la licencia de AutoMapper. Lo siguiente es `planning/12` §12.5 (la deuda
 nueva) y luego refresh tokens y administración de usuarios.

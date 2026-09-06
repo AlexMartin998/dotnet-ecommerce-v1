@@ -58,6 +58,19 @@ public interface IRefreshTokenService
   Task LogoutAsync(
       string? refreshToken, string? accessTokenId, DateTime? accessTokenExpiresAt,
       CancellationToken ct = default);
+
+  /// <summary>
+  /// Corta <b>todas</b> las sesiones de un usuario, esté donde esté conectado.
+  /// </summary>
+  /// <remarks>
+  /// ⚠️ No se puede invalidar aquí los access tokens ya emitidos: la denylist va por
+  /// <c>jti</c> y no sabemos cuáles son los del usuario. Sobreviven <b>como mucho lo que
+  /// dure un access token</b> (15 min), y en ese rato el usuario ya no puede renovar. Es
+  /// una consecuencia de que un JWT sea autocontenido, no un descuido.
+  /// </remarks>
+  /// <param name="userId">De quién.</param>
+  /// <param name="ct">Token de cancelación.</param>
+  Task RevokeAllSessionsAsync(string userId, CancellationToken ct = default);
 }
 
 

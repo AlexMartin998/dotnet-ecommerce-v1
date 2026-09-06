@@ -46,6 +46,14 @@ public interface IRefreshTokenRepository
   /// <returns>Cuántos se revocaron.</returns>
   Task<int> RevokeFamilyAsync(Guid familyId, CancellationToken ct = default);
 
+  /// <summary>Revoca TODAS las sesiones vivas de un usuario, sean de la familia que sean.</summary>
+  /// <remarks>
+  /// Es lo que hace que bloquear una cuenta signifique algo: sin esto el usuario sigue
+  /// dentro y puede seguir renovando indefinidamente.
+  /// </remarks>
+  /// <returns>Cuántos se revocaron.</returns>
+  Task<int> RevokeAllForUserAsync(string userId, CancellationToken ct = default);
+
   /// <summary>Confirma lo pendiente.</summary>
   Task SaveChangesAsync(CancellationToken ct = default);
 
