@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using ApiEcommerce.Features.Ordering.Dtos;
 using ApiEcommerce.Features.Ordering.Service;
 using ApiEcommerce.Shared.Auth;
@@ -86,6 +87,29 @@ public class OrderController : ControllerBase
             return ValidationProblem(ModelState);
 
         return Ok(await _service.GetPagedForBuyerAsync(query, User.GetRequiredUserId(), ct));
+    }
+
+    /// <summary>Todas las órdenes, de cualquier comprador. Solo administración.</summary>
+    /// <remarks>
+    /// Endpoint aparte y no un parámetro de <c>/paged</c>: quien puede ver las compras de
+    /// terceros no es el mismo que quien puede ver las suyas, y una ruta por autorización
+    /// hace imposible que un fallo de filtrado convierta un listado propio en uno global.
+    /// </remarks>
+    [Authorize(Roles = Roles.Admin)]
+    [HttpGet("all", Name = "GetAllOrders")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<PagedResult<OrderDto>>> GetAllOrders(
+        [FromQuery] PageQuery query,
+        [FromQuery][StringLength(50)] string? number,
+        CancellationToken ct)
+    {
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        return Ok(await _service.GetPagedForAdminAsync(query, number, ct));
     }
 
     /// <summary>Descarga el comprobante en PDF.</summary>

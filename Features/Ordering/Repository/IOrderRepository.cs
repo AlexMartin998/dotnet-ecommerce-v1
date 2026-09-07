@@ -34,6 +34,14 @@ public interface IOrderRepository
   Task<(IReadOnlyList<Order> Items, int Total)> GetPagedForBuyerAsync(
       string buyerUserId, int skip, int take, CancellationToken ct = default);
 
+  /// <summary>Órdenes de todos los compradores. Solo para administración.</summary>
+  /// <remarks>
+  /// <paramref name="numberPrefix"/> filtra por prefijo del número y no por subcadena: un
+  /// <c>LIKE '%x%'</c> no puede usar <c>IX_Orders_Number</c> y degrada a recorrido completo.
+  /// </remarks>
+  Task<(IReadOnlyList<Order> Items, int Total)> GetPagedAsync(
+      string? numberPrefix, int skip, int take, CancellationToken ct = default);
+
   /// <summary>Deja constancia de que el comprobante ya está disponible.</summary>
   Task SetReceiptAsync(int orderId, string documentKey, CancellationToken ct = default);
 

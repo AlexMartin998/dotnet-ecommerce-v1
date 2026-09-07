@@ -41,6 +41,37 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 
 ## 2. Bitácora
 
+### 2026-09-07 — Listado de administración de órdenes (`GET /order/all`)
+
+Lo pidió el owner después de mirar los logs y no ver ninguna orden: `GET /order/paged`
+filtra por comprador (`Where(o => o.BuyerUserId == …)`), estaba entrando con un usuario
+recién registrado y las 70 órdenes de la base son de `admin`. El `200` con página vacía era
+correcto; lo que faltaba era la vista de administración.
+
+- **`GET /api/v1/order/all`** — paginado sobre todas las órdenes, con `?number=` que filtra
+  por **prefijo** del número. Prefijo y no subcadena: un `LIKE '%x%'` no puede usar
+  `IX_Orders_Number` y degrada a recorrido completo.
+- **Ruta aparte, no un parámetro de `/paged`.** Un `?all=true` haría que la autorización
+  dependiera de que un filtro esté bien puesto; con dos rutas, el `[Authorize(Roles = admin)]`
+  es lo único que las separa y no hay forma de que un listado propio se vuelva global.
+- **`OrderDto.BuyerUserId`** — el listado de admin no sirve si no dice de quién es cada
+  orden. Es aditivo: en el listado propio es el id del que pregunta, que ya conoce.
+- **Índice `IX_Orders_PlacedAt`** (migración `20260907012548_OrdersAdminListingIndex`). El
+  índice que había es `(BuyerUserId, PlacedAt)` y no sirve para ordenar sin filtrar por
+  comprador: sin este, el listado global era recorrido completo más ordenación.
+
+⚠️ Volví a pisar la trampa de `dotnet ef migrations add --no-build`: generó una migración
+**vacía** porque usó el ensamblado anterior a editar `AppDbContext`, y el `migrations remove`
+—también con `--no-build`— intentó borrar la migración *anterior*, que ya estaba aplicada.
+Está documentada en `CLAUDE.md` §10 y aun así la usé. Rehecho compilando primero.
+
+Verificado ejecutando contra SQL Server real: admin ve **70 órdenes / 24 páginas**,
+`?number=ORD-2026-000042` devuelve exactamente una, un número inexistente devuelve `200`
+con `[]` (no 404), usuario normal **403**, anónimo **401**, `pageSize=1000` **400**,
+`page=2147483647` **200** (la corrección de `PageQuery.SkipFor` aguanta), `number` de 80
+caracteres **400**. El listado propio sigue devolviendo 0 para un usuario ajeno.
+Suite **282/282** (+4), build limpio con `-warnaserror`, 0 errores en el log del arranque.
+
 ### 2026-09-07 — Limpiar el codigo, y las cinco cosas que la revision destapo
 
 El 40 % del codigo fuente eran comentarios (5.241 de 13.200 lineas): `<remarks>` de tres

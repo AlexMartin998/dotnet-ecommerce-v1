@@ -61,6 +61,9 @@ public class OrderDto
   public string Status { get; set; } = string.Empty;
   public string Currency { get; set; } = string.Empty;
 
+  /// <summary>Quién compró. En los listados del propio comprador es siempre él mismo.</summary>
+  public string BuyerUserId { get; set; } = string.Empty;
+
   public decimal Subtotal { get; set; }
   public decimal Discount { get; set; }
   public decimal Tax { get; set; }

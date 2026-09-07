@@ -54,6 +54,7 @@ paginación y seeding.
 | Varias colas / varios consumidores | ✅ | cada slice declara su `EventSubscription`; `RabbitMqConnection` declara la topología de todas, con **una DLX por cola** |
 | **Órdenes** (`Features/Ordering`) | ✅ | slice completo: `Order`/`OrderItem`, número por secuencia, puerto `ICatalogGateway`, `POST /api/v1/order` transaccional e idempotente |
 | Comprobante en PDF | ✅ | **asíncrono** por `OrderPlaced` → `IReceiptGenerator`; QuestPDF detrás de `IReceiptRenderer` |
+| Listado de administración de órdenes | ✅ | `GET /api/v1/order/all` (`admin`): paginado sobre todos los compradores, filtro por prefijo de `Number`, índice `IX_Orders_PlacedAt` |
 | Almacén de documentos privados | ✅ | `IDocumentStore` + `LocalDocumentStore`, **fuera de `wwwroot`**, clave opaca; cambiar a S3/R2/MinIO/Cloudinary es una implementación y una línea |
 | Dockerfile + compose | ✅ | multi-stage, usuario `$APP_UID` de la imagen base, `curl` instalado para el healthcheck |
 | Migraciones al arrancar | ✅ | `MigrateAsync()` en el scope de arranque (la imagen runtime no lleva `dotnet-ef`) |
@@ -349,6 +350,9 @@ arreglar → reemitir → la orden vuelve a `available` con su PDF.
   el coste es una conexión del pool ocupada. Vale la pena mirarlo si se sube el prefetch o
   el documento se vuelve pesado; moverlo fuera exigiría que `ProcessOnceAsync` aceptara una
   fase previa no transaccional, y eso debilita la garantía.
+- **Buscar órdenes por algo que no sea el número.** `GET /order/all` filtra por prefijo del
+  número porque es lo que sostiene `IX_Orders_Number`. Por comprador, estado o rango de
+  fechas hace falta decidir antes qué índices se pagan; hoy no hay caso de uso que lo pida.
 - **Un solo vendedor por orden.** La imagen de referencia era un marketplace con
   sub-órdenes por *seller*. Cuando haya sellers, la orden se parte y el comprobante también.
 - **Cancelar o devolver una orden.** Devolver stock tiene sus propias invariantes; no se

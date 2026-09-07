@@ -3640,3 +3640,55 @@ lo que la maquina NO puede verificar:     si el comentario que queda dice la ver
        ~40 `<summary>` de relleno del tipo "Clave primaria." sobre `int Id`
   - -- o sea: **comprimir texto tecnico introduce errores**, y el que comprime no los ve.
        Si vas a resumir 5.000 lineas de razones, presupuesta a alguien que las relea
+
+
+## 39. Listar las ordenes de todos  <- y por que "la misma transaccion" no es "el cliente espera"
+
+- --- **El sintoma: "no veo mis ordenes" con la base llena de ordenes**
+```
+GET /api/v1/Order/paged  ->  200  { "items": [], "totalItems": 0 }
+SELECT COUNT(*) FROM Orders  ->  70
+```
+  - -- las 70 eran de `admin`; yo entraba con un usuario recien registrado. El listado
+       filtra por comprador (`Where(o => o.BuyerUserId == …)`), asi que la pagina vacia era
+       **la respuesta correcta**
+  - -- lo que faltaba de verdad: **no habia forma de ver las ordenes de todos**
+
+- --- **`GET /api/v1/order/all`, y por que es una RUTA aparte y no `?all=true`**
+  - -- con un parametro, la autorizacion depende de que un `if` este bien puesto; con dos
+       rutas, lo unico que las separa es `[Authorize(Roles = admin)]` y **no hay filtro que
+       se pueda olvidar**
+  - -- el filtro `?number=` es por **PREFIJO**, no por subcadena: `LIKE '%x%'` envuelve la
+       columna y no puede usar `IX_Orders_Number` — el mismo error que ya se pago con
+       `LTRIM(RTRIM(...))` en el capitulo anterior
+  - -- hizo falta un indice nuevo (`IX_Orders_PlacedAt`): el que habia es
+       `(BuyerUserId, PlacedAt)` y **no sirve para ordenar sin filtrar por comprador**
+
+- --- ⭐ **Lo que no habia entendido: hay DOS transacciones, y la del PDF no es la mia**
+```
+T1  peticion:   stock + Orders + OutboxMessages + ExecutedCommands  -> COMMIT -> 201  (~40 ms)
+T2  consumidor: ProcessedMessages + dibujar PDF + fichero + UPDATE  -> COMMIT  (segundo plano)
+```
+  - -- "misma transaccion" **no** significa "el cliente espera": significa "esto se confirma
+       todo o nada". El PDF nunca estuvo en la peticion
+  - -- T1 va junta porque partirla deja estados imposibles: stock descontado sin orden, o
+       una orden **sin fila de outbox**, que es una orden sin comprobante para siempre
+  - -- T2 va junta aunque nadie espere, porque el broker entrega *al menos una vez*: si la
+       marca de "procesado" se confirmara antes que el efecto, un PDF fallido dejaria el
+       mensaje marcado y la reentrega lo tiraria como duplicado
+
+- --- **El unico punto sucio, y es inevitable: un fichero no se puede hacer ROLLBACK**
+```
+fichero -> UPDATE -> COMMIT    si se cae en medio: PDF huerfano   (basura, recolectable)
+COMMIT  -> fichero             si se cae en medio: orden "available" sin fichero (404 eterno)
+```
+  - -- se elige el primero: **basura recuperable antes que perdida irrecuperable**
+  - -- y por eso el recolector necesita horas de gracia: entre escribir el fichero y
+       confirmar la fila hay un instante en que un PDF **bueno** todavia no lo referencia
+       nadie
+
+- --- **Y otra vez la trampa de `--no-build`** (ya estaba escrita en `CLAUDE.md` §10)
+  - -- `dotnet ef migrations add X --no-build` genero una migracion **vacia**: uso el
+       ensamblado de antes de editar `AppDbContext`
+  - -- peor: el `migrations remove --no-build` de despues intento borrar la migracion
+       **anterior**, la que ya estaba aplicada. Compilar primero, siempre

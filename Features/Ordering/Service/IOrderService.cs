@@ -31,6 +31,14 @@ public interface IOrderService
   Task<PagedResult<OrderDto>> GetPagedForBuyerAsync(
       PageQuery query, string buyerUserId, CancellationToken ct = default);
 
+  /// <summary>Las órdenes de todos los compradores, opcionalmente filtradas por número.</summary>
+  /// <remarks>
+  /// Es la vista de administración: devuelve datos de compra de terceros, así que quien la
+  /// llame tiene que exigir el rol antes. El filtro es por prefijo del número.
+  /// </remarks>
+  Task<PagedResult<OrderDto>> GetPagedForAdminAsync(
+      PageQuery query, string? number, CancellationToken ct = default);
+
   /// <summary>Abre el comprobante de una orden del comprador.</summary>
   /// <remarks>
   /// Devuelve el contenido y no la clave, que es un detalle del almacén; quien llama debe

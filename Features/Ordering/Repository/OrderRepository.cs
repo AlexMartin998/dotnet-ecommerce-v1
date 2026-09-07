@@ -55,6 +55,31 @@ public sealed class OrderRepository(AppDbContext db) : IOrderRepository
     return (items, total);
   }
 
+  public async Task<(IReadOnlyList<Order> Items, int Total)> GetPagedAsync(
+      string? numberPrefix, int skip, int take, CancellationToken ct = default)
+  {
+    var query = db.Orders.AsNoTracking();
+
+    if (!string.IsNullOrWhiteSpace(numberPrefix))
+    {
+      var prefix = numberPrefix.Trim();
+
+      query = query.Where(o => o.Number.StartsWith(prefix));
+    }
+
+    var total = await query.CountAsync(ct);
+
+    var items = await query
+        .OrderByDescending(o => o.PlacedAt)
+        .ThenByDescending(o => o.Id)   // desempate estable al paginar órdenes del mismo instante
+        .Skip(skip)
+        .Take(take)
+        .Include(o => o.Items)
+        .ToListAsync(ct);
+
+    return (items, total);
+  }
+
   public async Task SetReceiptAsync(int orderId, string documentKey, CancellationToken ct = default)
   {
     // Fuera del árbol de expresión: dentro, DateTime.Now se traduciría a GETDATE().

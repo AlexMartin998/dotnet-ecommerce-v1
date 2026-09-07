@@ -145,6 +145,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         .HasIndex(o => new { o.BuyerUserId, o.PlacedAt })
         .HasDatabaseName("IX_Orders_Buyer_PlacedAt");
 
+    // Por aquí consulta el listado de administración, que ordena por PlacedAt sin filtrar
+    // por comprador: sin este índice es un recorrido completo mas ordenación.
+    modelBuilder.Entity<Order>()
+        .HasIndex(o => o.PlacedAt)
+        .HasDatabaseName("IX_Orders_PlacedAt");
+
     // Precisión explícita: la convención de EF ya da decimal(18,2), pero dejarlo implícito
     // haría que un cambio de convención moviese dinero sin que nadie lo note.
     foreach (var money in new[] { "Subtotal", "Discount", "Tax", "Shipping", "Total" })

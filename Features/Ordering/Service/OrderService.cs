@@ -92,6 +92,17 @@ public sealed class OrderService(
     return new PagedResult<OrderDto>([.. items.Select(ToDto)], query.Page, query.PageSize, total);
   }
 
+  public async Task<PagedResult<OrderDto>> GetPagedForAdminAsync(
+      PageQuery query, string? number, CancellationToken ct = default)
+  {
+    ArgumentNullException.ThrowIfNull(query);
+
+    var (items, total) = await repository.GetPagedAsync(
+        number, query.Skip, query.PageSize, ct);
+
+    return new PagedResult<OrderDto>([.. items.Select(ToDto)], query.Page, query.PageSize, total);
+  }
+
   public async Task<DocumentContent> GetReceiptAsync(
       int orderId, string buyerUserId, CancellationToken ct = default)
   {
@@ -185,6 +196,7 @@ public sealed class OrderService(
   {
     Id = order.Id,
     Number = order.Number,
+    BuyerUserId = order.BuyerUserId,
     Status = order.Status.ToString().ToLowerInvariant(),
     Currency = order.Currency,
     Subtotal = order.Subtotal,

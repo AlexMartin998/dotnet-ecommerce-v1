@@ -428,7 +428,82 @@ public class OrderingTests(ApiFactory factory)
     return await db.ProcessedMessages.AsNoTracking().AnyAsync(m => m.Id == messageId);
   }
 
+  // ---- listado de administración -------------------------------------------
+
+  [Fact]
+  public async Task TheAdminListingSeesOrdersOfEveryBuyer()
+  {
+    using var admin = await factory.AsAdminAsync();
+    var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
+
+    using var user = await factory.AsNewUserAsync();
+    var order = await PlaceAsync(user, [(sku, 1)]);
+    var number = order.GetProperty("number").GetString();
+
+    // Filtrado por número y no leyendo la primera página: la base es compartida entre tests.
+    var page = await admin.GetFromJsonAsync<JsonElement>($"/api/v1/order/all?number={number}");
+
+    Assert.Equal(1, page.GetProperty("totalItems").GetInt32());
+
+    var listed = page.GetProperty("items")[0];
+
+    Assert.Equal(number, listed.GetProperty("number").GetString());
+    Assert.Equal(await UserIdOf(user), listed.GetProperty("buyerUserId").GetString());
+  }
+
+  [Fact]
+  public async Task TheAdminListingFiltersByNumberPrefix()
+  {
+    using var admin = await factory.AsAdminAsync();
+    var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
+
+    using var user = await factory.AsNewUserAsync();
+    var number = (await PlaceAsync(user, [(sku, 1)])).GetProperty("number").GetString()!;
+
+    // Un prefijo del año trae varias; el número entero trae exactamente una.
+    var byPrefix = await admin.GetFromJsonAsync<JsonElement>(
+        $"/api/v1/order/all?number={number[..^2]}&pageSize=100");
+
+    Assert.Contains(
+        byPrefix.GetProperty("items").EnumerateArray(),
+        o => o.GetProperty("number").GetString() == number);
+  }
+
+  [Fact]
+  public async Task TheAdminListingRejectsARegularUser()
+  {
+    // Es la razón de que sea una ruta aparte: la autorización no depende de ningún filtro.
+    using var user = await factory.AsNewUserAsync();
+
+    var response = await user.GetAsync("/api/v1/order/all");
+
+    Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+  }
+
+  [Fact]
+  public async Task TheBuyerListingStillHidesTheOrdersOfOthers()
+  {
+    using var admin = await factory.AsAdminAsync();
+    var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
+
+    using var buyer = await factory.AsNewUserAsync();
+    var number = (await PlaceAsync(buyer, [(sku, 1)])).GetProperty("number").GetString();
+
+    using var otro = await factory.AsNewUserAsync();
+    var page = await otro.GetFromJsonAsync<JsonElement>("/api/v1/order/paged?pageSize=100");
+
+    Assert.Equal(0, page.GetProperty("totalItems").GetInt32());
+    Assert.DoesNotContain(
+        page.GetProperty("items").EnumerateArray(),
+        o => o.GetProperty("number").GetString() == number);
+  }
+
   // ---- helpers -------------------------------------------------------------
+
+  private static async Task<string?> UserIdOf(HttpClient client)
+      => (await client.GetFromJsonAsync<JsonElement>("/api/v1/auth/me"))
+          .GetProperty("id").GetString();
+
 
   private static object Body((string Sku, int Quantity)[] lines) => new
   {

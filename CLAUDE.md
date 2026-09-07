@@ -282,7 +282,7 @@ Rutas **versionadas por segmento**: `[Route("api/v{version:apiVersion}/[controll
 | `ProductController` | CRUD + `/paged` + `/category/{id}` + `/search` + `/{id}/image` + **`POST /buy`** |
 | `AuthController` | `register`, `login`, `refresh`, `logout`, `logout-all`, `password`, `me` |
 | `UserController` | listado, detalle, roles, bloqueo — todo `admin` |
-| `OrderController` | `POST /order`, `GET /{id}`, `GET /paged`, **`GET /{id}/receipt`** (PDF) |
+| `OrderController` | `POST /order`, `GET /{id}`, `GET /paged`, **`GET /{id}/receipt`** (PDF), `GET /all` (`admin`) |
 | `DeadLetterController` | `GET /dead-letter`, `POST /{queue}/replay` — solo `admin` |
 | `HealthController` | `GET /health` — `[ApiVersionNeutral]` |
 

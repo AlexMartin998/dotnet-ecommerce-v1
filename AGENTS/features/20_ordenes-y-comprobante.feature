@@ -112,3 +112,28 @@ Feature: Ordenes y su comprobante en PDF
   Scenario: Sin autenticar no hay comprobante
     When pido un comprobante sin token
     Then recibo 401
+
+  # --- El listado de administracion ---------------------------------------------
+
+  Scenario: Un admin ve las ordenes de todos los compradores
+    Given ordenes colocadas por varios usuarios
+    When un admin pide GET /api/v1/order/all
+    Then salen las de todos, no solo las suyas
+    And cada una dice quien la compro
+
+  Scenario: Buscar por numero de orden
+    Given una orden ORD-2026-000042
+    When un admin pide GET /api/v1/order/all?number=ORD-2026-000042
+    Then sale exactamente esa
+    # Por PREFIJO y no por subcadena: un LIKE '%x%' no puede usar IX_Orders_Number.
+
+  Scenario: Un usuario normal no puede listar las ordenes de todos
+    When un usuario sin rol admin pide GET /api/v1/order/all
+    Then recibe 403
+    # Es una RUTA aparte y no un parametro de /paged: asi la autorizacion no depende
+    # de que ningun filtro este bien puesto.
+
+  Scenario: El listado propio sigue ocultando las ajenas
+    Given una orden de otro comprador
+    When pido GET /api/v1/order/paged
+    Then no sale, y el total es 0
