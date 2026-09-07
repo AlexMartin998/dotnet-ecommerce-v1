@@ -84,12 +84,17 @@ public static class CachingExtensions
         config.AbortOnConnectFail = false;
 
         // Los timeouts de fábrica convierten «degradar en abierto» en una caída: con ellos
-        // un GET del catálogo tardaba 11 s y una compra con Idempotency-Key, 34 s. La cache
-        // es un atajo, así que el peor caso por operación se acota a ~1 s.
+        // un GET del catálogo tardaba 11 s y una compra con Idempotency-Key, 34 s.
         config.ConnectRetry = 1;
         config.ConnectTimeout = 1000;
         config.SyncTimeout = 1000;
         config.AsyncTimeout = 1000;
+
+        // Sin esto los timeouts no bastan: la política por defecto ENCOLA los comandos
+        // mientras la conexión está caída y cada uno espera su timeout. Medido con Redis
+        // muerto: 2 s por llamada y 4 s en una lectura cache-aside, que hace dos. Fallar
+        // rápido es lo que convierte una cache caída en un atajo que no está.
+        config.BacklogPolicy = BacklogPolicy.FailFast;
 
     return ConnectionMultiplexer.Connect(config);
   }

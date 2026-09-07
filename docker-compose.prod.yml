@@ -43,11 +43,16 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
 
+      # Sin MultipleActiveResultSets: EF Core no lo necesita -viene del scaffold- y con el
+      # DESACTIVA los savepoints, avisando a nivel Warning con un parrafo en CADA
+      # SaveChanges dentro de una transaccion. Medido: 136 de 450 lineas de log eran eso,
+      # o sea el 30% del log en el camino feliz, justo lo que estorba en un incidente.
+      #
       # Dentro de la red `backend` los contenedores se ven por NOMBRE DE SERVICIO y
       # por su puerto INTERNO: 1433/6379/5672, no los publicados 1434/6999/5672.
       # (172.17.0.1 es lo correcto desde el dev container, que está fuera de esa red;
       # desde dentro sería dar un rodeo por el host.)
-      ConnectionStrings__ConexionSql: "Server=sqlserver_ecommerce,1433;Database=${SQL_DATABASE:-ApiEcommerceNET8};User ID=sa;Password=${MSSQL_SA_PASSWORD:?define MSSQL_SA_PASSWORD en .env};TrustServerCertificate=true;MultipleActiveResultSets=true"
+      ConnectionStrings__ConexionSql: "Server=sqlserver_ecommerce,1433;Database=${SQL_DATABASE:-ApiEcommerceNET8};User ID=sa;Password=${MSSQL_SA_PASSWORD:?define MSSQL_SA_PASSWORD en .env};TrustServerCertificate=true"
       Redis__Configuration: "redis_generic:6379"
       RabbitMq__ConnectionString: "amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq_generic:5672"
 
@@ -83,6 +88,22 @@ services:
       # "disponible" mientras el fichero se fue con el contenedor — un 404 permanente al
       # descargar. Va fuera de wwwroot: son privados y se sirven por endpoint.
       - apiecommerce_documents:/app/App_Data/documents
+      # Las claves de DataProtection. Sin volumen se regeneran en cada arranque y difieren
+      # entre replicas: los tokens que emite Identity (reset de contraseña, confirmacion de
+      # email) dejarian de valer al redesplegar y entre instancias.
+      - apiecommerce_dpkeys:/home/app/.aspnet/DataProtection-Keys
+    # Un pico de memoria de la API no puede llevarse por delante a SQL Server y Redis, que
+    # viven en la MISMA maquina. Sin limite, el OOM killer elige por su cuenta.
+    mem_limit: 1g
+    cpus: 1.5
+
+    # Sin rotacion, el log crece hasta llenar el disco y se lleva la base con el.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
     networks:
       - backend
 
@@ -94,3 +115,4 @@ networks:
 volumes:
   apiecommerce_images:
   apiecommerce_documents:
+  apiecommerce_dpkeys:

@@ -141,4 +141,20 @@ public class PaginationTests(ApiFactory factory)
     Assert.Equal(seen.Count, seen.Distinct().Count());
     Assert.All(created, id => Assert.Contains(id, seen));
   }
+
+  [Theory]
+  [InlineData("/api/v1/category/paged")]
+  [InlineData("/api/v1/product/paged")]
+  public async Task AnAbsurdPageNumberIsAnEmptyPageAndNotA500(string endpoint)
+  {
+    // (page - 1) * pageSize desbordaba a negativo en int y SQL Server rechaza un OFFSET
+    // negativo: un 500 desde el query string, en todos los endpoints paginados.
+    using var client = factory.Anonymous();
+
+    var response = await client.GetAsync($"{endpoint}?page=2147483647&pageSize=100");
+
+    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    Assert.Equal(0, (await response.Content.ReadFromJsonAsync<JsonElement>())
+        .GetProperty("items").GetArrayLength());
+  }
 }

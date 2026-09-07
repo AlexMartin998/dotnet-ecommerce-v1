@@ -70,7 +70,7 @@ public class BaseRepository<T> : IBaseRepository<T> where T : class, IEntity
     var total = await ordered.CountAsync(ct);
 
     var items = await ordered
-        .Skip((page - 1) * pageSize)
+        .Skip(PageQuery.SkipFor(page, pageSize))
         .Take(pageSize)
         .ToListAsync(ct);
 

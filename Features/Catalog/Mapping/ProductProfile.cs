@@ -21,7 +21,11 @@ public class ProductProfile : Profile
                    o => o.MapFrom(s => s.RowVersion != null ? Convert.ToBase64String(s.RowVersion) : null));
 
     // escritura: la navegación Category se ignora, se trabaja solo con CategoryId
+    // Se recortan al escribir Name y SKU: sin normalizar, " SKU-1" y "SKU-1" conviven pese
+    // al indice unico, y obliga a envolver la columna en TRIM() al comparar, anulandolo.
     CreateMap<CreateProductDto, Product>()
+        .ForMember(d => d.Name, o => o.MapFrom(s => s.Name.Trim()))
+        .ForMember(d => d.SKU, o => o.MapFrom(s => s.SKU.Trim()))
         .ForMember(d => d.Id, o => o.Ignore())
         .ForMember(d => d.RowVersion, o => o.Ignore())   // lo gestiona SQL Server
         .ForMember(d => d.Category, o => o.Ignore())
@@ -39,11 +43,11 @@ public class ProductProfile : Profile
         .ForMember(d => d.Category, o => o.Ignore())
         .ForMember(d => d.CreatedAt, o => o.Ignore())
         .ForMember(d => d.UpdatedAt, o => o.Ignore())
-        .ForMember(d => d.Name, o => o.MapFrom((s, d) => s.Name ?? d.Name))
+        .ForMember(d => d.Name, o => o.MapFrom((s, d) => s.Name != null ? s.Name.Trim() : d.Name))
         .ForMember(d => d.Description, o => o.MapFrom((s, d) => s.Description ?? d.Description))
         .ForMember(d => d.Price, o => o.MapFrom((s, d) => s.Price ?? d.Price))
         .ForMember(d => d.ImageUrl, o => o.MapFrom((s, d) => s.ImageUrl ?? d.ImageUrl))
-        .ForMember(d => d.SKU, o => o.MapFrom((s, d) => s.SKU ?? d.SKU))
+        .ForMember(d => d.SKU, o => o.MapFrom((s, d) => s.SKU != null ? s.SKU.Trim() : d.SKU))
         .ForMember(d => d.Stock, o => o.MapFrom((s, d) => s.Stock ?? d.Stock))
         .ForMember(d => d.CategoryId, o => o.MapFrom((s, d) => s.CategoryId ?? d.CategoryId));
     // El If-Match del cliente no se mapea a la entidad: solo sirve para comparar.
