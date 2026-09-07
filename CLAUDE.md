@@ -143,7 +143,7 @@ Features/                 <- un contexto acotado por carpeta (vertical slicing)
 Shared/                   <- transversal, de ningun dominio
   Persistence/            IEntity, IAuditable, IBaseRepository, BaseRepository, PersistenceExtensions
   Crud/                   ICrudService, CrudService, IEntityRules, NoEntityRules
-  Db/                     ITransactionRunner, TransactionRunner, TransactionalAttribute (sin uso)
+  Db/                     ITransactionRunner, TransactionRunner
   Idempotency/            CommandIntent, ICommandLog, IIdempotencyStore, IdempotentAttribute
   Messaging/              outbox, inbox, RabbitMq/ (EventConsumer<,>, EventSubscription...)
   Caching/                ICacheService, RedisCacheService, NoCacheService, CacheKeys
@@ -241,6 +241,7 @@ en **una** clase adaptadora. Es lo que hace que un slice se pueda mover.
 | Unidad de trabajo explícita | `ITransactionRunner` |
 | Options + validación al arranque | las 11 clases de options |
 | Filtros de acción | `[Idempotent]` (`Order -100`) |
+| **Envoltura de idempotencia** | `IIdempotentCommandRunner`: marca del intento + efecto en una transacción, una sola vez para todos los casos de uso |
 
 ⚠️ La elección de implementación (disco vs S3, Redis vs nada, broker vs nada) se hace **una
 vez, al construir el grafo de DI**, no por petición. Eso es puerto+adaptador elegido en el
@@ -340,8 +341,10 @@ Es lo que distingue este repo de un CRUD. Cada regla nace de un bug **medido**, 
 
 ### 7.2 Idempotencia: la garantía y el atajo
 
-- **GARANTÍA**: `ICommandLog` escribe la marca del comando en la tabla `ExecutedCommands`
-  **dentro de la misma transacción que el efecto**. El árbitro entre réplicas es la **clave
+- **GARANTÍA**: `IIdempotentCommandRunner` envuelve el efecto y `ICommandLog` escribe la
+  marca del comando en la tabla `ExecutedCommands` **dentro de la misma transacción**.
+  La envoltura es una pieza propia, no unas líneas por servicio: es la garantía, y copiada
+  basta con que el tercer caso de uso olvide el `catch` del choque de clave. El árbitro entre réplicas es la **clave
   primaria**: no hacen falta ni reserva, ni TTL, ni estado «en curso».
 - **ATAJO**: `[Idempotent]` reserva en Redis (`SET NX`) para frenar duplicados **en vuelo**
   antes de que se apilen sobre la misma fila. Si Redis no está, esto se salta y no pasa nada.
@@ -508,7 +511,7 @@ código propio.
 | `nvarchar(max)` | No es indexable: índice único ⇒ `[MaxLength]` en la entidad. |
 | `ExecuteUpdateAsync` | No dispara auditoría, no toca el change tracker, y `DateTime.Now` dentro se traduce a `GETDATE()`. |
 | `AddPersistence` sin `EnableRetryOnFailure` | `CreateExecutionStrategy()` deja de reintentar y la unidad transaccional se vuelve un no-op. Es **load-bearing**. La contrapartida: EF prohíbe `BeginTransactionAsync` fuera de `strategy.ExecuteAsync`. |
-| `[Transactional]` | **No se usa.** `ActionExecutionDelegate` no es reentrante y con reintentos ejecutaría la acción dos veces. La transacción va en el servicio con `ITransactionRunner`. |
+| `[Transactional]` | **Se probó y se retiró.** `ActionExecutionDelegate` no es reentrante y con reintentos ejecutaría la acción dos veces. La transacción va en el servicio con `ITransactionRunner`. |
 | Marca de idempotencia y efecto | Van en la **misma transacción**. Confirmar la marca antes hacía que un efecto fallido se reconociera como duplicado y el mensaje **desapareciera sin procesarse**. |
 | Publicar sin *publisher confirms* | `BasicPublishAsync` vuelve sin excepción aunque el mensaje no llegue a ninguna cola. **Nunca hacer ack después de un publish sin confirms.** |
 | Fuga de conexiones AMQP | Si la declaración de topología falla hay que hacer `DisposeAsync` de la conexión local: con `AutomaticRecoveryEnabled` queda viva para siempre. Medido: 22 fallos = 22 conexiones fugadas. |

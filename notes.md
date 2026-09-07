@@ -3692,3 +3692,55 @@ COMMIT  -> fichero             si se cae en medio: orden "available" sin fichero
        ensamblado de antes de editar `AppDbContext`
   - -- peor: el `migrations remove --no-build` de despues intento borrar la migracion
        **anterior**, la que ya estaba aplicada. Compilar primero, siempre
+
+
+## 40. Dejar de copiar la garantia  <- y dos piezas muertas que se llevo por delante
+
+- --- ⭐ **El sintoma: 20 lineas identicas en dos servicios, y no eran de conveniencia**
+```
+ProductService.BuyAsync  y  OrderService.PlaceAsync  compartian, LETRA POR LETRA:
+   tx.ExecuteAsync(...)                      <- abrir la transaccion
+   commands.FindResultAsync(...)             <- ¿este intento ya se ejecuto?
+   commands.Record(...) + SaveChanges        <- marca y efecto en el mismo commit
+   catch (ex) when (IsDuplicateIntent(ex))   <- la carrera entre replicas
+   "A concurrent request with the same idempotency key is still in progress."
+```
+  - -- duplicar **utilidades** cuesta mantenimiento; duplicar una **garantia** cuesta
+       correccion: al tercer caso de uso basta olvidar el `catch` para que un duplicado
+       concurrente salga como **500** en vez de devolver el resultado del ganador
+  - -- y el tercero iba a existir: `Payments` es el siguiente contexto acotado
+
+- --- **La pieza: `IIdempotentCommandRunner`, gemelo declarado de `IMessageInbox`**
+```
+IMessageInbox            exactamente una vez  <- mensajes que entran por el broker
+IIdempotentCommandRunner exactamente una vez  <- comandos que entran por HTTP
+```
+  - -- que se parezcan **no es casualidad**: los dos resuelven lo mismo poniendo la marca y
+       el efecto bajo el mismo commit
+  - -- el efecto **no** hace el `SaveChanges` final (lo hace el runner, junto a la marca);
+       los intermedios si, y van en la misma transaccion — `OrderService` necesita el `Id`
+       generado antes de encolar el evento
+  - -- efecto secundario que se nota al leer: `BuyAsync` y `PlaceAsync` **dejan de ser
+       `async`**. Solo devuelven la llamada al runner, porque ya no queda nada que envolver
+
+- --- **Lo que se fue por muerto, y por que importa que se fuera**
+  - -- `BaseRepository.ExistsByFieldAsync`: cero llamadas, reflexion sobre el modelo de EF
+       y —lo grave— **fallaba en ABIERTO**
+```
+if (property is null) return false;   // "no hay duplicado"
+```
+    - una errata en el nombre del campo **desactiva la regla en silencio**. Una regla que no
+      se puede evaluar tiene que gritar, no decir que si
+  - -- `TransactionalAttribute`: 56 lineas aplicadas a **cero** acciones. Era el
+       `@Transactional` de Spring traido tal cual, y aqui no puede funcionar porque
+       `ActionExecutionDelegate` **no es reentrante** y la estrategia de reintentos de EF
+       reejecuta su delegado
+
+- --- ⚠️ **Y al quitarlo aparecieron DOS documentos que mentian**
+```
+docs/00 y docs/06:  "@Transactional -> TransactionalAttribute  ✅ (en POST /product/buy)"
+la realidad:        aplicado a CERO acciones desde hace commits
+```
+  - -- ya se habia cazado esa misma frase una vez, en otro archivo. **Una afirmacion falsa
+       en la documentacion sobrevive a que arregles el codigo**: hay que ir a buscarla
+  - -- de ahi que retirar codigo muerto valga el doble: obliga a releer todo lo que lo citaba

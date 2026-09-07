@@ -112,26 +112,4 @@ public class BaseRepository<T> : IBaseRepository<T> where T : class, IEntity
   /// <inheritdoc />
   public async Task SaveChangesAsync(CancellationToken ct = default)
       => await _db.SaveChangesAsync(ct);
-
-  /// <inheritdoc />
-  public async Task<bool> ExistsByFieldAsync(
-      string fieldName, string value, int? excludeId = null, CancellationToken ct = default)
-  {
-    var entityType = _db.Model.FindEntityType(typeof(T));
-    var property = entityType?.FindProperty(fieldName);
-
-    if (property is null) return false;
-    if (property.ClrType != typeof(string)) return false;
-
-    // Traducible a SQL (sin StringComparison, que EF Core no sabe traducir)
-    var normalized = value.Trim().ToLower();
-
-    var query = _dbSet.Where(e =>
-        EF.Property<string>(e, fieldName).ToLower().Trim() == normalized);
-
-    if (excludeId is int id)
-      query = query.Where(e => EF.Property<int>(e, nameof(IEntity.Id)) != id);
-
-    return await query.AnyAsync(ct);
-  }
 }

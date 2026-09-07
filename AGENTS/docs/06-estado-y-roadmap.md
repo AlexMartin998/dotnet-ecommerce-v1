@@ -25,7 +25,7 @@ paginación y seeding.
 | `HealthController` | ✅ | `GET /health` (liveness), `[ApiVersionNeutral]` |
 | Jerarquía `AppException` | ✅ | + `Unauthorized` (401), `Forbidden` (403), `Validation` (422) |
 | Handler global de errores | ✅ | `GlobalExceptionHandler` + `ProblemDetails` (RFC 7807) |
-| `TransactionalAttribute` | ✅ | aplicado a `POST /api/v1/product/buy`; efectivo desde que `AddPersistence` activa `EnableRetryOnFailure` |
+| Unidad transaccional | ✅ | `ITransactionRunner`, abierta por el servicio. `TransactionalAttribute` **retirado**: con `EnableRetryOnFailure` un `ActionExecutionDelegate` no reentrante ejecutaría la acción dos veces |
 | AutoMapper | ✅ | `CategoryProfile`, `ProductProfile`; `MappingProfile` retirado (comentado) |
 | Validación de DTOs | ✅ | DataAnnotations completas en los 5 DTOs de entrada |
 | Registro de DI | ✅ | un `XxxExtensions.cs` por feature, en su carpeta; `Shared/DependencyInjection/` es solo composition root (`AddSharedInfrastructure`/`AddFeatures`/`AddWebApi`) |

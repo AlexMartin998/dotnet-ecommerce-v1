@@ -19,56 +19,35 @@ public sealed class OrderService(
     ICatalogGateway catalog,
     IDocumentStore documents,
     IEventOutbox outbox,
-    ITransactionRunner transactions,
-    ICommandLog commands,
+    IIdempotentCommandRunner runner,
     ILogger<OrderService> logger) : IOrderService
 {
-  public async Task<CommandOutcome<OrderDto>> PlaceAsync(
+  public Task<CommandOutcome<OrderDto>> PlaceAsync(
       PlaceOrderDto dto, CommandIntent intent, string buyerUserId, string? buyerEmail,
       CancellationToken ct = default)
   {
     ArgumentNullException.ThrowIfNull(dto);
 
-    try
+    // El runner abre la transacción y confirma la marca del intento junto al efecto; aquí
+    // solo queda la compra. Si otra réplica gana la carrera, devuelve su resultado.
+    return runner.RunAsync(intent, dto, async token =>
     {
-      return await transactions.ExecuteAsync(async token =>
-      {
-        // Idempotencia dentro de la transacción: la marca y el efecto se confirman juntos.
-        if (await commands.FindResultAsync<OrderDto>(intent, dto, token) is { } already)
-          return new CommandOutcome<OrderDto>(already, WasReplayed: true);
+      var order = await BuildAsync(dto, buyerUserId, buyerEmail, token);
 
-        var order = await BuildAsync(dto, buyerUserId, buyerEmail, token);
+      repository.Add(order);
 
-        repository.Add(order);
+      // Antes del evento porque este necesita el Id; va en la misma transacción.
+      await repository.SaveChangesAsync(token);
 
-        // Antes del evento porque este necesita el Id; los dos SaveChanges van en la misma transacción.
-        await repository.SaveChangesAsync(token);
+      await outbox.EnqueueAsync(new OrderPlaced(
+          order.Id, order.Number, buyerUserId, order.Total, order.Currency, DateTime.Now), token);
 
-        await outbox.EnqueueAsync(new OrderPlaced(
-            order.Id, order.Number, buyerUserId, order.Total, order.Currency, DateTime.Now), token);
+      logger.LogInformation(
+          "Order {Number} placed by {BuyerUserId} for {Total} {Currency}",
+          order.Number, buyerUserId, order.Total, order.Currency);
 
-        var result = ToDto(order);
-
-        commands.Record(intent, dto, result);
-
-        await repository.SaveChangesAsync(token);
-
-        logger.LogInformation(
-            "Order {Number} placed by {BuyerUserId} for {Total} {Currency}",
-            order.Number, buyerUserId, order.Total, order.Currency);
-
-        return new CommandOutcome<OrderDto>(result, WasReplayed: false);
-      }, ct);
-    }
-    catch (Exception ex) when (commands.IsDuplicateIntent(ex))
-    {
-      // Otra réplica confirmó primero: nuestra transacción se deshizo entera, stock incluido.
-      var winner = await commands.FindResultAsync<OrderDto>(intent, dto, ct)
-          ?? throw new ConflictAppException(
-              "A concurrent request with the same idempotency key is still in progress.");
-
-      return new CommandOutcome<OrderDto>(winner, WasReplayed: true);
-    }
+      return ToDto(order);
+    }, ct);
   }
 
   public async Task<OrderDto> GetForBuyerAsync(

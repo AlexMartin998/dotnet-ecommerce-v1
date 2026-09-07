@@ -151,7 +151,7 @@ registrarlo a mano.
 ## Shared
 
 - `Shared/Db/` — infraestructura de persistencia transversal
-  (`TransactionalAttribute`, futuros interceptores de auditoría).
+  (`ITransactionRunner`, futuros interceptores de auditoría).
 - `Shared/Http/` — infraestructura HTTP transversal (`GlobalExceptionHandler`,
   formato de error). **Es la única carpeta, junto a `Controllers/`, que puede
   conocer códigos HTTP.**

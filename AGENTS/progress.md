@@ -41,6 +41,48 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 
 ## 2. Bitácora
 
+### 2026-09-07 — La envoltura de idempotencia deja de estar copiada, y fuera dos piezas muertas
+
+Primera pieza de la deuda que dejó la revisión multiagente, y la que más pesaba: la
+envoltura «marca del intento + efecto en la misma transacción» estaba **copiada íntegra**
+en `ProductService.BuyAsync` y en `OrderService.PlaceAsync` — apertura de transacción,
+consulta del intento previo, `Record`, `SaveChanges` final y el
+`catch (…) when (IsDuplicateIntent(ex))` con su mensaje incluido. Unas 20 líneas que no son
+de conveniencia sino de **garantía**: al tercer caso de uso, basta con copiar mal el `catch`
+para que un duplicado concurrente salga como 500.
+
+- **`IIdempotentCommandRunner` / `IdempotentCommandRunner`** (`Shared/Idempotency/`), scoped.
+  Gemelo declarado de `IMessageInbox`: el mismo patrón de «exactamente una vez», uno para
+  comandos entrantes por HTTP y otro para mensajes entrantes por el broker.
+- **El efecto no hace el `SaveChanges` final**, lo hace el runner junto a la marca. Los
+  intermedios sí (`OrderService` necesita el `Id` generado para el evento) y van en la
+  misma transacción.
+- Los dos servicios adelgazan: `ProductService` pasa de 8 dependencias a 7 y `OrderService`
+  de 7 a 6, y las dos `PlaceAsync`/`BuyAsync` dejan de ser `async` — solo devuelven la
+  llamada al runner.
+
+**Retirado por muerto, en el mismo barrido:**
+
+- **`BaseRepository.ExistsByFieldAsync`** — cero llamadas, reflexión sobre el modelo de EF, y
+  **fallaba en abierto**: si la propiedad no existía o no era `string` devolvía `false`, o sea
+  «no hay duplicado». Una errata en el nombre del campo desactivaba la regla en silencio.
+- **`Shared/Db/TransactionalAttribute.cs`** (56 líneas) — aplicado a **cero** acciones.
+  `ActionExecutionDelegate` no es reentrante y con `EnableRetryOnFailure` ejecutaría la
+  acción dos veces. La lección se conserva en `docs/07`, ahora como alternativa descartada.
+
+⚠️ Y al retirarlo aparecieron **dos documentos que mentían**: `docs/00` y `docs/06` seguían
+diciendo que `[Transactional]` estaba «aplicado a `POST /api/v1/product/buy`». Es exactamente
+la clase de afirmación falsa que ya se cazó una vez (bitácora del 2026-09-07, limpieza de
+comentarios) y que había sobrevivido en otro archivo.
+
+Verificado ejecutando, porque toca concurrencia e idempotencia: **30 compras simultáneas
+sobre stock 20 → 20×201 + 10×409, 20 números de orden únicos, stock final 0**; la misma
+`Idempotency-Key` dos veces en `POST /order` → misma orden `ORD-2026-000091` con
+`Idempotency-Replayed: true` y stock descontado **una** vez; lo mismo en `POST /product/buy`;
+clave reutilizada con otro cuerpo → **422**. Comprobantes: 25/25 `available`, PDF de 27.638
+bytes descargado, **DLQ en 0**, 0 líneas de error en el log. Suite **288/288** (+6, todos del
+runner), build limpio con `-warnaserror`.
+
 ### 2026-09-07 — Listado de administración de órdenes (`GET /order/all`)
 
 Lo pidió el owner después de mirar los logs y no ver ninguna orden: `GET /order/paged`

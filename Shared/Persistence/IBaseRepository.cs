@@ -59,19 +59,4 @@ public interface IBaseRepository<T> where T : class, IEntity
   /// outbox junto al descuento de stock).
   /// </remarks>
   Task SaveChangesAsync(CancellationToken ct = default);
-
-  /// <summary>
-  /// Comprobación de unicidad genérica sobre un campo <c>string</c>, resuelta contra el
-  /// modelo de EF.
-  /// </summary>
-  /// <remarks>
-  /// Si la entidad tiene un método dedicado (<c>NameExistsAsync</c>), se usa ese: es más
-  /// rápido y no depende de un string mágico.
-  /// </remarks>
-  /// <param name="fieldName">Nombre de la propiedad. Si no existe o no es <c>string</c>, devuelve <c>false</c>.</param>
-  /// <param name="value">Valor a buscar; la comparación es case-insensitive y traducible a SQL.</param>
-  /// <param name="excludeId">Id a excluir de la búsqueda (para validar unicidad en un update).</param>
-  /// <param name="ct">Token de cancelación propagado hasta EF Core.</param>
-  Task<bool> ExistsByFieldAsync(string fieldName, string value, int? excludeId = null, CancellationToken ct = default);
-
 }

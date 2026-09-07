@@ -32,7 +32,7 @@ en vez de inventar un middleware a mano).
 | `ModelMapper` / MapStruct | AutoMapper `Profile` por entidad | ✅ |
 | `@ControllerAdvice` + `@ExceptionHandler` | `IExceptionHandler` global | ✅ |
 | `ResponseStatusException` | `AppException` con `Code` + `HttpStatusCode` | ✅ |
-| `@Transactional` | `Shared/Db/TransactionalAttribute` | ✅ (en `POST /api/v1/product/buy`) |
+| `@Transactional` | `Shared/Db/ITransactionRunner` (la transacción la abre el **servicio**) | ✅ |
 | Spring Security (`SecurityFilterChain`) | `AddIdentityAndJwt` + JWT bearer | ✅ |
 | `UserDetailsService` + `PasswordEncoder` | `UserManager<ApplicationUser>` | ✅ |
 | `AuthenticationManager` | `SignInManager<ApplicationUser>` | ✅ |

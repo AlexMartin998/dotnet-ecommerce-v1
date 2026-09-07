@@ -55,6 +55,10 @@ public static class PersistenceExtensions
     // base, así que no se apaga cuando no hay Redis.
     services.AddScoped<ICommandLog, CommandLog>();
 
+    // La envoltura "marca + efecto en la misma transacción", una sola vez para todos los
+    // casos de uso: es la garantía, y copiarla en cada servicio es copiar una garantía.
+    services.AddScoped<IIdempotentCommandRunner, IdempotentCommandRunner>();
+
     return services;
   }
 }

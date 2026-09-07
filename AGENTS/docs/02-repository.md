@@ -148,7 +148,7 @@ llama a `SaveChangesAsync()` internamente. Consecuencias:
 - **Regla:** la unidad transaccional la abre el **servicio** con `ITransactionRunner`, no
   el controller. Dentro de ese delegado, los `SaveChanges` intermedios quedan en la misma
   transacción y hacen rollback juntos.
-- ⚠️ **`[Transactional]` existe pero NO se usa en ninguna acción**, y no es un olvido: con
+- ⚠️ **`[Transactional]` se probó y se RETIRÓ**, y no fue un olvido: con
   `EnableRetryOnFailure`, EF exige la transacción dentro de `strategy.ExecuteAsync(...)` y
   la estrategia **reejecuta el delegado**. Un `ActionExecutionDelegate` **no es
   reentrante**: invocarlo dos veces ejecutaría la acción dos veces. Una lambda de servicio

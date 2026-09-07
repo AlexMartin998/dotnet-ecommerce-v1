@@ -180,12 +180,31 @@ un bug de documentación: se borra su sección.
 - **El commit va sin token a propósito:** cancelar un commit a medias es peor que esperar a que termine.
 - **`ChangeTracker.Clear()` también en el `catch`:** la transacción se deshace sola al disponerse el `tx`, pero el tracker no, y las entidades del intento fallido quedan en `Added` sobre el `DbContext` del scope. Hoy no explota, pero cualquier `SaveChanges` posterior (un filtro, una auditoría futura) insertaría esas filas **fuera de toda transacción**. Afecta a todo el que use el runner, así que se limpia aquí.
 
-### `Shared/Db/TransactionalAttribute.cs`
+### `Shared/Db/TransactionalAttribute.cs` — RETIRADO
 
-- **Limitación documentada:** `ActionExecutionDelegate` no es reentrante, así que reejecutarlo daría doble efecto o commit vacío según el estado interno de MVC. La guarda de reentrada convierte eso en un error ruidoso en vez de corrupción silenciosa: fallar es infinitamente mejor que descontar stock dos veces en silencio.
-- **Para una unidad de trabajo transaccional de verdad se usa `ITransactionRunner`;** este atributo se queda para acciones simples sin reintento.
-- **`Order = 0`, por dentro de `[Idempotent]` (−100).**
-- **`await using` en vez de `RollbackAsync` explícito:** evita el bug clásico de que un rollback que lanza dentro del `catch` sustituya a la excepción original y el cliente vea el fallo del rollback en vez de la causa real.
+El `@Transactional` de Spring traído tal cual. Se escribió, se aplicó a `POST /product/buy`,
+y se acabó quitando de esa acción; el atributo se quedó sin usar hasta que se borró.
+
+- **Por qué no funciona aquí:** `AddPersistence` activa `EnableRetryOnFailure`, y entonces EF exige que la transacción viva dentro de `strategy.ExecuteAsync(...)`, que **reejecuta su delegado**. El delegado de un filtro MVC es un `ActionExecutionDelegate`, y **no es reentrante**: invocarlo dos veces ejecuta la acción dos veces. Una lambda de servicio sí se puede repetir.
+- **Y hay una razón de diseño, no solo técnica:** la transacción es política de **negocio**, no de HTTP. En el servicio se ve; en un atributo del controller queda invisible para quien lee la regla.
+- **Lo que se conserva de aquello:** `ITransactionRunner`, con el contrato explícito de que la operación **debe ser replayable**.
+- **La guarda de reentrada que tenía** (lanzar si el delegado se invoca dos veces) sigue siendo la lección: ante una limitación así, fallar ruidosamente es infinitamente mejor que descontar stock dos veces en silencio.
+
+### `Shared/Persistence/BaseRepository.cs` — `ExistsByFieldAsync` RETIRADO
+
+Comprobación de unicidad genérica por nombre de campo, resuelta con reflexión sobre el modelo de EF.
+
+- **Se retiró por fallar en ABIERTO:** si la propiedad no existía o no era `string`, devolvía `false`, o sea «no hay duplicado». Una errata en el nombre del campo **desactivaba la comprobación en silencio**, que es justo lo contrario de lo que debe hacer una regla de unicidad al no poder evaluarse.
+- **No lo llamaba nadie:** las entidades usan métodos dedicados (`NameExistsAsync`, `SkuExistsAsync`), que además son más rápidos y no dependen de un string mágico.
+- **Y la unicidad de verdad no vive ahí:** la garantiza el **índice único en la base**; la comprobación aplicativa solo sirve para dar un 409 con un mensaje bonito antes de chocar.
+
+### `Shared/Idempotency/IdempotentCommandRunner.cs`
+
+- **Existe porque la envoltura es la GARANTÍA, no una conveniencia.** Estaba copiada íntegra en `ProductService.BuyAsync` y `OrderService.PlaceAsync`: la apertura de transacción, la consulta del intento previo, el `Record`, el `SaveChanges` final y el `catch (…) when (IsDuplicateIntent(ex))` con su mensaje. Unas veinte líneas que, si el tercer caso de uso las copia mal —o se deja el `catch`—, convierten un duplicado concurrente en un 500.
+- **Gemelo de `IMessageInbox`:** el mismo patrón para los mensajes entrantes. Que se parezcan no es casualidad: los dos resuelven «exactamente una vez» poniendo la marca y el efecto bajo el mismo commit.
+- **El efecto NO hace el `SaveChanges` final:** lo hace el runner, junto a la marca. Puede hacer los intermedios que necesite —`OrderService` necesita el `Id` generado para el evento— y van en la misma transacción.
+- **El resultado se serializa y se guarda**, así que el reintento del cliente ve exactamente la misma respuesta, no una recalculada.
+- **Sin `CommandIntent` declarada no hace nada**: renunciar a la garantía es una decisión del cliente (no mandar `Idempotency-Key`), y entonces el efecto corre siempre.
 
 ### `Shared/Documents/IDocumentStore.cs`
 

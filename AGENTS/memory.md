@@ -284,7 +284,10 @@ Piezas que conviene conocer antes de tocar nada:
   `CategoryService` no sabe que existe cache.
 - **`ITransactionRunner`** (`Shared/Db/`) — la unidad transaccional de negocio. **No uses
   `[Transactional]` para esto**: `ActionExecutionDelegate` no es reentrante y con
-  reintentos puede ejecutar la acción dos veces.
+  reintentos puede ejecutar la acción dos veces (el atributo se retiró por eso).
+- **`IIdempotentCommandRunner`** (`Shared/Idempotency/`) — la envoltura «marca del intento +
+  efecto en la misma transacción». Un caso de uso idempotente **no** vuelve a escribirla:
+  pasa su efecto al runner. Gemelo de `IMessageInbox` para los mensajes entrantes.
 - **`IEventOutbox`** — encola el evento en la MISMA transacción; `OutboxPublisher` lo
   publica después.
 - **DI**: cada slice registra lo suyo en su `XxxExtensions.cs`;

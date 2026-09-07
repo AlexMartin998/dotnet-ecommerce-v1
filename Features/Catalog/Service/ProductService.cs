@@ -26,8 +26,7 @@ public class ProductService : IProductService
   private readonly ICategoryRepository _categoryRepository;
   private readonly IFileStorage _storage;
   private readonly IEventOutbox _outbox;
-  private readonly ITransactionRunner _tx;
-  private readonly ICommandLog _commands;
+  private readonly IIdempotentCommandRunner _runner;
   private readonly IMapper _mapper;
 
   public ProductService(
@@ -36,12 +35,10 @@ public class ProductService : IProductService
       ICategoryRepository categoryRepository,
       IFileStorage storage,
       IEventOutbox outbox,
-      ITransactionRunner tx,
-      ICommandLog commands,
+      IIdempotentCommandRunner runner,
       IMapper mapper)
   {
-    _tx = tx;
-    _commands = commands;
+    _runner = runner;
     _crud = crud;
     _repository = repository;
     _categoryRepository = categoryRepository;
@@ -136,64 +133,36 @@ public class ProductService : IProductService
     return _mapper.Map<ProductDto>(await _repository.GetByIdWithCategoryAsync(id, ct) ?? product);
   }
 
-  public async Task<CommandOutcome<ProductDto>> BuyAsync(
+  public Task<CommandOutcome<ProductDto>> BuyAsync(
       BuyProductDto dto, CommandIntent intent, string? buyerUserId = null,
       CancellationToken ct = default)
   {
     ArgumentNullException.ThrowIfNull(dto);
 
-    try
+    // Descontar stock, emitir el evento y recordar el intento son atómicos entre sí. La
+    // envoltura la pone el runner; la lambda ha de ser replayable, o sea releer lo que use.
+    return _runner.RunAsync(intent, dto, async token =>
     {
-      // Descontar stock, emitir el evento y registrar el intento son atómicos entre sí:
-      // la transacción vive aquí, y no en un atributo del controller, porque es la regla.
-      // La lambda es replayable (relee todo lo que necesita), como exige ITransactionRunner.
-      return await _tx.ExecuteAsync(async token =>
-      {
-        // Dentro de la transacción: la marca y el efecto se confirman juntos o no se
-        // confirman, así que no hay ventana en la que la compra ocurra y nadie la recuerde.
-        if (await _commands.FindResultAsync<ProductDto>(intent, dto, token) is { } already)
-          return new CommandOutcome<ProductDto>(already, WasReplayed: true);
+      var product = await _repository.GetBySkuAsync(dto.SKU, token)
+          ?? throw new NotFoundAppException("Product", dto.SKU);
 
-        var product = await _repository.GetBySkuAsync(dto.SKU, token)
-            ?? throw new NotFoundAppException("Product", dto.SKU);
+      // Comprobación y descuento van en la misma sentencia SQL: comprobar el stock aquí
+      // y descontar después sería read-then-write y vendería dos veces la última unidad.
+      if (!await _repository.TryDecrementStockAsync(product.Id, dto.Quantity, token))
+        throw new ConflictAppException(
+            $"Insufficient stock for SKU '{product.SKU}': requested {dto.Quantity}.");
 
-        // Comprobación y descuento van en la misma sentencia SQL: comprobar el stock aquí
-        // y descontar después sería read-then-write y vendería dos veces la última unidad.
-        if (!await _repository.TryDecrementStockAsync(product.Id, dto.Quantity, token))
-          throw new ConflictAppException(
-              $"Insufficient stock for SKU '{product.SKU}': requested {dto.Quantity}.");
+      // Relectura: ExecuteUpdate no toca el change tracker y la instancia que ya
+      // teníamos sigue con el stock anterior.
+      var updated = await _repository.GetByIdWithCategoryAsync(product.Id, token) ?? product;
 
-        // Relectura: ExecuteUpdate no toca el change tracker y la instancia que ya
-        // teníamos sigue con el stock anterior.
-        var updated = await _repository.GetByIdWithCategoryAsync(product.Id, token) ?? product;
+      // El evento se escribe aquí y lo publica después OutboxPublisher: publicar a
+      // RabbitMQ en esta línea ataría la compra a que el broker esté vivo.
+      await _outbox.EnqueueAsync(new ProductPurchased(
+          updated.Id, updated.SKU, updated.Name, dto.Quantity, updated.Stock,
+          updated.Price, buyerUserId, DateTime.Now), token);
 
-        // El evento se escribe aquí y lo publica después OutboxPublisher: publicar a
-        // RabbitMQ en esta línea ataría la compra a que el broker esté vivo.
-        await _outbox.EnqueueAsync(new ProductPurchased(
-            updated.Id, updated.SKU, updated.Name, dto.Quantity, updated.Stock,
-            updated.Price, buyerUserId, DateTime.Now), token);
-
-        var result = _mapper.Map<ProductDto>(updated);
-
-        // No hace SaveChanges: lo confirma el de abajo, junto al evento y al descuento.
-        _commands.Record(intent, dto, result);
-
-        // El choque de clave primaria de ExecutedCommands sale aquí.
-        await _repository.SaveChangesAsync(token);
-
-        return new CommandOutcome<ProductDto>(result, WasReplayed: false);
-      }, ct);
-    }
-    catch (Exception ex) when (_commands.IsDuplicateIntent(ex))
-    {
-      // Otra réplica ejecutó el mismo intento y confirmó primero: nuestra transacción
-      // entera se deshizo, así que no hay nada que compensar y basta devolver su
-      // resultado. La base serializa la carrera en la clave; no hace falta ni TTL ni reserva.
-      var winner = await _commands.FindResultAsync<ProductDto>(intent, dto, ct)
-          ?? throw new ConflictAppException(
-              "A concurrent request with the same idempotency key is still in progress.");
-
-      return new CommandOutcome<ProductDto>(winner, WasReplayed: true);
-    }
+      return _mapper.Map<ProductDto>(updated);
+    }, ct);
   }
 }
