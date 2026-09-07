@@ -73,6 +73,7 @@ public static class AccountsExtensions
         .ValidateOnStart();
 
     services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
+    services.AddScoped<IUserRoleRepository, UserRoleRepository>();
     services.AddScoped<IRefreshTokenService, RefreshTokenService>();
     services.AddScoped<IUserAdminService, UserAdminService>();
     services.AddScoped<RefreshTokenCookie>();

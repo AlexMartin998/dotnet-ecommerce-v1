@@ -70,3 +70,21 @@ Feature: Registro y autenticación
     When pido "GET /api/v1/auth/me" con ese token
     Then recibo 200 con username "admin" y roles ["admin"]
     And la respuesta NO contiene contraseña ni hash
+
+  # --- Lo que no se ve probando de uno en uno --------------------------------
+
+  Scenario: Dos registros simultaneos con el mismo email dejan una sola cuenta
+    Given seis registros del mismo email a la vez
+    Then exactamente uno recibe 201
+    And el resto recibe 409
+    And ninguno recibe un 5xx
+    # RequireUniqueEmail de Identity comprueba antes de insertar, asi que es el mismo
+    # leer-y-escribir: sin indice unico en la base se crean dos cuentas. Y a partir de
+    # ahi ese email queda ENVENENADO, porque FindByEmailAsync hace SingleOrDefault y
+    # lanza: el registro siguiente da 500 para siempre, no 409.
+
+  Scenario: El choque de email siempre contesta lo mismo
+    Given un email que ya existe
+    When intento registrarme con el
+    Then recibo 409, tanto si lo detecta la validacion como si lo detecta el indice
+    # Antes contestaba 422 o 409 segun quien se adelantara en la carrera.
