@@ -37,14 +37,28 @@ public static class OrderingExtensions
     // Se registra siempre, también sin broker: es lógica del slice, no transporte.
     services.AddScoped<IReceiptGenerator, ReceiptGenerator>();
 
-    services.AddEventConsumer<OrderPlacedConsumer>(
-        configuration, OrderPlacedConsumer.Subscription);
+    // El comprobante cuelga de `order.paid`: antes colgaba de `order.placed` y emitía el
+    // de una compra que nadie había pagado.
+    services.AddEventConsumer<OrderPaidConsumer>(
+        configuration, OrderPaidConsumer.Subscription);
+
+    // ---- el cobro que llega de Payments ------------------------------------
+    // Lo único que une los dos contextos es la routing key `payment.captured`.
+    services.AddScoped<IOrderPaymentHandler, OrderPaymentHandler>();
+
+    services.AddEventConsumer<PaymentCapturedConsumer>(
+        configuration, PaymentCapturedConsumer.Subscription);
 
     // ---- recolección de basura ---------------------------------------------
     // También sin broker: el huérfano lo produce un commit fallido, no el transporte.
     // Se apaga con `Documents:CleanupIntervalHours = 0`.
     services.AddScoped<IOrphanReceiptCollector, OrphanReceiptCollector>();
     services.AddHostedService<ReceiptCleaner>();
+
+    // La contrapartida de que la orden nazca sin pagar: sin esto, un carrito abandonado
+    // retiene su stock para siempre. Se apaga con `Payments:CleanupIntervalMinutes = 0`.
+    services.AddScoped<IAbandonedOrderCollector, AbandonedOrderCollector>();
+    services.AddHostedService<AbandonedOrderCleaner>();
 
     return services;
   }

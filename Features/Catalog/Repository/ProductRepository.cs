@@ -107,6 +107,18 @@ public class ProductRepository(AppDbContext db)
     return affected == 1;
   }
 
+  public async Task IncrementStockAsync(
+      int productId, int quantity, CancellationToken ct = default)
+  {
+    var now = DateTime.Now;
+
+    await _db.Products
+        .Where(p => p.Id == productId)
+        .ExecuteUpdateAsync(setters => setters
+            .SetProperty(p => p.Stock, p => p.Stock + quantity)
+            .SetProperty(p => p.UpdatedAt, _ => now), ct);
+  }
+
   public async Task<bool> SkuExistsAsync(string sku, int? excludeId = null, CancellationToken ct = default)
   {
     var normalized = sku.Trim();

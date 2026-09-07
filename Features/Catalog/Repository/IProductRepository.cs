@@ -55,6 +55,13 @@ public interface IProductRepository : IBaseRepository<Product>
   /// </remarks>
   Task<bool> TryDecrementStockAsync(int productId, int quantity, CancellationToken ct = default);
 
+  /// <summary>Devuelve stock al catálogo. Suma incondicional.</summary>
+  /// <remarks>
+  /// Sin condición porque no la hay: devolver siempre puede. Quien decide que se puede
+  /// devolver es la transición de estado de quien llama, no esta sentencia.
+  /// </remarks>
+  Task IncrementStockAsync(int productId, int quantity, CancellationToken ct = default);
+
 
   // // Sustituido por GetBySkuAsync + la regla en ProductService.BuyAsync: el `bool`
   // // mezclaba "no existe" (404) con "stock insuficiente" (409).

@@ -3795,3 +3795,72 @@ UserAdminService -> 422  { "identity": ["..."] }        clave inventada
        ningun tipo: para un grep esta muerto, para el compilador es imprescindible
   - -- moraleja: para esto, **el unico oraculo es el compilador**. Quitar y compilar es
        lento y es la unica forma que no rompe nada
+
+
+## 42. Pagos con Stripe  <- y la unica vez que Strategy gana al composition root
+
+- --- ⭐ **La regla del repo dice una cosa y aqui hay que hacer la contraria**
+```
+Resto del repo:  disco vs S3, Redis vs nada  -> elige la INFRAESTRUCTURA
+                 -> puerto + adaptador, decidido UNA vez al construir el grafo de DI
+Pagos:           stripe vs paypal            -> elige el COMPRADOR, en cada peticion
+                 -> Strategy + factory, resuelto POR PETICION
+```
+  - -- la pregunta que decide no es "¿hay varias implementaciones?" sino **"¿quien elige?"**.
+       Si elige el despliegue, va en el composition root; si elige el request, no puede
+  - -- `PaymentGatewayRegistry` recibe `IEnumerable<IPaymentGateway>` y hace `ToDictionary`
+       por `Provider`. Anadir PayPal = **una clase y un `AddSingleton`**
+  - -- y `ToDictionary` **revienta al arrancar** si hay dos adaptadores del mismo proveedor:
+       elegir uno al azar seria cobrar por la pasarela equivocada sin que nadie se entere
+
+- --- **La orden deja de nacer pagada, y eso arrastra mas de lo que parece**
+```
+antes:  POST /order -> Paid    (comodo, y mentira)
+ahora:  POST /order -> Placed  -> webhook firmado -> Paid -> order.paid -> comprobante
+```
+  - -- el comprobante colgaba de `order.placed`: emitia el PDF de una compra **que nadie
+       habia pagado**
+  - -- y colocar una orden **ya no emite ningun evento**: nadie consumiria `order.placed`, y
+       publicar sin cola que lo acepte vuelve como **312 NO_ROUTE** y agota el outbox en
+       silencio. La trampa ya estaba escrita en `CLAUDE.md`; esta vez la lei antes
+  - -- la deuda que crea: una orden `Placed` retiene stock. Sin recolector, un carrito
+       abandonado lo pierde para siempre. **Cambiar el ciclo de vida no es gratis**
+
+- --- ⭐ **Un webhook FIRMADO podia tumbar la peticion con un 500**
+```
+cuerpo sin "api_version"  -> Stripe.net lanza NullReferenceException
+cuerpo sin "data"         -> NRE al leer Data.Object
+NullReferenceException NO es StripeException -> el catch estrecho no lo cogia -> 500
+```
+  - -- un 500 le dice a quien mando el cuerpo **que ha encontrado algo**
+  - -- todo lo que pasa ahi es sobre un cuerpo que manda cualquiera: **cualquier fallo es
+       peticion mala, no error del servidor**. El catch va ancho a proposito
+  - -- lo encontraron los tests, no el compilador. Firmar a mano con el mismo HMAC que usa
+       Stripe permite probar la verificacion **sin exponer nada a Internet**
+
+- --- **El nivel de log no se decide por el codigo HTTP**
+```
+antes:  >= 500  -> Error con traza
+ahora:  ¿es una AppException nuestra? -> Warning     (decision deliberada)
+        lo demas >= 500               -> Error       (incidente de verdad)
+```
+  - -- el 503 de "no hay pasarela configurada" se da en **TODA** peticion de un despliegue
+       que no cobre: como Error con traza es un incidente falso por peticion
+  - -- es el mismo problema que costo 10 incidentes falsos con los 409 de stock. La segunda
+       vez que aparece el mismo patron, lo que hay que cambiar es la **regla**, no el caso
+
+- --- **Lo que se aprende probando: la forma correcta de probarlo ES la forma de ejecutarlo**
+  - -- llamar al handler de `payment.captured` a pelo **no persistia nada**: el efecto encola
+       con `Add` sin `SaveChanges`, a proposito, para que marca y efecto se confirmen juntos
+  - -- el test tiene que entrar por `IMessageInbox`, que es quien abre la transaccion. Si tu
+       test necesita saltarse la transaccion, tu test no esta probando lo que crees
+
+- --- **Lo verificado de verdad, y lo que no**
+```
+SI:  cadena completa por RabbitMQ    payment.captured -> paid -> order.paid -> PDF 29.332 B
+SI:  llamada REAL a Stripe (clave invalida) -> 503 + Retry-After + 0 filas en Payments
+     ^ eso ultimo es la garantia: la llamada va DENTRO de la transaccion, y al fallar
+       no queda ni media fila
+NO:  el camino feliz contra Stripe (necesita sk_test_ del owner)
+NO:  la entrega de un webhook real (necesita URL publica); la FIRMA si esta probada
+```

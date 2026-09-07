@@ -21,6 +21,13 @@ public interface ICatalogGateway
   /// </remarks>
   /// <returns><c>null</c> si el SKU no existe o no hay stock suficiente.</returns>
   Task<OrderableItem?> TryTakeAsync(string sku, int quantity, CancellationToken ct = default);
+
+  /// <summary>Devuelve al catálogo lo que una orden había apartado.</summary>
+  /// <remarks>
+  /// Se identifica por id de producto y no por SKU: el SKU pudo cambiar desde la compra, y
+  /// la orden guarda el id justo para poder deshacer.
+  /// </remarks>
+  Task ReturnAsync(int productId, int quantity, CancellationToken ct = default);
 }
 
 

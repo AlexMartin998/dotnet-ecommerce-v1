@@ -42,6 +42,24 @@ public interface IOrderRepository
   Task<(IReadOnlyList<Order> Items, int Total)> GetPagedAsync(
       string? numberPrefix, int skip, int take, CancellationToken ct = default);
 
+  /// <summary>Pasa la orden a pagada, solo si estaba esperando pago.</summary>
+  /// <remarks>
+  /// Condicional a propósito: que la transición sea <c>Placed -> Paid</c> y no una
+  /// asignación es lo que la hace idempotente ante un reenvío del webhook, y lo que impide
+  /// resucitar una orden ya cancelada por abandono.
+  /// </remarks>
+  /// <returns><c>true</c> si esta llamada fue la que la movió.</returns>
+  Task<bool> TryMarkPaidAsync(int orderId, CancellationToken ct = default);
+
+  /// <summary>Cancela la orden, solo si seguía esperando pago.</summary>
+  /// <returns><c>true</c> si esta llamada fue la que la canceló.</returns>
+  Task<bool> TryCancelAsync(int orderId, CancellationToken ct = default);
+
+  /// <summary>Órdenes que siguen esperando pago desde antes del corte.</summary>
+  /// <remarks>Por lotes: el recolector no puede traerse la tabla entera.</remarks>
+  Task<IReadOnlyList<Order>> FindAwaitingPaymentBeforeAsync(
+      DateTime cutoff, int limit, CancellationToken ct = default);
+
   /// <summary>Deja constancia de que el comprobante ya está disponible.</summary>
   Task SetReceiptAsync(int orderId, string documentKey, CancellationToken ct = default);
 

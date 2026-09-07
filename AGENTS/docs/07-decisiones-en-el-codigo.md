@@ -1458,3 +1458,46 @@ Comprobación de unicidad genérica por nombre de campo, resuelta con reflexión
 
 - **Estaba en `Shared/Caching/CacheKeys.cs`, y ahí violaba la regla de que `Shared/` no nombra vocabulario de un slice:** `category:all` es del catálogo, y el mecanismo de cache no tiene por qué conocerlo.
 - **Tres de sus cinco miembros estaban muertos** (`ProductAll`, `Product(id)`, `ProductsByCategory(id)`): solo se cachean categorías. Una clave que nadie escribe pero que alguien podría invalidar es el germen del bug que la clase venía a evitar.
+
+### `Features/Payments/Ports/IPaymentGateway.cs`
+
+- **Es Strategy, y es la excepción consciente a la regla del repo.** En todo lo demás la implementación de un puerto se elige una vez en el composition root, porque quien elige es la **infraestructura** (disco o S3, Redis o nada). Aquí quien elige es el **comprador**, en cada petición, y una decisión que toma el request no puede vivir en el grafo de DI.
+- **`ParseEvent` vive en el gateway y no en el servicio** porque verificar la firma es específico de cada pasarela: Stripe firma con HMAC sobre `t.payload`, PayPal usa certificados. Meterlo en el servicio obligaría a un `switch` por proveedor justo en el sitio que el Strategy venía a limpiar.
+- **Recibe el cuerpo crudo**: el JSON reserializado cambia bytes y el HMAC deja de cuadrar.
+
+### `Features/Payments/Gateways/PaymentGatewayRegistry.cs`
+
+- **`ToDictionary` por `Provider` hace estallar el arranque si hay dos adaptadores del mismo proveedor.** Elegir uno al azar significaría cobrar por la pasarela equivocada sin que nadie se entere.
+- **Dos «no puedo» distintos:** sin ninguna pasarela es **503** (`no_payment_provider`) porque el problema es del servidor; con una pasarela que no existe es **400** enumerando las que sí, porque el problema es de la petición.
+- **Cobrar no degrada en abierto.** Es la aplicación literal de la regla §7.4: una optimización tiene fuente de verdad alternativa, una garantía no. Aceptar un pago que no se va a cobrar sería lo peor que puede hacer este código.
+
+### `Features/Payments/Gateways/StripePaymentGateway.cs`
+
+- **La llamada a Stripe va DENTRO de la transacción**, igual que la escritura del PDF: si el commit falla queda un PaymentIntent huérfano en Stripe —basura— frente a un cobro sin fila que lo recuerde —dinero perdido—. **Verificado**: con una clave inválida, la petición devuelve 503 y quedan **0 filas** en `Payments`.
+- **`IdempotencyKey = request.Reference` en `RequestOptions`:** sin eso, un reintento de red crearía dos intentos de cobro en Stripe aunque de este lado solo hubiera una fila.
+- **`throwOnApiVersionMismatch: false`:** Stripe sube su API sin avisar y un evento de otra versión sigue siendo válido; rechazarlo dejaría de procesar cobros el día que ellos publiquen.
+- 🔴 **El `catch` es ancho a propósito.** Encontrado escribiendo los tests: un cuerpo sin `api_version` hace que `Stripe.net` lance `NullReferenceException`, que **no** es `StripeException`; y uno sin `data` la lanzaba al leer el objeto. Con un `catch (StripeException)` los dos salían como **500**, o sea diciéndole a quien mandó el cuerpo que ha encontrado algo. Todo lo que pasa aquí es sobre un cuerpo que manda cualquiera: cualquier fallo es petición mala, no error del servidor.
+- **`StripeException` al crear el intento se traduce a 503 `payment_gateway_unavailable`, no a 500.** Que Stripe no conteste no es un fallo nuestro, es reintentable, y el cliente necesita saberlo. El motivo real se queda en el log porque puede nombrar la clave o el importe.
+- **`ToMinorUnits` multiplica por 100** y eso vale para monedas de dos decimales. JPY o KRW no tienen fracción y esto las cobraría cien veces; hoy solo se factura en USD.
+
+### `Features/Ordering/Events/PaymentCapturedNotice.cs`
+
+- **Es una copia deliberada de `Payments.PaymentCaptured`, no un descuido.** El contrato de un evento de integración es su **JSON**, no una clase .NET compartida: referenciar el tipo del otro slice ata los dos al mismo ensamblado y hace que renombrar un campo allí rompa aquí en tiempo de compilación, en vez de notarse donde debe notarse, que es en el contrato.
+- **Solo declara los campos que Ordering usa**; el resto se ignora al deserializar. Lo único que une los dos contextos es la routing key.
+
+### `Features/Ordering/Repository/OrderRepository.cs` — `TryTransitionAsync`
+
+- **La condición va DENTRO del `UPDATE`** (`WHERE Status = Placed`): leer el estado y escribir después dejaría hueco a que un webhook y el recolector de abandonadas movieran la misma orden a la vez.
+- **Devolver «si esta llamada fue la que movió» es lo que hace idempotente a todo lo que cuelga.** El recolector solo devuelve stock si él fue quien canceló; el handler de cobros solo emite `order.paid` si él fue quien pagó. Sin eso, un reenvío del webhook generaría dos comprobantes y dos eventos.
+
+### `Features/Ordering/Service/AbandonedOrderCollector.cs`
+
+- **Existe porque mover `Paid` más adelante crea una deuda:** la orden nace con el stock ya apartado, así que un carrito abandonado lo retiene para siempre. Es la contrapartida obligatoria del cambio de ciclo de vida, no una mejora opcional.
+- **Una transacción por orden y no una por lote:** una orden que falle al devolver no puede impedir que se recuperen las demás.
+- **Las líneas se recorren ordenadas por id de producto**, el mismo orden global que al comprar: sin él, cancelar y comprar a la vez pueden cruzarse en deadlock.
+
+### `Shared/Http/GlobalExceptionHandler.cs` — nivel de log
+
+- **El corte no es «¿es 5xx?» sino «¿lo decidimos nosotros?».** Una `AppException` es una respuesta deliberada aunque sea 5xx: el 503 de «no hay pasarela configurada» se da en **toda** petición de un despliegue que no cobre, y como `Error` con traza sería un incidente falso por petición — el mismo problema que ya costó 10 incidentes falsos con los 409 de stock.
+- **Lo que no mapeamos sigue siendo `Error` con su traza**, incluido el 503 por timeout de base, que sí es un incidente.
+- ⚠️ Queda una línea `Error` por 503: la del **request logging de Serilog**, que eleva cualquier 5xx. Es una línea sin traza y el servidor sí dejó de servir, así que se acepta.

@@ -80,6 +80,42 @@ public sealed class OrderRepository(AppDbContext db) : IOrderRepository
     return (items, total);
   }
 
+  public async Task<bool> TryMarkPaidAsync(int orderId, CancellationToken ct = default)
+      => await TryTransitionAsync(orderId, OrderStatus.Paid, ct);
+
+  public async Task<bool> TryCancelAsync(int orderId, CancellationToken ct = default)
+      => await TryTransitionAsync(orderId, OrderStatus.Cancelled, ct);
+
+  /// <summary>Mueve la orden desde <c>Placed</c> en una sola sentencia.</summary>
+  /// <remarks>
+  /// La condición va DENTRO del UPDATE: leer el estado y escribir después dejaría hueco a
+  /// que un webhook y el recolector movieran la misma orden a la vez.
+  /// </remarks>
+  private async Task<bool> TryTransitionAsync(
+      int orderId, OrderStatus target, CancellationToken ct)
+  {
+    // Fuera del árbol de expresión: dentro, DateTime.Now se traduciría a GETDATE().
+    var now = DateTime.Now;
+
+    var affected = await db.Orders
+        .Where(o => o.Id == orderId && o.Status == OrderStatus.Placed)
+        .ExecuteUpdateAsync(setters => setters
+            .SetProperty(o => o.Status, target)
+            .SetProperty(o => o.UpdatedAt, now), ct);
+
+    return affected == 1;
+  }
+
+  public async Task<IReadOnlyList<Order>> FindAwaitingPaymentBeforeAsync(
+      DateTime cutoff, int limit, CancellationToken ct = default)
+      => await db.Orders
+          .AsNoTracking()
+          .Where(o => o.Status == OrderStatus.Placed && o.PlacedAt < cutoff)
+          .OrderBy(o => o.PlacedAt)
+          .Take(limit)
+          .Include(o => o.Items)
+          .ToListAsync(ct);
+
   public async Task SetReceiptAsync(int orderId, string documentKey, CancellationToken ct = default)
   {
     // Fuera del árbol de expresión: dentro, DateTime.Now se traduciría a GETDATE().

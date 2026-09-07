@@ -35,11 +35,11 @@ public sealed class OrderService(
 
       repository.Add(order);
 
-      // Antes del evento porque este necesita el Id; va en la misma transacción.
+      // Se guarda aquí para tener el Id; va en la misma transacción que el runner confirma.
+      // ⚠️ Colocar la orden NO emite ningún evento: nadie consumiría `order.placed` hoy, y
+      // publicar sin cola que lo acepte vuelve como 312 NO_ROUTE y agota el outbox en
+      // silencio. Volverá el día que Shipping o las notificaciones lo escuchen.
       await repository.SaveChangesAsync(token);
-
-      await outbox.EnqueueAsync(new OrderPlaced(
-          order.Id, order.Number, buyerUserId, order.Total, order.Currency, DateTime.Now), token);
 
       logger.LogInformation(
           "Order {Number} placed by {BuyerUserId} for {Total} {Currency}",
@@ -155,7 +155,8 @@ public sealed class OrderService(
     {
       Number = number,
       BuyerUserId = buyerUserId,
-      Status = OrderStatus.Paid,
+      // Nace sin pagar: quien la mueve es un cobro capturado, nunca esta llamada.
+      Status = OrderStatus.Placed,
       Subtotal = subtotal,
       // A cero: todavía no hay reglas que los calculen, pero el desglose ya está en el modelo.
       Discount = 0m,

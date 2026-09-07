@@ -302,7 +302,7 @@ public class OrderingTests(ApiFactory factory)
     var inbox = scope.ServiceProvider.GetRequiredService<IMessageInbox>();
 
     await Assert.ThrowsAsync<IOException>(() => inbox.ProcessOnceAsync(
-        messageId, OrderPlaced.EventType, _ => throw new IOException("el almacén falló")));
+        messageId, OrderPaid.EventType, _ => throw new IOException("el almacén falló")));
 
     Assert.Null(await DocumentKeyOf(id));
     Assert.False(await IsMarkedAsync(messageId));
@@ -328,9 +328,9 @@ public class OrderingTests(ApiFactory factory)
     var generator = scope.ServiceProvider.GetRequiredService<IReceiptGenerator>();
 
     var processed = await inbox.ProcessOnceAsync(
-        messageId, OrderPlaced.EventType,
+        messageId, OrderPaid.EventType,
         token => generator.HandleAsync(
-            new OrderPlaced(id, number, "irrelevante", 0m, "USD", DateTime.Now), token));
+            new OrderPaid(id, number, "irrelevante", 0m, "USD", DateTime.Now), token));
 
     Assert.True(processed);
     Assert.NotNull(await DocumentKeyOf(id));
@@ -338,7 +338,7 @@ public class OrderingTests(ApiFactory factory)
 
     // Y la reentrega del MISMO mensaje no vuelve a generar nada.
     Assert.False(await inbox.ProcessOnceAsync(
-        messageId, OrderPlaced.EventType, _ => throw new InvalidOperationException("no debería ejecutarse")));
+        messageId, OrderPaid.EventType, _ => throw new InvalidOperationException("no debería ejecutarse")));
   }
 
   [Fact]
@@ -539,7 +539,7 @@ public class OrderingTests(ApiFactory factory)
     using var scope = factory.Services.CreateScope();
 
     await scope.ServiceProvider.GetRequiredService<IReceiptGenerator>().HandleAsync(
-        new OrderPlaced(orderId, number, "irrelevante", 0m, "USD", DateTime.Now));
+        new OrderPaid(orderId, number, "irrelevante", 0m, "USD", DateTime.Now));
   }
 
   private async Task<string?> DocumentKeyOf(int orderId)

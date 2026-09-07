@@ -50,7 +50,8 @@ public class Order : IAuditable
   [MaxLength(450)]
   public required string BuyerUserId { get; set; }
 
-  public OrderStatus Status { get; set; } = OrderStatus.Paid;
+  /// <summary>Nace SIN pagar: solo un cobro capturado la mueve a <c>Paid</c>.</summary>
+  public OrderStatus Status { get; set; } = OrderStatus.Placed;
 
   /// <summary>Moneda ISO-4217 (<c>USD</c>).</summary>
   [Required]

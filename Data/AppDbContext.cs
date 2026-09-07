@@ -8,6 +8,7 @@ using ApiEcommerce.Features.Catalog.Models;
 using ApiEcommerce.Features.Catalog.Repository;
 using ApiEcommerce.Shared.Idempotency;
 using ApiEcommerce.Features.Ordering.Models;
+using ApiEcommerce.Features.Payments.Models;
 
 namespace ApiEcommerce.Data;
 
@@ -53,6 +54,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
   public DbSet<Order> Orders { get; set; }
 
   public DbSet<OrderItem> OrderItems { get; set; }
+
+  public DbSet<Payment> Payments { get; set; }
+
+  /// <summary>Dedupe del webhook: las pasarelas reenvían por diseño.</summary>
+  public DbSet<ProcessedWebhookEvent> ProcessedWebhookEvents { get; set; }
 
 
   /// <summary>
@@ -150,6 +156,46 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     modelBuilder.Entity<Order>()
         .HasIndex(o => o.PlacedAt)
         .HasDatabaseName("IX_Orders_PlacedAt");
+
+    // ---- pagos ---------------------------------------------------------------
+
+    modelBuilder.HasSequence<long>(Features.Payments.Repository.PaymentRepository.ReferenceSequence)
+        .StartsAt(1)
+        .IncrementsBy(1);
+
+    // Único: es la referencia que cita el cliente.
+    modelBuilder.Entity<Payment>()
+        .HasIndex(p => p.Reference)
+        .IsUnique()
+        .HasDatabaseName("IX_Payments_Reference");
+
+    // Único y filtrado: es lo que ata un webhook a SU fila, y repetido movería dos pagos.
+    // Filtrado porque la fila existe antes de que la pasarela conteste.
+    modelBuilder.Entity<Payment>()
+        .HasIndex(p => new { p.Provider, p.ProviderPaymentId })
+        .IsUnique()
+        .HasFilter("[ProviderPaymentId] IS NOT NULL")
+        .HasDatabaseName("IX_Payments_Provider_ProviderPaymentId");
+
+    // Por aquí consulta "mis pagos", y tambien "¿esta orden ya tiene pago?".
+    modelBuilder.Entity<Payment>()
+        .HasIndex(p => new { p.BuyerUserId, p.CreatedAt })
+        .HasDatabaseName("IX_Payments_Buyer_CreatedAt");
+
+    modelBuilder.Entity<Payment>()
+        .HasIndex(p => p.OrderId)
+        .HasDatabaseName("IX_Payments_OrderId");
+
+    modelBuilder.Entity<Payment>().Property(p => p.Amount).HasPrecision(18, 2);
+
+    // Como string y no como int: el numero del enum no dice nada al mirar la tabla, y
+    // reordenar el enum reescribiria el significado de las filas ya guardadas.
+    modelBuilder.Entity<Payment>().Property(p => p.Provider).HasConversion<string>().HasMaxLength(30);
+    modelBuilder.Entity<Payment>().Property(p => p.Status).HasConversion<string>().HasMaxLength(30);
+
+    modelBuilder.Entity<ProcessedWebhookEvent>().HasKey(e => e.Id);
+    modelBuilder.Entity<ProcessedWebhookEvent>()
+        .Property(e => e.Provider).HasConversion<string>().HasMaxLength(30);
 
     // Precisión explícita: la convención de EF ya da decimal(18,2), pero dejarlo implícito
     // haría que un cambio de convención moviese dinero sin que nadie lo note.

@@ -285,6 +285,11 @@ Piezas que conviene conocer antes de tocar nada:
 - **`ITransactionRunner`** (`Shared/Db/`) — la unidad transaccional de negocio. **No uses
   `[Transactional]` para esto**: `ActionExecutionDelegate` no es reentrante y con
   reintentos puede ejecutar la acción dos veces (el atributo se retiró por eso).
+- **`IPaymentGateway` + `IPaymentGatewayRegistry`** (`Features/Payments/Ports/`) — **Strategy**,
+  la única excepción consciente a «la implementación se elige en el composition root»: aquí
+  quien elige es el comprador en cada petición. Añadir PayPal = una clase + un `AddSingleton`.
+- **La orden nace `Placed`** y solo un `payment.captured` la mueve a `Paid`. Colocarla **no
+  emite ningún evento**: nadie consume `order.placed` y publicar sin cola es 312 NO_ROUTE.
 - **`IIdempotentCommandRunner`** (`Shared/Idempotency/`) — la envoltura «marca del intento +
   efecto en la misma transacción». Un caso de uso idempotente **no** vuelve a escribirla:
   pasa su efecto al runner. Gemelo de `IMessageInbox` para los mensajes entrantes.

@@ -41,6 +41,74 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 
 ## 2. Bitácora
 
+### 2026-09-07 — Pagos: quinto contexto acotado, y la orden deja de nacer pagada
+
+`planning/22`. Decisión del owner: **Stripe de verdad**, pero con la elección de proveedor
+por petición para que PayPal quepa después; y la orden **nace `Placed`**, no `Paid`.
+
+**Las tres decisiones que lo ordenan**
+
+1. **La orden nace sin pagar.** Antes `OrderService` la dejaba `Paid` al colocarla, que es
+   cómodo y mentira. Ahora el único que puede moverla es un cobro capturado por la pasarela.
+   Es lo que hace de Payments un contexto acotado y no una tabla más.
+2. **El proveedor lo elige el comprador → Strategy + factory.** ⚠️ Va **contra** la regla
+   general del repo (`CLAUDE.md` §5.4: la implementación de un puerto se elige una vez en el
+   composition root) y es consciente: allí quien elige es la *infraestructura*, aquí quien
+   elige es *cada petición*. `PaymentGatewayRegistry` resuelve `IEnumerable<IPaymentGateway>`
+   por `Provider`, así que **añadir PayPal es una clase y un `AddSingleton`**.
+3. **El webhook es la única fuente de verdad del cobro.** El 201 de `POST /payment` solo
+   dice «la pasarela aceptó el intento». Nadie marca un pago como cobrado por haber llamado
+   a nuestra propia API.
+
+**El comprobante se muda de evento.** Colgaba de `order.placed`, o sea que emitía el PDF de
+una compra que nadie había pagado. Ahora cuelga de `order.paid`. Y ⚠️ **colocar una orden ya
+no emite ningún evento**: nadie consumiría `order.placed`, y publicar sin cola que lo acepte
+vuelve como **312 NO_ROUTE** y agota el outbox en silencio (trampa ya documentada). Volverá
+el día que Shipping o las notificaciones lo escuchen.
+
+**La deuda que crea, y que se cierra en el mismo paso.** Una orden `Placed` retiene stock:
+`AbandonedOrderCleaner` (sobre el `PeriodicBackgroundService` de ayer) la cancela pasada
+`Payments:ReservationMinutes` y devuelve el stock **en la misma transacción que la
+transición**, que es lo que lo hace idempotente.
+
+**Tres cosas que aparecieron al escribirlo, y ninguna la habría visto compilando**
+
+- 🔴 **Un webhook firmado podía provocar un 500.** `Stripe.net` lanza
+  `NullReferenceException` —que **no** es `StripeException`— si el cuerpo no trae
+  `api_version`; y otra al leer `Data.Object` si no trae `data`. Con el `catch` estrecho
+  salían como 500, o sea diciéndole a quien mandó el cuerpo que ha encontrado algo. Todo lo
+  que pasa ahí es sobre un cuerpo que manda cualquiera: cualquier fallo es petición mala.
+- 🟠 **Un fallo de Stripe salía como `internal_error` 500.** Que la pasarela no conteste no
+  es un fallo nuestro y es reintentable: ahora es **503 `payment_gateway_unavailable`** con
+  `Retry-After`, y el motivo real se queda en el log porque puede nombrar la clave.
+- 🟠 **El 503 de «no hay pasarela» se registraba como incidente.** Se daría en *toda*
+  petición de un despliegue que no cobre. El corte del nivel de log pasa a ser «¿lo
+  decidimos nosotros?» y no «¿es 5xx?»: una `AppException` es `Warning`, lo no mapeado sigue
+  siendo `Error` con traza. Es el mismo problema que costó 10 incidentes falsos con los 409.
+
+Y una lección escribiendo los tests: llamar al handler de `payment.captured` a pelo no
+persistía nada, porque el efecto encola con `Add` sin `SaveChanges` **a propósito**. El test
+tiene que entrar por `IMessageInbox`, que es lo que hace la transacción — o sea que la forma
+correcta de probarlo es la forma correcta de ejecutarlo.
+
+**Verificado ejecutando**, contra SQL Server, Redis y RabbitMQ reales:
+
+- Topología declarada: `apiecommerce.order-paid` y `apiecommerce.order-payment`, cada una con
+  su retry y su DLQ propias.
+- Orden colocada → **`placed`**, sin comprobante, con el stock ya apartado (5 → 3).
+- `POST /payment` sin Stripe configurado → **503 `no_payment_provider`**; proveedor
+  inexistente → **400** enumerando los disponibles.
+- Cadena completa por el broker: `payment.captured` → **orden `paid`** → `order.paid` →
+  **comprobante `available`**, PDF de 29.332 bytes descargado, **DLQs en 0**.
+- Llamada **real a Stripe** con clave inválida → **503 `payment_gateway_unavailable`** con
+  `Retry-After: 1`, motivo solo en el log, y **0 filas** en `Payments`: la transacción se
+  deshizo entera, que es justo la garantía que se buscaba.
+- Suite **318/318** (+30), build limpio con `-warnaserror`.
+
+⚠️ **Lo único que NO se pudo verificar aquí**: el camino feliz contra Stripe de verdad, que
+necesita una `sk_test_…` del owner, y la entrega de un webhook real, que necesita una URL
+pública. La verificación de firma sí está probada, firmando a mano con el mismo esquema.
+
 ### 2026-09-07 — Los menores de la revisión: nueve arreglos pequeños, ninguno cosmético
 
 Cierra la deuda que quedaba de la revisión multiagente antes de abrir `Payments`.

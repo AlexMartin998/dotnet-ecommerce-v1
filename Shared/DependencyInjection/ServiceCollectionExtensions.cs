@@ -1,6 +1,7 @@
 using ApiEcommerce.Data;
 using ApiEcommerce.Features.Accounts;
 using ApiEcommerce.Features.Catalog;
+using ApiEcommerce.Features.Payments;
 using ApiEcommerce.Features.Catalog.Mapping;
 using ApiEcommerce.Features.Ordering;
 using ApiEcommerce.Shared.Caching;
@@ -63,7 +64,8 @@ public static class ServiceCollectionExtensions
       => services
           .AddAccountsFeature(configuration)    // Features/Accounts — identidad, JWT, autorización
           .AddCatalogFeature(configuration)     // Features/Catalog  — categorías y productos
-          .AddOrderingFeature(configuration);   // Features/Ordering — órdenes y comprobantes
+          .AddOrderingFeature(configuration)    // Features/Ordering — órdenes y comprobantes
+          .AddPaymentsFeature(configuration);   // Features/Payments — cobros y pasarelas
 
 
   /// <summary>

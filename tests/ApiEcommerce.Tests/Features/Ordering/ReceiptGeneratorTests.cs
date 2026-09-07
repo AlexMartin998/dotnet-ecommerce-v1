@@ -34,7 +34,7 @@ public class ReceiptGeneratorTests
     Items = [new OrderItem { Sku = "SKU-1", Name = "Producto", UnitPrice = 10m, Quantity = 1, LineTotal = 10m }]
   };
 
-  private static OrderPlaced AnEvent() => new(7, "ORD-2026-000007", "user-1", 10m, "USD", DateTime.Now);
+  private static OrderPaid AnEvent() => new(7, "ORD-2026-000007", "user-1", 10m, "USD", DateTime.Now);
 
   private static Mock<IReceiptRenderer> ARenderer()
   {

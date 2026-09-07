@@ -169,7 +169,7 @@ public class OrphanReceiptCollectorTests(ApiFactory factory)
     var orders = scope.ServiceProvider.GetRequiredService<IOrderRepository>();
     var order = await orders.FindWithItemsAsync(orderId);
 
-    await generator.HandleAsync(new ApiEcommerce.Features.Ordering.Events.OrderPlaced(
+    await generator.HandleAsync(new ApiEcommerce.Features.Ordering.Events.OrderPaid(
         orderId, order!.Number, order.BuyerUserId, order.Total, order.Currency, DateTime.Now));
 
     return (await orders.FindWithItemsAsync(orderId))!.ReceiptDocumentKey;

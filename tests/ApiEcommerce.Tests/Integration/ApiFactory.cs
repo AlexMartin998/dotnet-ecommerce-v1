@@ -61,6 +61,13 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
   /// </summary>
   protected virtual IDictionary<string, string?> Overrides => new Dictionary<string, string?>();
 
+  /// <summary>El secreto con el que se firman los webhooks de prueba.</summary>
+  /// <remarks>
+  /// Constante y conocido por los tests a propósito: es lo que permite firmar un cuerpo a
+  /// mano y comprobar la verificación de firma sin exponer la API a Internet.
+  /// </remarks>
+  public const string WebhookSecret = "whsec_solo_para_tests_0123456789";
+
   protected override void ConfigureWebHost(IWebHostBuilder builder)
   {
     builder.UseEnvironment("Testing");
@@ -109,6 +116,16 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
           // Recolector de huérfanos apagado: un job que borra ficheros no puede depender de
           // llegar tarde. Se prueba invocándolo a mano, que además es determinista.
           ["Documents:CleanupIntervalHours"] = "0",
+
+          // Recolector de ordenes abandonadas apagado: cancela compras y devuelve stock, asi
+          // que no puede depender de llegar tarde. Se prueba invocandolo a mano.
+          ["Payments:CleanupIntervalMinutes"] = "0",
+
+          // Credenciales de pago falsas, pero PRESENTES: sin ellas el proveedor no se
+          // registra y el flujo entero quedaria sin probar. La pasarela real se sustituye
+          // por una falsa en los tests que lo necesitan.
+          ["Payments:Stripe:SecretKey"] = "sk_test_no_es_una_clave_real",
+          ["Payments:Stripe:WebhookSecret"] = WebhookSecret,
 
           ["Serilog:MinimumLevel:Default"] = "Warning",
         };

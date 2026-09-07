@@ -24,4 +24,7 @@ public sealed class CatalogGateway(IProductRepository products) : ICatalogGatewa
     // Se copia lo que la orden congela: a partir de aquí el producto puede cambiar.
     return new OrderableItem(product.Id, product.SKU, product.Name, product.Price);
   }
+
+  public Task ReturnAsync(int productId, int quantity, CancellationToken ct = default)
+      => products.IncrementStockAsync(productId, quantity, ct);
 }

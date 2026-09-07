@@ -55,6 +55,9 @@ paginación y seeding.
 | **Órdenes** (`Features/Ordering`) | ✅ | slice completo: `Order`/`OrderItem`, número por secuencia, puerto `ICatalogGateway`, `POST /api/v1/order` transaccional e idempotente |
 | Jobs periódicos | ✅ | `PeriodicBackgroundService`: un solo bucle con apagado ordenado y `catch` sin filtro, heredado por los cuatro jobs |
 | Comprobante en PDF | ✅ | **asíncrono** por `OrderPlaced` → `IReceiptGenerator`; QuestPDF detrás de `IReceiptRenderer` |
+| **Pagos** (`Features/Payments`) | ✅ | quinto contexto acotado: Stripe real con `Stripe.net`, **Strategy + factory** (`IPaymentGatewayRegistry`) para que PayPal sea una clase y una línea, webhook firmado con dedupe propio |
+| Ciclo de vida de la orden | ✅ | nace `Placed`; solo un `payment.captured` la pasa a `Paid`, y eso dispara `order.paid` → comprobante. Transiciones condicionales en el `UPDATE` |
+| Recolector de órdenes abandonadas | ✅ | `AbandonedOrderCleaner`: pasada la ventana de reserva cancela y **devuelve el stock**, en la misma transacción que la transición |
 | Listado de administración de órdenes | ✅ | `GET /api/v1/order/all` (`admin`): paginado sobre todos los compradores, filtro por prefijo de `Number`, índice `IX_Orders_PlacedAt` |
 | Almacén de documentos privados | ✅ | `IDocumentStore` + `LocalDocumentStore`, **fuera de `wwwroot`**, clave opaca; cambiar a S3/R2/MinIO/Cloudinary es una implementación y una línea |
 | Dockerfile + compose | ✅ | multi-stage, usuario `$APP_UID` de la imagen base, `curl` instalado para el healthcheck |

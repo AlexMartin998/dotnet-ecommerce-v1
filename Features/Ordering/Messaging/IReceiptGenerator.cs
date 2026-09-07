@@ -4,7 +4,7 @@ namespace ApiEcommerce.Features.Ordering.Messaging;
 
 
 /// <summary>
-/// Qué se hace cuando se coloca una orden: dibujar su comprobante, guardarlo y dejar la
+/// Qué se hace cuando se paga una orden: dibujar su comprobante, guardarlo y dejar la
 /// orden apuntando a él. El efecto, separado del transporte.
 /// </summary>
 /// <remarks>
@@ -20,5 +20,5 @@ public interface IReceiptGenerator
   /// </remarks>
   /// <param name="event">El evento ya deserializado.</param>
   /// <param name="ct">Token de cancelación.</param>
-  Task HandleAsync(OrderPlaced @event, CancellationToken ct = default);
+  Task HandleAsync(OrderPaid @event, CancellationToken ct = default);
 }

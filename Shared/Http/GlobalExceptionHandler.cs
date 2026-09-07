@@ -31,7 +31,14 @@ public sealed class GlobalExceptionHandler(
 
     var (status, code, title) = Map(exception);
 
-    if ((int)status >= 500)
+    // El corte NO es «¿es 5xx?» sino «¿lo decidimos nosotros?». Una AppException es una
+    // respuesta deliberada, aunque sea 5xx: el 503 de «no hay pasarela configurada» se dará
+    // en TODA petición de un despliegue que no cobre, y como Error con traza sería un
+    // incidente falso por petición. Lo que no mapeamos sí es un incidente, con su traza.
+    if (exception is AppException)
+      logger.LogWarning("{Code} on {Method} {Path}: {Message}",
+          code, httpContext.Request.Method, httpContext.Request.Path, exception.Message);
+    else if ((int)status >= 500)
       logger.LogError(exception, "Unhandled exception on {Method} {Path}",
           httpContext.Request.Method, httpContext.Request.Path);
     else

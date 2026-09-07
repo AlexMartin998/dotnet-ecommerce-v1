@@ -14,7 +14,7 @@ public sealed class ReceiptGenerator(
     IDocumentStore documents,
     ILogger<ReceiptGenerator> logger) : IReceiptGenerator
 {
-  public async Task HandleAsync(OrderPlaced @event, CancellationToken ct = default)
+  public async Task HandleAsync(OrderPaid @event, CancellationToken ct = default)
   {
     ArgumentNullException.ThrowIfNull(@event);
 

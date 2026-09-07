@@ -133,11 +133,17 @@ Features/                 <- un contexto acotado por carpeta (vertical slicing)
     Models/ Dtos/ Repository/ Service/ Controllers/
     JwtOptions.cs RefreshTokenOptions.cs RefreshTokenCookie.cs
     ConfigureJwtBearerOptions.cs RefreshTokenCleaner.cs AccountsExtensions.cs
+  Payments/               cobros contra una pasarela real
+    Models/ Dtos/ Repository/ Service/ Controllers/
+    Ports/                IPaymentGateway (STRATEGY) + IOrderingGateway
+    Gateways/             PaymentGatewayRegistry (la factory) + StripePaymentGateway
+    Events/               PaymentCaptured
+    PaymentOptions.cs PaymentsExtensions.cs
   Ordering/               ordenes y su comprobante en PDF
     Models/ Dtos/ Repository/ Service/ Controllers/
     Ports/                ICatalogGateway: LO UNICO del slice que conoce Catalog
-    Events/               OrderPlaced
-    Messaging/            OrderPlacedConsumer + IReceiptGenerator (el EFECTO)
+    Events/               OrderPaid + PaymentCapturedNotice (copia del contrato de Payments)
+    Messaging/            OrderPaidConsumer, PaymentCapturedConsumer + sus EFECTOS
     Documents/            IReceiptRenderer + QuestPdfReceiptRenderer, ReceiptCleaner
     OrderingExtensions.cs
 Shared/                   <- transversal, de ningun dominio
@@ -192,7 +198,7 @@ lenguaje ubicuo y sus propias invariantes, o es parte del vocabulario de otro co
 Un slice por entidad reproduce la dispersión que el slicing venía a quitar, con más carpetas.
 
 **Añadir un slice = crear su carpeta y una línea en `AddFeatures()`.** Contextos previstos:
-`Catalog`, `Accounts`, `Ordering` (los tres existen), `Payments`, `Shipping`.
+`Catalog`, `Accounts`, `Ordering`, `Payments` (los cuatro existen), `Shipping`.
 
 ⚠️ **`Shared/` no nombra tipos de `Features/`.** La excepción legítima es el composition
 root, que por definición conoce ambos lados (por eso el ensamblado que escanea AutoMapper se
@@ -234,7 +240,8 @@ en **una** clase adaptadora. Es lo que hace que un slice se pueda mover.
 | Repository + genérico base | `Shared/Persistence/BaseRepository.cs` |
 | Servicio compuesto + reglas fuera | `Shared/Crud/` |
 | **Decorador** | `CachedCategoryService` envuelve `CategoryService`; el servicio real no sabe que hay cache |
-| **Puerto + adaptador** | `IFileStorage`, `IDocumentStore`, `ICatalogGateway`, `IReceiptRenderer`, `IEventPublisher` |
+| **Puerto + adaptador** | `IFileStorage`, `IDocumentStore`, `ICatalogGateway`, `IOrderingGateway`, `IReceiptRenderer`, `IEventPublisher` |
+| **Strategy + factory** | `IPaymentGateway` + `IPaymentGatewayRegistry`: la implementación la elige **cada petición**, no el despliegue |
 | **Null Object** | `NoCacheService`, `NoIdempotencyStore`, `NoAccessTokenDenylist`, `NoEntityRules` |
 | **Outbox transaccional** | `IEventOutbox` + `OutboxPublisher` |
 | **Inbox (exactamente una vez)** | `IMessageInbox` + tabla `ProcessedMessages` |
@@ -247,6 +254,11 @@ en **una** clase adaptadora. Es lo que hace que un slice se pueda mover.
 ⚠️ La elección de implementación (disco vs S3, Redis vs nada, broker vs nada) se hace **una
 vez, al construir el grafo de DI**, no por petición. Eso es puerto+adaptador elegido en el
 composition root, no Strategy.
+⚠️ **La excepción es `IPaymentGateway`, y es consciente**: ahí quien elige no es la
+infraestructura sino **el comprador**, en cada petición. Cuando el que decide es el request,
+la decisión no puede vivir en el grafo de DI: por eso hay un registry que resuelve
+`IEnumerable<IPaymentGateway>` por `Provider`, y añadir PayPal es **una clase y un
+`AddSingleton`**.
 
 ### 5.5 DI y lifetimes
 
@@ -285,6 +297,8 @@ Rutas **versionadas por segmento**: `[Route("api/v{version:apiVersion}/[controll
 | `AuthController` | `register`, `login`, `refresh`, `logout`, `logout-all`, `password`, `me` |
 | `UserController` | listado, detalle, roles, bloqueo — todo `admin` |
 | `OrderController` | `POST /order`, `GET /{id}`, `GET /paged`, **`GET /{id}/receipt`** (PDF), `GET /all` (`admin`) |
+| `PaymentController` | `POST /payment`, `GET /{id}`, `GET /paged`, `GET /all` (`admin`) |
+| `PaymentWebhookController` | `POST /payment/webhook/{provider}` — **anónimo: la firma es la autenticación** |
 | `DeadLetterController` | `GET /dead-letter`, `POST /{queue}/replay` — solo `admin` |
 | `HealthController` | `GET /health` — `[ApiVersionNeutral]` |
 
@@ -379,8 +393,14 @@ EventConsumer<TConsumer,TEvent>
 - **El evento y su consumidor viven en el SLICE que los emite**; `Shared/Messaging` solo
   pone el mecanismo. Un consumidor nuevo declara su `EventSubscription` y la pasa a
   `AddEventConsumer<T>(config, subscription)`.
+- ⚠️ **Cuando un slice reacciona al evento de OTRO, se copia el contrato, no se referencia el
+  tipo.** `Ordering.PaymentCapturedNotice` es una copia deliberada de
+  `Payments.PaymentCaptured` con solo los campos que Ordering usa: el contrato de un evento
+  de integración es su **JSON**, no una clase .NET compartida, y compartir la clase ata los
+  dos slices al mismo ensamblado.
 - **El efecto vive fuera del `BackgroundService`** (`IProductPurchasedHandler`,
-  `IReceiptGenerator`, `IOrphanReceiptCollector`) para que se pueda probar sin broker ni
+  `IReceiptGenerator`, `IOrderPaymentHandler`, `IOrphanReceiptCollector`,
+  `IAbandonedOrderCollector`) para que se pueda probar sin broker ni
   esperar horas. Es la lección de `planning/18`.
 - **De la DLQ se sale**: `IDeadLetterAdmin` expone recuentos y reemisión
   (`GET /api/v1/dead-letter`, `POST /{queue}/replay`, solo admin). ⚠️ El nombre de la cola
@@ -435,6 +455,31 @@ basura recolectable, frente a un comprobante perdido que no vuelve— y lo recog
 `IOrphanReceiptCollector`. **Su periodo de gracia (`Documents:OrphanGraceHours`) es la única
 línea de todo eso que no se puede equivocar**: sin él, el recolector borraría comprobantes
 buenos a mitad de vuelo.
+
+### 7.6 El ciclo de vida de una orden, y quién puede moverlo
+
+```
+POST /order          -> Placed     stock YA apartado, sin comprobante
+POST /payment        -> el intento en la pasarela; la orden NO se mueve
+webhook firmado      -> payment.captured -> Placed -> Paid -> order.paid -> comprobante
+nadie paga en 30 min -> AbandonedOrderCleaner -> Placed -> Cancelled + stock devuelto
+```
+
+- **Solo un cobro capturado pasa una orden a `Paid`.** No la respuesta de nuestra API, que
+  únicamente dice «la pasarela aceptó el intento».
+- **Las transiciones son condicionales** (`WHERE Status = Placed` dentro del `UPDATE`), y eso
+  es lo que las hace idempotentes ante un reenvío y lo que impide que un webhook tardío
+  resucite una orden ya cancelada.
+- ⚠️ **Colocar una orden NO emite ningún evento hoy.** Nadie consumiría `order.placed`, y
+  publicar sin cola que lo acepte vuelve como **312 NO_ROUTE** y agota el outbox en silencio.
+- ⚠️ **La ventana de reserva (`Payments:ReservationMinutes`) es la contrapartida de que la
+  orden nazca sin pagar**: sin el recolector, un carrito abandonado retiene su stock para
+  siempre.
+- **El webhook es anónimo porque la firma ES la autenticación**, y lleva
+  `[DisableRateLimiting]`: las pasarelas reintentan en ráfaga desde pocas IPs y el limitador
+  global las bloquearía justo cuando hay cobros que registrar.
+- **Sin pasarela configurada la API arranca igual**, pero `POST /payment` da **503**: cobrar
+  no es una optimización y **no degrada en abierto** (§7.4).
 
 ## 8. Errores
 
