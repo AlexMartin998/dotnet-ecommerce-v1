@@ -20,7 +20,8 @@ public interface IAuthService
   Task<AuthResponseDto> RegisterAsync(RegisterUserDto dto, CancellationToken ct = default);
 
   /// <summary>Valida credenciales y emite el access token.</summary>
-  /// <exception cref="Exceptions.UnauthorizedAppException">Credenciales inválidas o cuenta bloqueada.</exception>
+  /// <exception cref="Exceptions.UnauthorizedAppException">Credenciales inválidas.</exception>
+  /// <exception cref="Exceptions.ForbiddenAppException">La cuenta está bloqueada.</exception>
   Task<AuthResponseDto> LoginAsync(LoginUserDto dto, CancellationToken ct = default);
 
   /// <summary>Cambia la contraseña del propio usuario.</summary>

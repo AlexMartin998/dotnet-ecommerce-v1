@@ -11,18 +11,13 @@ namespace ApiEcommerce.Shared.Caching;
 /// </remarks>
 public static class CacheKeys
 {
-  /// <summary>Listado completo de categorías.</summary>
   public const string CategoryAll = "category:all";
 
-  /// <summary>Una categoría por id.</summary>
   public static string Category(int id) => $"category:{id}";
 
-  /// <summary>Listado completo de productos.</summary>
   public const string ProductAll = "product:all";
 
-  /// <summary>Un producto por id.</summary>
   public static string Product(int id) => $"product:{id}";
 
-  /// <summary>Productos de una categoría.</summary>
   public static string ProductsByCategory(int categoryId) => $"product:category:{categoryId}";
 }

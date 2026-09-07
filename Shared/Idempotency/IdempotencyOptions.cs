@@ -12,7 +12,6 @@ namespace ApiEcommerce.Shared.Idempotency;
 /// </remarks>
 public sealed class IdempotencyOptions
 {
-  /// <summary>Nombre de la sección de configuración.</summary>
   public const string SectionName = "Idempotency";
 
   /// <summary>

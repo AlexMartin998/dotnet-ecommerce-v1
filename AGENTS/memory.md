@@ -7,7 +7,7 @@
 
 ---
 
-## 0. 🔖 Punto de continuación — **última sesión: 2026-09-06**
+## 0. 🔖 Punto de continuación — **última sesión: 2026-09-07**
 
 **Todo lo commiteado está en `dev`, árbol limpio, SIN push.** El agente commitea pero
 nunca hace push (`rules.md` §12).
@@ -36,7 +36,17 @@ en `AddFeatures()`, y toda la dependencia hacia `Catalog` en **una** clase (`Cat
    «unhandled exception» a nivel Error con traza. 30 compras simultáneas sobre stock 20 →
    **10 incidentes falsos**; un 404 de categoría, igual. Silenciada la línea duplicada del
    framework (`GlobalExceptionHandler` ya lo registraba, y mejor): de 10 a **0**.
-6. **`planning/21` — la DLQ deja de ser un callejón sin salida**: `GET /api/v1/dead-letter`
+0. **Limpieza de comentarios + revisión prod-ready** (lo último). El 40 % del código eran
+   comentarios: bajan a 28 % y el porqué largo vive en `docs/07`, indexado por ruta. Y tres
+   revisiones en paralelo destaparon cinco P0 **que solo se ven ejecutando**: Redis caído
+   bloqueando 2–4 s por petición (`BacklogPolicy.FailFast`), el rate limiter de `auth`
+   esquivable con `X-Forwarded-For`, la CI incapaz de arrancar SQL Server por comentarios
+   dentro de un escalar YAML, dos carreras (cero admins / email envenenado con 500
+   permanente) y el desbordamiento de paginación que yo había dado por cerrado sin
+   comprobar quién usaba `PageQuery.Skip`. Todo arreglado y medido.
+   ⚠️ El bypass del rate limiter **no se reproduce desde localhost**: el cliente es un proxy
+   de confianza por defecto. Hay que probarlo desde una IP no-loopback.
+1. **`planning/21` — la DLQ deja de ser un callejón sin salida**: `GET /api/v1/dead-letter`
    y `POST /{queue}/replay` (solo admin, la cola validada contra las suscripciones
    registradas: allowlist por construcción), más un **recolector de comprobantes huérfanos**
    con periodo de gracia. ⚠️ Ese periodo es la única línea que no se puede equivocar: el PDF
@@ -113,7 +123,7 @@ autoridad**: se trajo la *feature*, nunca el *código*.
 
 ```sh
 dotnet build                                          # build de la solución (API + tests)
-dotnet test tests/ApiEcommerce.Tests                  # 274 tests, ~85 s
+dotnet test tests/ApiEcommerce.Tests                  # 278 tests, ~85 s
 dotnet watch run --urls "http://0.0.0.0:8021"         # dev
 ASPNETCORE_ENVIRONMENT=Development dotnet ef database update
 ```
@@ -124,7 +134,7 @@ desarrollo. Tras clonar hay que poner tres valores (`ConnectionStrings:ConexionS
 `UserSecretsId` = `apiecommerce-dev-2026`. Sin la clave JWT, el arranque falla con
 `OptionsValidationException` — es lo correcto, no un fallo de configuración del entorno.
 
-**CI**: `.github/workflows/ci.yml` corre build (`-warnaserror`) + los 274 tests en cada
+**CI**: `.github/workflows/ci.yml` corre build (`-warnaserror`) + los 278 tests en cada
 push y PR, con SQL Server y Redis como `services` del runner, y construye el `Dockerfile`.
 
 ### Los tests (paso 11, fases 1–5; falta la 6, CI)
@@ -238,7 +248,7 @@ Shared/          <- transversal, de ningun dominio
   DependencyInjection/   composition root (NO registra nada)
 Data/            AppDbContext + DataSeeder
 Exceptions/      jerarquia AppException (dominio -> HTTP)
-Migrations/      EF Core (13 aplicadas)
+Migrations/      EF Core (14 aplicadas)
 AGENTS/          docs/ features/ planning/ context/ + memory.md progress.md rules.md
 notes.md         <- el log de aprendizaje del autor. MUY importante, ver §6
 ```
@@ -332,7 +342,7 @@ bloques ```sh``` con los comandos reales, y mucha separación entre capítulos. 
 portar algo del curso— **qué hacía mal el original**. Ese contraste es lo que más valora.
 Los gotchas se marcan con ⚠️. Los números medidos van con su medición.
 
-Los capítulos 30–37 son la referencia de estilo más reciente.
+Los capítulos 30–38 son la referencia de estilo más reciente.
 
 ---
 
@@ -415,7 +425,7 @@ idempotencia **transaccional** (`ExecutedCommands`, en la misma transacción que
 outbox + RabbitMQ **con varias colas** —verificado de punta a punta contra un broker real—
 y un almacén de documentos privados sustituible (`IDocumentStore`).
 
-**Tests y CI**: `tests/ApiEcommerce.Tests`, **274** (unitarios + integración + concurrencia
+**Tests y CI**: `tests/ApiEcommerce.Tests`, **278** (unitarios + integración + concurrencia
 + degradación y arranque) y `.github/workflows/ci.yml`. El roadmap está **sin pendientes
 salvo el 15** (partir en proyectos, diferido a propósito); lo que queda son deudas menores,
 anotadas en §0.

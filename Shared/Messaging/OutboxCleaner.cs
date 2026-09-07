@@ -6,10 +6,11 @@ namespace ApiEcommerce.Shared.Messaging;
 
 
 /// <summary>
-/// Purga las filas ya procesadas de <c>OutboxMessages</c> y <c>ProcessedMessages</c>.
+/// Purga las filas ya procesadas de <c>OutboxMessages</c>, <c>ProcessedMessages</c> y
+/// <c>ExecutedCommands</c>.
 /// </summary>
 /// <remarks>
-/// Ambas tablas crecen con cada compra y sin techo. Se conserva una ventana
+/// Las tres tablas crecen con cada compra y sin techo. Se conserva una ventana
 /// (<see cref="OutboxOptions.RetentionDays"/>) porque son la evidencia de qué se publicó, y no
 /// se toca nada sin procesar: borrarlo perdería el hecho de negocio en silencio.
 /// </remarks>

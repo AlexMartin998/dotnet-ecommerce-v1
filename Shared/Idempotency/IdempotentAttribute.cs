@@ -32,8 +32,6 @@ public sealed class IdempotentAttribute : Attribute, IAsyncActionFilter, IOrdere
   public int Order => -100;
 
   /// <summary>Cruza la puerta antes de la acción y suelta el marcador al terminar.</summary>
-  /// <param name="context">Contexto de la acción.</param>
-  /// <param name="next">Continuación de la cadena de filtros.</param>
   public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
   {
     ArgumentNullException.ThrowIfNull(context);

@@ -6,7 +6,6 @@ namespace ApiEcommerce.Shared.Storage;
 /// <summary>Límites y ubicación del almacenamiento de imágenes (sección <c>Storage</c>).</summary>
 public sealed class FileStorageOptions
 {
-  /// <summary>Nombre de la sección de configuración.</summary>
   public const string SectionName = "Storage";
 
   /// <summary>Carpeta bajo <c>wwwroot/</c> donde se guardan las imágenes de producto.</summary>

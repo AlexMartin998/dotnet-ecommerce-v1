@@ -8,7 +8,7 @@ namespace ApiEcommerce.Features.Catalog.Repository;
 public interface ICategoryRepository : IBaseRepository<Category>
 {
 
-  /// <summary>¿Hay ya otra categoría con ese nombre? <paramref name="excludeId"/> se ignora al comparar.</summary>
+  /// <summary>¿Hay ya otra categoría con ese nombre? <paramref name="excludeId"/> se excluye de la comprobación.</summary>
   Task<bool> NameExistsAsync(string name, int? excludeId = null, CancellationToken ct = default);
 
 

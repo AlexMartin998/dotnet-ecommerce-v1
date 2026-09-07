@@ -60,7 +60,7 @@ paginación y seeding.
 | Idempotencia de la config | ✅ | validación condicional de `SeedOptions`; `ValidateOnStart` en todas las secciones |
 | `UseForwardedHeaders` | ✅ | el rate limiter particiona por la IP real, no por la del proxy |
 | Sonda de backlog del outbox | ✅ | `outbox-backlog` → `Degraded` si hay eventos que agotaron reintentos; el umbral sale de `RabbitMq:MaxPublishAttempts`, el mismo que aplica el publicador |
-| Tests | ✅ | `tests/ApiEcommerce.Tests`: **274** (unitarios + integración + concurrencia + degradación y arranque) |
+| Tests | ✅ | `tests/ApiEcommerce.Tests`: **278** (unitarios + integración + concurrencia + degradación y arranque) |
 
 ## Lo que se verificó (2026-08-30)
 

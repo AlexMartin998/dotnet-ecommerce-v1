@@ -33,7 +33,8 @@ public sealed class OutboxOptions
   /// <summary>Días que se conservan las filas ya procesadas antes de purgarlas.</summary>
   /// <remarks>
   /// <c>OutboxMessages</c> y <c>ProcessedMessages</c> crecen con cada compra y sin techo. Se
-  /// conserva una ventana porque son la evidencia de qué se publicó.
+  /// conserva una ventana porque son la evidencia de qué se publicó. Caduca también
+  /// <c>ExecutedCommands</c>, así que el plazo debe cubrir el PEOR reintento de un cliente.
   /// </remarks>
   [Range(1, 3650)]
   public int RetentionDays { get; init; } = 14;

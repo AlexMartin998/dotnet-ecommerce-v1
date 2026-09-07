@@ -21,9 +21,10 @@ public interface IRefreshTokenRepository
   /// </remarks>
   Task<bool> TryConsumeAsync(int id, CancellationToken ct = default);
 
-  /// <summary>Añade un token nuevo. <b>No hace <c>SaveChanges</c></b>.</summary>
+  /// <summary>Añade un token nuevo. No hace <c>SaveChanges</c>.</summary>
   /// <remarks>
-  /// Confirma la transacción de negocio, para que revocar el viejo y emitir el nuevo sean uno.
+  /// Quien confirma es la transacción de negocio, para que revocar el viejo y emitir el nuevo
+  /// sean uno.
   /// </remarks>
   void Add(RefreshToken token);
 

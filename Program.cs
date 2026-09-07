@@ -16,10 +16,9 @@ builder.Host.UseSerilog((context, configuration) => configuration
     .ReadFrom.Configuration(context.Configuration)
     .Enrich.FromLogContext()
     // Plantilla propia: la de fábrica no renderiza las propiedades del LogContext.
+    // Aquí y no en `Serilog:WriteTo`: declarar el sink en los dos sitios suma, no sustituye.
     .WriteTo.Console(outputTemplate:
         "[{Timestamp:HH:mm:ss} {Level:u3}] [{CorrelationId}/{TraceId}] {Message:lj}{NewLine}{Exception}"));
-
-// El sink se declara aquí y no en `Serilog:WriteTo`: declararlo en los dos suma, no sustituye.
 
 
 // Cabeceras del proxy: sin esto el rate limiter particiona por la IP del proxy y los

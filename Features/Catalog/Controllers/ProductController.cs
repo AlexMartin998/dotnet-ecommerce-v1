@@ -176,6 +176,7 @@ public class ProductController : ControllerBase
     [HttpPost("buy", Name = "BuyProduct")]
     // Atajo, no la garantía: corta el reintento sin tocar la base. Quien garantiza que no
     // se compra dos veces es ProductService, que abre además su propia transacción.
+    // Sin [Transactional]: la transacción la abre el servicio, y el atributo aquí lanzaría.
     [Idempotent]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]

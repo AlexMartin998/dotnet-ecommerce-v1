@@ -6,7 +6,6 @@ namespace ApiEcommerce.Shared.Caching;
 /// <summary>Configuración de la cache distribuida, sección <c>Redis</c> de <c>appsettings.json</c>.</summary>
 public sealed class CacheOptions
 {
-  /// <summary>Nombre de la sección de configuración.</summary>
   public const string SectionName = "Redis";
 
   /// <summary>

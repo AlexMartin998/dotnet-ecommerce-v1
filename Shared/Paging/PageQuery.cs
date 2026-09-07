@@ -10,18 +10,14 @@ namespace ApiEcommerce.Shared.Paging;
 /// </remarks>
 public class PageQuery
 {
-  /// <summary>Tope de <see cref="PageSize"/>.</summary>
   public const int MaxPageSize = 100;
 
-  /// <summary>Página pedida, base 1.</summary>
   [Range(1, int.MaxValue, ErrorMessage = "page must be 1 or greater")]
   public int Page { get; set; } = 1;
 
-  /// <summary>Elementos por página.</summary>
   [Range(1, MaxPageSize, ErrorMessage = "pageSize must be between 1 and 100")]
   public int PageSize { get; set; } = 10;
 
-  /// <summary>Elementos a saltar en la consulta.</summary>
   public int Skip => SkipFor(Page, PageSize);
 
   /// <summary>

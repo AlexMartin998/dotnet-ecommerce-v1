@@ -6,7 +6,6 @@ namespace ApiEcommerce.Shared.Observability;
 /// <summary>Trazas y métricas (sección <c>Observability</c>).</summary>
 public sealed class ObservabilityOptions
 {
-  /// <summary>Nombre de la sección de configuración.</summary>
   public const string SectionName = "Observability";
 
   /// <summary>Nombre con el que el servicio aparece en el backend de trazas.</summary>

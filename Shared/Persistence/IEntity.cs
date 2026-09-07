@@ -9,7 +9,6 @@ namespace ApiEcommerce.Shared.Persistence;
 /// </summary>
 public interface IEntity
 {
-  /// <summary>Clave primaria.</summary>
   int Id { get; }
 }
 
@@ -22,7 +21,6 @@ public interface IEntity
 /// </remarks>
 public interface IAuditable : IEntity
 {
-  /// <summary>Fecha de creación.</summary>
   DateTime CreatedAt { get; set; }
 
   /// <summary>Fecha de la última modificación, o <c>null</c> si nunca se modificó.</summary>

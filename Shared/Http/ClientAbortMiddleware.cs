@@ -30,7 +30,8 @@ public sealed class ClientAbortMiddleware(RequestDelegate next, ILogger<ClientAb
           context.Request.Method, context.Request.Path, ex.GetType().Name);
 
       // 499 (Client Closed Request) es la convención de facto de nginx, y evita que estas
-      // peticiones cuenten como 5xx. Solo si aún no se han enviado cabeceras.
+      // peticiones cuenten como 5xx.
+      // Con las cabeceras ya enviadas, tocarlas lanzaría otra excepción encima de la original.
       if (!context.Response.HasStarted)
         context.Response.StatusCode = 499;
 

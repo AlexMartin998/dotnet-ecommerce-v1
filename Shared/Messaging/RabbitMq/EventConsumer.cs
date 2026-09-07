@@ -59,8 +59,8 @@ public abstract class EventConsumer<TConsumer, TEvent>(
   /// </summary>
   /// <remarks>
   /// Es el único momento en que «ya no habrá más intentos» es cierto: desde el <c>catch</c> de cada
-  /// intento no se distingue «todavía no» de «no va a pasar». Corre en su propio scope y su propia
-  /// transacción, y no debe lanzar, o el mensaje no llegaría a la DLQ.
+  /// intento no se distingue «todavía no» de «no va a pasar». Corre en un scope nuevo, sin
+  /// transacción propia, y no debe lanzar, o el mensaje no llegaría a la DLQ.
   /// </remarks>
   /// <param name="services">Servicios de un scope nuevo.</param>
   /// <param name="event">El evento que no se pudo procesar.</param>

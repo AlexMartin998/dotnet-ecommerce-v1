@@ -38,9 +38,9 @@ public static class CachingExtensions
 
     if (options.IsEnabled)
     {
-      // Una sola conexión para las dos cosas que hablan con Redis: con el multiplexer que
-      // AddStackExchangeRedisCache crea por su cuenta, la cache se quedaba con los
-      // timeouts de fábrica y los de abajo solo protegían la mitad del sistema.
+      // Una sola conexión para las cuatro cosas que hablan con Redis (cache, idempotencia,
+      // denylist y sonda): con el multiplexer que AddStackExchangeRedisCache crea por su
+      // cuenta, la cache se quedaba con los timeouts de fábrica.
       var multiplexer = new Lazy<IConnectionMultiplexer>(() => Connect(options.Configuration));
 
       services.AddStackExchangeRedisCache(redis =>

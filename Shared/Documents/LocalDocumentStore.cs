@@ -18,8 +18,8 @@ public sealed class LocalDocumentStore : IDocumentStore
 
   /// <summary>Raíz del almacén, ya absoluta.</summary>
   /// <remarks>
-  /// Se resuelve una sola vez y contra el content root: <c>Path.GetFullPath</c> usa el
-  /// <c>cwd</c>, así que arrancar desde otra carpeta cambiaría dónde acaban los
+  /// Una ruta relativa se resuelve contra el content root y no con <c>Path.GetFullPath</c> a
+  /// secas, que usa el <c>cwd</c>: arrancar desde otra carpeta cambiaría dónde acaban los
   /// comprobantes y todas las claves guardadas darían 404.
   /// </remarks>
   private readonly string _root;
@@ -153,6 +153,7 @@ public sealed class LocalDocumentStore : IDocumentStore
 
         // `LastWriteTime` y no `CreationTime`: la fecha de creación no se mantiene al
         // copiar o restaurar un volumen, y aquí «antigua» significa «bórralo».
+        // Esta línea ES el filtro del periodo de gracia: sin ella se borran recién escritos.
         if (info.LastWriteTime >= writtenBefore) continue;
       }
       catch (IOException)

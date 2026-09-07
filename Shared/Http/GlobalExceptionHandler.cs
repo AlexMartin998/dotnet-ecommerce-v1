@@ -96,6 +96,8 @@ public sealed class GlobalExceptionHandler(
     DbUpdateConcurrencyException => (HttpStatusCode.Conflict, "concurrency_conflict",
         "The resource was modified by another request. Retry the operation."),
 
+    // Los brazos con guarda `_ when FindSqlException(...)` casan con cualquier tipo, así que no
+    // pueden subir por encima del de AppException (y C# no avisa de brazo inalcanzable con guarda).
     // Se recorre la cadena de InnerException porque el anidamiento no es estable:
     // SaveChangesAsync envuelve el SqlException, ExecuteUpdateAsync lo lanza desnudo y
     // EnableRetryOnFailure agotado añade otra capa.

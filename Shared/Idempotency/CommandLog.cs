@@ -84,7 +84,8 @@ public sealed class CommandLog(AppDbContext db) : ICommandLog
   /// </summary>
   /// <remarks>
   /// Fallar aquí, con el nombre de la operación delante, se diagnostica solo; SQL Server
-  /// daría un error críptico de longitud. Por HTTP no puede pasar, pero un llamador nuevo sí.
+  /// daría un error críptico de longitud. Por HTTP no pasa con el tope por defecto de
+  /// <c>Idempotency:MaxKeyLength</c>, pero sí un llamador nuevo.
   /// </remarks>
   private static string StorageKeyOf(CommandIntent intent)
   {

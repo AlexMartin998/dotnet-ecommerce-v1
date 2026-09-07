@@ -20,10 +20,8 @@ public sealed record PagedResult<T>(
   /// <summary>Número total de páginas. Con 0 elementos es 0, no 1.</summary>
   public int TotalPages => PageSize <= 0 ? 0 : (int)Math.Ceiling(TotalItems / (double)PageSize);
 
-  /// <summary>¿Hay página anterior?</summary>
   public bool HasPrevious => Page > 1;
 
-  /// <summary>¿Hay página siguiente?</summary>
   public bool HasNext => Page < TotalPages;
 
   /// <summary>Página vacía, para cuando la consulta no devuelve nada.</summary>

@@ -90,8 +90,6 @@ public sealed class RabbitMqConnection(
     }
     catch (Exception ex) when (ex is not OperationCanceledException)
     {
-      // No se propaga: quien llama decide reintentar más tarde. Un broker caído no
-      // debe tumbar la API.
       // No se propaga: quien llama reintenta más tarde, y un broker caído no debe tumbar la API.
       // Se loguea solo el mensaje porque una caída es esperada y la traza inundaría el log.
       // Un 406 sí es permanente —una cola existe con otros argumentos— y no una caída del broker.

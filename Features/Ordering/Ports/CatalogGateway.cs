@@ -18,7 +18,7 @@ public sealed class CatalogGateway(IProductRepository products) : ICatalogGatewa
 
     if (product is null) return null;
 
-    // Comprobar y descontar van en la misma sentencia SQL: entremedias cabe otra compra.
+    // Comprobar y descontar van en la misma sentencia SQL: separarlos dejaría hueco a otra compra.
     if (!await products.TryDecrementStockAsync(product.Id, quantity, ct)) return null;
 
     // Se copia lo que la orden congela: a partir de aquí el producto puede cambiar.
