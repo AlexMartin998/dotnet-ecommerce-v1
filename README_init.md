@@ -310,7 +310,7 @@ el primer login.
 
 ```sh
 dotnet user-secrets set "ConnectionStrings:ConexionSql" \
-  "Server=172.17.0.1,1434;Database=ApiEcommerceNET8;User ID=SA;Password=<la tuya>;TrustServerCertificate=true;MultipleActiveResultSets=true"
+  "Server=172.17.0.1,1434;Database=ApiEcommerceNET8;User ID=SA;Password=<la tuya>;TrustServerCertificate=true"
 
 # 32+ caracteres. Generar una: openssl rand -base64 48
 dotnet user-secrets set "Jwt:SecretKey" "<clave larga>"

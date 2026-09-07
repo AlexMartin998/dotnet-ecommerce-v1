@@ -43,7 +43,7 @@ public class ProductRepository(AppDbContext db)
     var total = await ordered.CountAsync(ct);
 
     var items = await ordered
-        .Skip((page - 1) * pageSize)
+        .Skip(PageQuery.SkipFor(page, pageSize))
         .Take(pageSize)
         .ToListAsync(ct);
 
@@ -78,11 +78,11 @@ public class ProductRepository(AppDbContext db)
   {
     if (string.IsNullOrWhiteSpace(sku)) return null;
 
-    var normalized = sku.Trim().ToLower();
+    var normalized = sku.Trim();
 
     return await Query()
         .Include(p => p.Category)
-        .FirstOrDefaultAsync(p => p.SKU.ToLower().Trim() == normalized, ct);
+        .FirstOrDefaultAsync(p => p.SKU == normalized, ct);   // usa IX_Products_SKU
   }
 
   public async Task<bool> TryDecrementStockAsync(
@@ -109,10 +109,10 @@ public class ProductRepository(AppDbContext db)
 
   public async Task<bool> SkuExistsAsync(string sku, int? excludeId = null, CancellationToken ct = default)
   {
-    var normalized = sku.Trim().ToLower();
+    var normalized = sku.Trim();
 
     var query = _db.Products
-        .Where(p => p.SKU.ToLower().Trim() == normalized);
+        .Where(p => p.SKU == normalized);   // sin funciones sobre la columna: usa IX_Products_SKU
 
     if (excludeId is int id)
       query = query.Where(p => p.Id != id);

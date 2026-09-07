@@ -28,10 +28,38 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
 
-    // Vaciarlas acepta las cabeceras de cualquier origen: solo vale si la API no es
-    // alcanzable sin pasar por el proxy. Declarar aquí su red en cuanto se conozca.
-    options.KnownNetworks.Clear();
-    options.KnownProxies.Clear();
+    // Solo se confia en los proxies declarados. Sin declararlos se conserva el valor de
+    // fabrica -solo loopback-, asi que una X-Forwarded-For de fuera se IGNORA.
+    //
+    // Aceptarla de cualquiera es un bypass del rate limiter, no un detalle de despliegue:
+    // el limitador particiona por RemoteIpAddress, que para entonces ya viene reescrita
+    // por la cabecera. Medido con AuthPermitLimit=5: sin cabecera, la sexta peticion daba
+    // 429; rotando X-Forwarded-For, ninguna. Fuerza bruta sin limite.
+    foreach (var proxy in builder.Configuration.GetSection("ForwardedHeaders:KnownProxies")
+                                               .Get<string[]>() ?? [])
+        if (System.Net.IPAddress.TryParse(proxy, out var address))
+            options.KnownProxies.Add(address);
+
+    foreach (var network in builder.Configuration.GetSection("ForwardedHeaders:KnownNetworks")
+                                                 .Get<string[]>() ?? [])
+    {
+        var parts = network.Split('/');
+
+        if (parts.Length == 2
+            && System.Net.IPAddress.TryParse(parts[0], out var prefix)
+            && int.TryParse(parts[1], out var length))
+            options.KnownNetworks.Add(new IPNetwork(prefix, length));
+    }
+});
+
+// Valida el grafo en TODOS los entornos, no solo en Development, que es donde lo activa
+// CreateBuilder por su cuenta. Los tests corren en "Testing" y son justo los que recorren
+// las ramas sin Redis y sin broker: sin esto, una captive dependency o un servicio sin
+// registrar en una rama fria no lo ve ni la CI ni el arranque, y sale como 500 en runtime.
+builder.Host.UseDefaultServiceProvider(options =>
+{
+    options.ValidateScopes = true;
+    options.ValidateOnBuild = true;
 });
 
 builder.Services

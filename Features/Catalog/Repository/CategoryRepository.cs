@@ -12,10 +12,10 @@ public class CategoryRepository(AppDbContext db) : BaseRepository<Category>(db),
 {
   public async Task<bool> NameExistsAsync(string name, int? excludeId = null, CancellationToken ct = default)
   {
-    var normalized = name.Trim().ToLower();
+    var normalized = name.Trim();
 
     var query = _db.Categories
-        .Where(c => c.Name.ToLower().Trim() == normalized);
+        .Where(c => c.Name == normalized);   // sin funciones sobre la columna: usa IX_Categories_Name
 
     if (excludeId is int id)
       query = query.Where(c => c.Id != id);
@@ -48,7 +48,7 @@ public class CategoryRepository(AppDbContext db) : ICategoryRepository
 
   public bool CategoryExists(string name)
   {
-    return _db.Categories.Any(c => c.Name.ToLower().Trim() == name.ToLower().Trim());
+    return _db.Categories.Any(c => c.Name == name.Trim());
   }
 
   public bool CreateCategory(Category category)
