@@ -1,5 +1,4 @@
 using ApiEcommerce.Data;
-using ApiEcommerce.Shared.Auth;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Options;

@@ -138,7 +138,7 @@ Features/                 <- un contexto acotado por carpeta (vertical slicing)
     Ports/                ICatalogGateway: LO UNICO del slice que conoce Catalog
     Events/               OrderPlaced
     Messaging/            OrderPlacedConsumer + IReceiptGenerator (el EFECTO)
-    Documents/            QuestPdfReceiptRenderer (la libreria de PDF, aislada)
+    Documents/            IReceiptRenderer + QuestPdfReceiptRenderer, ReceiptCleaner
     OrderingExtensions.cs
 Shared/                   <- transversal, de ningun dominio
   Persistence/            IEntity, IAuditable, IBaseRepository, BaseRepository, PersistenceExtensions
@@ -146,7 +146,8 @@ Shared/                   <- transversal, de ningun dominio
   Db/                     ITransactionRunner, TransactionRunner
   Idempotency/            CommandIntent, ICommandLog, IIdempotencyStore, IdempotentAttribute
   Messaging/              outbox, inbox, RabbitMq/ (EventConsumer<,>, EventSubscription...)
-  Caching/                ICacheService, RedisCacheService, NoCacheService, CacheKeys
+  Caching/                ICacheService, RedisCacheService, NoCacheService
+  Hosting/                PeriodicBackgroundService: el bucle de todo job periodico
   Storage/                IFileStorage    -> imagenes PUBLICAS (dentro de wwwroot)
   Documents/              IDocumentStore  -> documentos PRIVADOS (fuera de wwwroot)
   Auth/                   Roles, SeedOptions, IAccessTokenDenylist, extensiones de ClaimsPrincipal
@@ -237,7 +238,7 @@ en **una** clase adaptadora. Es lo que hace que un slice se pueda mover.
 | **Null Object** | `NoCacheService`, `NoIdempotencyStore`, `NoAccessTokenDenylist`, `NoEntityRules` |
 | **Outbox transaccional** | `IEventOutbox` + `OutboxPublisher` |
 | **Inbox (exactamente una vez)** | `IMessageInbox` + tabla `ProcessedMessages` |
-| **Plantilla por herencia de mecanismo** | `EventConsumer<TConsumer,TEvent>`: la subclase solo pone el efecto |
+| **Plantilla por herencia de mecanismo** | `EventConsumer<TConsumer,TEvent>` y `PeriodicBackgroundService`: la subclase solo pone el efecto |
 | Unidad de trabajo explícita | `ITransactionRunner` |
 | Options + validación al arranque | las 11 clases de options |
 | Filtros de acción | `[Idempotent]` (`Order -100`) |

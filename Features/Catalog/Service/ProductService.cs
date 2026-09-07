@@ -1,6 +1,5 @@
 using ApiEcommerce.Exceptions;
 using ApiEcommerce.Shared.Paging;
-using ApiEcommerce.Shared.Db;
 using ApiEcommerce.Shared.Messaging;
 using ApiEcommerce.Features.Catalog.Events;
 using ApiEcommerce.Shared.Storage;
@@ -123,7 +122,7 @@ public class ProductService : IProductService
 
     // Se guarda la nueva antes de borrar la vieja: si la validación falla, el producto
     // conserva la imagen que ya tenía.
-    var stored = await _storage.SaveProductImageAsync(upload, ct);
+    var stored = await _storage.SaveImageAsync(upload, ct);
 
     product.ImageUrl = stored;
     await _repository.UpdateAsync(product, ct);

@@ -1,6 +1,6 @@
 using ApiEcommerce.Features.Ordering.Models;
 
-namespace ApiEcommerce.Features.Ordering.Service;
+namespace ApiEcommerce.Features.Ordering.Documents;
 
 
 /// <summary>
@@ -8,7 +8,8 @@ namespace ApiEcommerce.Features.Ordering.Service;
 /// </summary>
 /// <remarks>
 /// Puerto para que la librería de PDF sea sustituible sin tocar al consumidor ni al
-/// controller. Devuelve un <see cref="Stream"/> y no <c>byte[]</c> para que el documento se
+/// controller. Vive junto a su implementación y no en <c>Service/</c>: es infraestructura
+/// del slice, no una regla de negocio. Devuelve un <see cref="Stream"/> y no <c>byte[]</c> para que el documento se
 /// copie al almacén sin materializarlo entero en memoria.
 /// </remarks>
 public interface IReceiptRenderer

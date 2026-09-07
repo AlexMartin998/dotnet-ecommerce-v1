@@ -1,3 +1,4 @@
+using ApiEcommerce.Shared.Hosting;
 using ApiEcommerce.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -17,41 +18,21 @@ namespace ApiEcommerce.Shared.Messaging;
 public sealed class OutboxCleaner(
     IServiceScopeFactory scopeFactory,
     IOptions<OutboxOptions> options,
-    ILogger<OutboxCleaner> logger) : BackgroundService
+    ILogger<OutboxCleaner> logger) : PeriodicBackgroundService(logger)
 {
   private readonly OutboxOptions _options = options.Value;
 
   /// <summary>Filas por sentencia, para no hacer un borrado gigante que bloquee la tabla.</summary>
   private const int DeleteBatchSize = 5_000;
 
-  protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-  {
-    var interval = TimeSpan.FromHours(_options.CleanupIntervalHours);
+  protected override TimeSpan Interval => TimeSpan.FromHours(_options.CleanupIntervalHours);
 
-    // Un respiro antes de la primera pasada: al arrancar hay cosas más urgentes.
-    try { await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken); }
-    catch (OperationCanceledException) { return; }
+  /// <summary>Un respiro antes de la primera pasada: al arrancar hay cosas más urgentes.</summary>
+  protected override TimeSpan StartDelay => TimeSpan.FromMinutes(1);
 
-    while (!stoppingToken.IsCancellationRequested)
-    {
-      try
-      {
-        await CleanAsync(stoppingToken);
-      }
-      catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-      {
-        break;   // apagado ordenado
-      }
-      catch (Exception ex)
-      {
-        // Sin filtrar OperationCanceledException: una OCE ajena al stoppingToken tumbaría la API (StopHost).
-        logger.LogError(ex, "Outbox cleanup failed; retrying in {Interval}", interval);
-      }
+  protected override string FailureMessage => "Outbox cleanup failed";
 
-      try { await Task.Delay(interval, stoppingToken); }
-      catch (OperationCanceledException) { break; }
-    }
-  }
+  protected override Task RunOnceAsync(CancellationToken ct) => CleanAsync(ct);
 
   private async Task CleanAsync(CancellationToken ct)
   {

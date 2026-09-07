@@ -1,5 +1,4 @@
 
-using ApiEcommerce.Shared.Crud;
 using ApiEcommerce.Features.Accounts.Dtos;
 namespace ApiEcommerce.Features.Accounts.Service;
 

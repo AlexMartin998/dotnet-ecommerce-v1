@@ -1,4 +1,5 @@
 using System.Text;
+using ApiEcommerce.Features.Ordering.Documents;
 using ApiEcommerce.Features.Ordering.Events;
 using ApiEcommerce.Features.Ordering.Messaging;
 using ApiEcommerce.Features.Ordering.Models;

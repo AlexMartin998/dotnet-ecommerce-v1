@@ -1441,3 +1441,20 @@ Comprobación de unicidad genérica por nombre de campo, resuelta con reflexión
 - **Un stream en la última posición se copia al almacén como un fichero de CERO bytes**, sin un solo error: la orden diría "comprobante disponible" y la descarga daría un PDF vacío.
 - **Se embebe Lato en vez de pedir una fuente del sistema** para que el documento salga igual en local y en la imagen; con una del sistema, dos réplicas podrían producir comprobantes distintos para la misma orden.
 
+### `Shared/Hosting/PeriodicBackgroundService.cs`
+
+- **Existe porque el bucle estaba copiado cuatro veces** (`OutboxPublisher`, `OutboxCleaner`, `RefreshTokenCleaner`, `ReceiptCleaner`) con las mismas 20 líneas: el `while`, los dos `Task.Delay` envueltos en `try`, el `catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)` para el apagado ordenado y el `catch (Exception)` **sin filtro**.
+- **Ese último `catch` es lo que se estaba copiando, y es load-bearing:** una excepción que escapa de `ExecuteAsync` mata el `BackgroundService` para siempre, y desde .NET 6 el default `BackgroundServiceExceptionBehavior.StopHost` **tumba la API entera**. Copiarlo cuatro veces es cuatro oportunidades de escribirlo mal.
+- **Herencia y no composición**, según la regla del repo: esto es mecanismo puro —bucle, espera, apagado— sin ninguna decisión de negocio. `ExecuteAsync` es `sealed` para que una subclase no pueda saltarse el blindaje.
+- **`Interval <= 0` apaga el trabajo.** Solo es alcanzable desde `Documents:CleanupIntervalHours`, que documenta el 0 como apagado; los intervalos del outbox son `[Range(1, …)]` y el arranque los valida, así que ahí un 0 no puede llegar (y habría sido un bucle sin espera).
+
+### `Features/Accounts/IdentityMapping.cs`
+
+- **Une dos copias que habían divergido.** `AuthService` y `UserAdminService` tenían el mismo `ToDto(user, roles)` letra por letra, y dos traducciones distintas del mismo `IdentityResult`: una agrupaba los errores por campo (`{ "Password": [...] }`) y la otra los metía todos bajo la clave inventada `identity`. Para el cliente eran **dos 422 con forma distinta** según qué endpoint fallara.
+- **Se conserva la forma por campo**, que es la de `ValidationProblem(ModelState)`: lo que no se puede atribuir a un campo cae en `request`, no en una clave nueva.
+- **La proyección es a mano y no AutoMapper** porque los roles son una consulta aparte y un Profile tendría que inyectar el `UserManager`.
+
+### `Features/Catalog/CatalogCacheKeys.cs`
+
+- **Estaba en `Shared/Caching/CacheKeys.cs`, y ahí violaba la regla de que `Shared/` no nombra vocabulario de un slice:** `category:all` es del catálogo, y el mecanismo de cache no tiene por qué conocerlo.
+- **Tres de sus cinco miembros estaban muertos** (`ProductAll`, `Product(id)`, `ProductsByCategory(id)`): solo se cachean categorías. Una clave que nadie escribe pero que alguien podría invalidar es el germen del bug que la clase venía a evitar.

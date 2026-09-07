@@ -3744,3 +3744,54 @@ la realidad:        aplicado a CERO acciones desde hace commits
   - -- ya se habia cazado esa misma frase una vez, en otro archivo. **Una afirmacion falsa
        en la documentacion sobrevive a que arregles el codigo**: hay que ir a buscarla
   - -- de ahi que retirar codigo muerto valga el doble: obliga a releer todo lo que lo citaba
+
+
+## 41. Los menores  <- nueve arreglos pequenos, y ninguno era cosmetico
+
+- --- ⭐ **Lo que se copiaba cuatro veces no era estetica: era el blindaje**
+```
+OutboxPublisher / OutboxCleaner / RefreshTokenCleaner / ReceiptCleaner
+  while (!stoppingToken.IsCancellationRequested) { ... }
+  catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+  catch (Exception ex) { logger.LogError(...); }        <- SIN filtro, y por eso importa
+  try { await Task.Delay(interval, stoppingToken); } catch (OCE) { break; }
+```
+  - -- una excepcion que se escapa de `ExecuteAsync` **mata el BackgroundService para
+       siempre**, y desde .NET 6 el default `StopHost` se lleva la API entera por delante
+  - -- copiar eso cuatro veces son cuatro oportunidades de escribirlo mal. Ahora es
+       `PeriodicBackgroundService`, y `ExecuteAsync` va **`sealed`**: una subclase no puede
+       saltarse el blindaje aunque quiera
+  - -- de paso se vio que `Interval = 0` era un **bucle sin espera**. Solo llega desde
+       `Documents:CleanupIntervalHours`, que documenta el 0 como "apagado"; los del outbox
+       son `[Range(1,...)]` y el arranque los valida
+
+- --- **Dos copias del mismo metodo que habian DIVERGIDO** (lo peor de duplicar)
+```
+AuthService      -> 422  { "Password": ["..."] }        agrupado por campo
+UserAdminService -> 422  { "identity": ["..."] }        clave inventada
+```
+  - -- el mismo `IdentityResult`, dos formas distintas segun que endpoint fallara. El
+       cliente no puede escribir un solo manejador para eso
+  - -- duplicar no falla el dia que copias: falla el dia que **arreglas una de las dos**
+
+- --- **Cosas que solo se ven leyendo, no compilando**
+  - -- `RefreshTokenCleaner` inyectaba `IOptions<RefreshTokenOptions>` y **no lo leia nunca**
+  - -- `CacheKeys` vivia en `Shared/Caching/` diciendo `category:all` — vocabulario de un
+       slice dentro de lo transversal — y **3 de sus 5 miembros estaban muertos**
+  - -- `AuthController` fijaba `version = "1.0"` a mano: con una v2, el `Location` del
+       registro apuntaria a la v1
+  - -- un comentario que **mentia**: decia que resolver `IOptions<T>` por peticion respeta
+       "un cambio en caliente". No: `IOptions<T>` es un singleton que se resuelve una vez.
+       Se corrigio el COMENTARIO, no el codigo — meter `IOptionsMonitor` para que la frase
+       fuera cierta habria cambiado el comportamiento sin que nadie lo pidiera
+
+- --- ⭐ **El dato del dia: un analisis de "usings sin usar" acerto el 12%**
+```
+60 candidatos que dio el analisis estatico
+ 7 muertos de verdad  (verificados QUITANDOLOS Y COMPILANDO, uno a uno)
+53 falsos positivos   (metodos de extension y <see cref>)
+```
+  - -- un `using` de un namespace del que solo usas **metodos de extension** no menciona
+       ningun tipo: para un grep esta muerto, para el compilador es imprescindible
+  - -- moraleja: para esto, **el unico oraculo es el compilador**. Quitar y compilar es
+       lento y es la unica forma que no rompe nada

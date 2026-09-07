@@ -34,7 +34,7 @@ public sealed class LocalFileStorage(
   };
 
   /// <inheritdoc />
-  public async Task<string> SaveProductImageAsync(FileUpload upload, CancellationToken ct = default)
+  public async Task<string> SaveImageAsync(FileUpload upload, CancellationToken ct = default)
   {
     ArgumentNullException.ThrowIfNull(upload);
 

@@ -42,7 +42,7 @@ public sealed class UserAdminService(
     var items = new List<UserDto>(users.Count);
 
     foreach (var user in users)
-      items.Add(ToDto(user, await userManager.GetRolesAsync(user)));
+      items.Add(IdentityMapping.ToDto(user, await userManager.GetRolesAsync(user)));
 
     return new PagedResult<UserDto>(items, query.Page, query.PageSize, total);
   }
@@ -51,7 +51,7 @@ public sealed class UserAdminService(
   {
     var user = await FindAsync(userId);
 
-    return ToDto(user, await userManager.GetRolesAsync(user));
+    return IdentityMapping.ToDto(user, await userManager.GetRolesAsync(user));
   }
 
   public async Task AssignRoleAsync(
@@ -69,7 +69,7 @@ public sealed class UserAdminService(
 
     var result = await userManager.AddToRoleAsync(user, normalized);
 
-    if (!result.Succeeded) throw Failure(result);
+    if (!result.Succeeded) throw IdentityMapping.Failure(result);
 
     // Auditoría: sin rastro no hay forma de saber quién concedió un rol meses después.
     logger.LogWarning(
@@ -98,7 +98,7 @@ public sealed class UserAdminService(
     {
       var result = await userManager.RemoveFromRoleAsync(user, normalized);
 
-      if (!result.Succeeded) throw Failure(result);
+      if (!result.Succeeded) throw IdentityMapping.Failure(result);
     }
 
     logger.LogWarning(
@@ -117,7 +117,7 @@ public sealed class UserAdminService(
     // `MaxValue` = indefinido: Identity solo sabe de fechas de fin, no de bloqueos perpetuos.
     var result = await userManager.SetLockoutEndDateAsync(user, DateTimeOffset.MaxValue);
 
-    if (!result.Succeeded) throw Failure(result);
+    if (!result.Succeeded) throw IdentityMapping.Failure(result);
 
     // Sin esto el bloqueo no significa nada: el usuario seguiría renovando su sesión.
     await sessions.RevokeAllSessionsAsync(userId, ct);
@@ -133,7 +133,7 @@ public sealed class UserAdminService(
 
     var result = await userManager.SetLockoutEndDateAsync(user, null);
 
-    if (!result.Succeeded) throw Failure(result);
+    if (!result.Succeeded) throw IdentityMapping.Failure(result);
 
     // Sin limpiar los fallos acumulados, la cuenta se volvería a bloquear al primer error.
     await userManager.ResetAccessFailedCountAsync(user);
@@ -165,7 +165,7 @@ public sealed class UserAdminService(
         // Se relee dentro: el runner limpia el change tracker antes de cada intento.
         var result = await userManager.RemoveFromRoleAsync(await FindAsync(userId), Roles.Admin);
 
-        if (!result.Succeeded) throw Failure(result);
+        if (!result.Succeeded) throw IdentityMapping.Failure(result);
 
         return true;
       }, ct);
@@ -176,21 +176,4 @@ public sealed class UserAdminService(
 
   /// <summary>Los roles se guardan en minúsculas (ver <c>Roles</c>).</summary>
   private static string Normalize(string role) => role.Trim().ToLowerInvariant();
-
-  /// <summary>Traduce un fallo de Identity a una excepción de dominio.</summary>
-  private static ValidationAppException Failure(IdentityResult result)
-      => new(new Dictionary<string, string[]>
-      {
-        ["identity"] = [.. result.Errors.Select(e => e.Description)]
-      });
-
-  private static UserDto ToDto(ApplicationUser user, IList<string> roles) => new()
-  {
-    Id = user.Id,
-    Username = user.UserName ?? string.Empty,
-    Email = user.Email,
-    Name = user.Name,
-    Roles = [.. roles],
-    CreatedAt = user.CreatedAt
-  };
 }

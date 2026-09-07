@@ -1,3 +1,4 @@
+using ApiEcommerce.Features.Catalog;
 using ApiEcommerce.Shared.Caching;
 using ApiEcommerce.Shared.Paging;
 using ApiEcommerce.Features.Catalog.Dtos;
@@ -22,10 +23,10 @@ public sealed class CachedCategoryService(ICategoryService inner, ICacheService 
   // ---- lecturas: cache-aside ----------------------------------------------
 
   public Task<IEnumerable<CategoryDto>> GetAllAsync(CancellationToken ct = default)
-      => cache.GetOrSetAsync(CacheKeys.CategoryAll, inner.GetAllAsync, Ttl, ct);
+      => cache.GetOrSetAsync(CatalogCacheKeys.CategoryAll, inner.GetAllAsync, Ttl, ct);
 
   public Task<CategoryDto> GetByIdAsync(int id, CancellationToken ct = default)
-      => cache.GetOrSetAsync(CacheKeys.Category(id), token => inner.GetByIdAsync(id, token), Ttl, ct);
+      => cache.GetOrSetAsync(CatalogCacheKeys.Category(id), token => inner.GetByIdAsync(id, token), Ttl, ct);
 
   // Las páginas no se cachean: cada combinación de page/pageSize sería una clave que
   // ninguna invalidación conoce, y eso exigiría invalidar por prefijo.
@@ -39,19 +40,19 @@ public sealed class CachedCategoryService(ICategoryService inner, ICacheService 
   public async Task<int> CreateAsync(CreateCategoryDto dto, CancellationToken ct = default)
   {
     var id = await inner.CreateAsync(dto, ct);
-    await cache.RemoveAsync(ct, CacheKeys.CategoryAll);
+    await cache.RemoveAsync(ct, CatalogCacheKeys.CategoryAll);
     return id;
   }
 
   public async Task UpdateAsync(int id, UpdateCategoryDto dto, CancellationToken ct = default)
   {
     await inner.UpdateAsync(id, dto, ct);
-    await cache.RemoveAsync(ct, CacheKeys.CategoryAll, CacheKeys.Category(id));
+    await cache.RemoveAsync(ct, CatalogCacheKeys.CategoryAll, CatalogCacheKeys.Category(id));
   }
 
   public async Task DeleteAsync(int id, CancellationToken ct = default)
   {
     await inner.DeleteAsync(id, ct);
-    await cache.RemoveAsync(ct, CacheKeys.CategoryAll, CacheKeys.Category(id));
+    await cache.RemoveAsync(ct, CatalogCacheKeys.CategoryAll, CatalogCacheKeys.Category(id));
   }
 }

@@ -1,3 +1,4 @@
+using ApiEcommerce.Features.Catalog;
 using ApiEcommerce.Exceptions;
 using ApiEcommerce.Features.Catalog.Dtos;
 using ApiEcommerce.Features.Catalog.Service;
@@ -25,7 +26,7 @@ public class CachedCategoryServiceTests
   public async Task GetAllAsync_ReadsThroughTheCacheWithTheCollectionKey()
   {
     _cache.Setup(c => c.GetOrSetAsync(
-              CacheKeys.CategoryAll, It.IsAny<Func<CancellationToken, Task<IEnumerable<CategoryDto>>>>(),
+              CatalogCacheKeys.CategoryAll, It.IsAny<Func<CancellationToken, Task<IEnumerable<CategoryDto>>>>(),
               It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()))
           .ReturnsAsync([]);
 
@@ -55,7 +56,7 @@ public class CachedCategoryServiceTests
     var order = new List<string>();
     _inner.Setup(s => s.CreateAsync(It.IsAny<CreateCategoryDto>(), It.IsAny<CancellationToken>()))
           .Callback(() => order.Add("inner")).ReturnsAsync(42);
-    _cache.Setup(c => c.RemoveAsync(It.IsAny<CancellationToken>(), CacheKeys.CategoryAll))
+    _cache.Setup(c => c.RemoveAsync(It.IsAny<CancellationToken>(), CatalogCacheKeys.CategoryAll))
           .Callback(() => order.Add("invalidate")).Returns(Task.CompletedTask);
 
     var id = await Sut().CreateAsync(new CreateCategoryDto { Name = "Bebidas" });
@@ -87,7 +88,7 @@ public class CachedCategoryServiceTests
 
     _cache.Verify(c => c.RemoveAsync(
         It.IsAny<CancellationToken>(),
-        It.Is<string[]>(k => k.Contains(CacheKeys.CategoryAll) && k.Contains(CacheKeys.Category(7)))),
+        It.Is<string[]>(k => k.Contains(CatalogCacheKeys.CategoryAll) && k.Contains(CatalogCacheKeys.Category(7)))),
         Times.Once);
   }
 
@@ -98,7 +99,7 @@ public class CachedCategoryServiceTests
 
     _cache.Verify(c => c.RemoveAsync(
         It.IsAny<CancellationToken>(),
-        It.Is<string[]>(k => k.Contains(CacheKeys.CategoryAll) && k.Contains(CacheKeys.Category(7)))),
+        It.Is<string[]>(k => k.Contains(CatalogCacheKeys.CategoryAll) && k.Contains(CatalogCacheKeys.Category(7)))),
         Times.Once);
   }
 }

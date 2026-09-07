@@ -54,7 +54,9 @@ public class AuthController : ControllerBase
         // Registrarse abre sesión como el login: si no, el access token no se podría renovar.
         await OpenSessionAsync(result.User.Id, ct);
 
-        return CreatedAtRoute("GetProfile", new { version = "1.0" }, result);
+        // La versión sale del request, no fijada: con una v2, el Location apuntaría a la v1.
+        return CreatedAtRoute(
+            "GetProfile", new { version = HttpContext.ApiVersionValue() }, result);
     }
 
     /// <summary>Valida credenciales y devuelve el access token.</summary>

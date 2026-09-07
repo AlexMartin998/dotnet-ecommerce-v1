@@ -3,7 +3,6 @@ using Microsoft.EntityFrameworkCore;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using ApiEcommerce.Shared.Persistence;
-using ApiEcommerce.Features.Catalog.Dtos;
 
 namespace ApiEcommerce.Features.Catalog.Models;
 

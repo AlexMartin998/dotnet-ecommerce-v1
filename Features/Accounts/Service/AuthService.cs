@@ -49,7 +49,7 @@ public sealed class AuthService(
 
     // 422 y no 400: el DTO era válido, lo que no se cumple es la política de contraseñas.
     if (!created.Succeeded)
-      throw new ValidationAppException(ToFieldErrors(created));
+      throw IdentityMapping.Failure(created);
 
     var addedToRole = await userManager.AddToRoleAsync(user, Roles.User);
 
@@ -57,7 +57,7 @@ public sealed class AuthService(
     {
       // Sin rol la cuenta quedaría a medias: se deshace la creación.
       await userManager.DeleteAsync(user);
-      throw new ValidationAppException(ToFieldErrors(addedToRole));
+      throw IdentityMapping.Failure(addedToRole);
     }
 
     logger.LogInformation("User {Username} registered with role {Role}", username, Roles.User);
@@ -142,45 +142,14 @@ public sealed class AuthService(
     {
       Token = token,
       ExpiresAt = expiresAt,
-      User = ToDto(user, roles)
+      User = IdentityMapping.ToDto(user, roles)
     };
   }
 
   private async Task<UserDto> ToDtoAsync(ApplicationUser user)
-      => ToDto(user, await userManager.GetRolesAsync(user));
-
-  /// <summary>
-  /// Proyección a mano y no AutoMapper: los roles son una consulta aparte, y un Profile
-  /// tendría que inyectar el <c>UserManager</c> para resolverlos.
-  /// </summary>
-  private static UserDto ToDto(ApplicationUser user, IEnumerable<string> roles) => new()
-  {
-    Id = user.Id,
-    Username = user.UserName ?? string.Empty,
-    Email = user.Email,
-    Name = user.Name,
-    Roles = [.. roles],
-    CreatedAt = user.CreatedAt
-  };
+      => IdentityMapping.ToDto(user, await userManager.GetRolesAsync(user));
 
   /// <summary>Códigos con los que Identity avisa de un username o email ya usados.</summary>
   private static bool IsDuplicate(IdentityError error)
       => error.Code is "DuplicateUserName" or "DuplicateEmail";
-
-  /// <summary>
-  /// Agrupa los <c>IdentityError</c> en el formato <c>{ campo: [mensajes] }</c> de
-  /// <c>ValidationProblem(ModelState)</c>, para que el cliente vea siempre la misma forma.
-  /// </summary>
-  private static Dictionary<string, string[]> ToFieldErrors(IdentityResult result)
-      => result.Errors
-          .GroupBy(e => FieldFor(e.Code))
-          .ToDictionary(g => g.Key, g => g.Select(e => e.Description).ToArray());
-
-  private static string FieldFor(string identityErrorCode) => identityErrorCode switch
-  {
-    var c when c.Contains("Password", StringComparison.Ordinal) => nameof(RegisterUserDto.Password),
-    var c when c.Contains("Email", StringComparison.Ordinal) => nameof(RegisterUserDto.Email),
-    var c when c.Contains("UserName", StringComparison.Ordinal) => nameof(RegisterUserDto.Username),
-    _ => "request"
-  };
 }

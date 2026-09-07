@@ -1,3 +1,4 @@
+using ApiEcommerce.Shared.Hosting;
 using ApiEcommerce.Shared.Documents;
 using Microsoft.Extensions.Options;
 
@@ -12,48 +13,27 @@ namespace ApiEcommerce.Features.Ordering.Documents;
 public sealed class ReceiptCleaner(
     IServiceScopeFactory scopeFactory,
     IOptions<DocumentStorageOptions> options,
-    ILogger<ReceiptCleaner> logger) : BackgroundService
+    ILogger<ReceiptCleaner> logger) : PeriodicBackgroundService(logger)
 {
   private readonly DocumentStorageOptions _options = options.Value;
 
-  protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+  protected override TimeSpan Interval => TimeSpan.FromHours(_options.CleanupIntervalHours);
+
+  /// <summary>Un respiro antes de la primera: el arranque ya tiene bastante sin recorrer el disco.</summary>
+  protected override TimeSpan StartDelay => TimeSpan.FromMinutes(5);
+
+  protected override string FailureMessage => "Orphan document collection failed";
+
+  protected override string DisabledMessage
+      => "Documents:CleanupIntervalHours is 0; orphan collection disabled";
+
+  protected override async Task RunOnceAsync(CancellationToken ct)
   {
-    if (_options.CleanupIntervalHours <= 0)
-    {
-      logger.LogInformation("Documents:CleanupIntervalHours is 0; orphan collection disabled");
-      return;
-    }
+    // Scope propio por pasada: el job es singleton y el recolector es Scoped.
+    using var scope = scopeFactory.CreateScope();
 
-    var interval = TimeSpan.FromHours(_options.CleanupIntervalHours);
-
-    // Un respiro antes de la primera pasada: el arranque ya tiene bastante sin recorrer el disco.
-    try { await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken); }
-    catch (OperationCanceledException) { return; }
-
-    while (!stoppingToken.IsCancellationRequested)
-    {
-      try
-      {
-        // Scope propio por pasada: el job es singleton y el recolector es Scoped.
-        using var scope = scopeFactory.CreateScope();
-
-        await scope.ServiceProvider
-            .GetRequiredService<IOrphanReceiptCollector>()
-            .CollectAsync(stoppingToken);
-      }
-      catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-      {
-        break;   // apagado ordenado
-      }
-      catch (Exception ex)
-      {
-        // Sin filtro que excluya OperationCanceledException: una que no venga del stoppingToken
-        // escaparía, y BackgroundServiceExceptionBehavior.StopHost tumbaría la API entera.
-        logger.LogError(ex, "Orphan document collection failed; retrying next cycle");
-      }
-
-      try { await Task.Delay(interval, stoppingToken); }
-      catch (OperationCanceledException) { break; }
-    }
+    await scope.ServiceProvider
+        .GetRequiredService<IOrphanReceiptCollector>()
+        .CollectAsync(ct);
   }
 }

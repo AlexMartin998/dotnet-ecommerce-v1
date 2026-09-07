@@ -1,3 +1,4 @@
+using ApiEcommerce.Shared.Hosting;
 using System.Data;
 using ApiEcommerce.Data;
 using Microsoft.Data.SqlClient;
@@ -19,34 +20,15 @@ public sealed class OutboxPublisher(
     IServiceScopeFactory scopeFactory,
     IEventPublisher publisher,
     IOptions<OutboxOptions> options,
-    ILogger<OutboxPublisher> logger) : BackgroundService
+    ILogger<OutboxPublisher> logger) : PeriodicBackgroundService(logger)
 {
   private readonly OutboxOptions _options = options.Value;
 
-  protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-  {
-    var interval = TimeSpan.FromSeconds(_options.PublishIntervalSeconds);
+  protected override TimeSpan Interval => TimeSpan.FromSeconds(_options.PublishIntervalSeconds);
 
-    while (!stoppingToken.IsCancellationRequested)
-    {
-      try
-      {
-        await PublishPendingAsync(stoppingToken);
-      }
-      catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-      {
-        break;   // apagado ordenado
-      }
-      catch (Exception ex)
-      {
-        // Sin filtrar OperationCanceledException: una OCE ajena al stoppingToken tumbaría la API (StopHost).
-        logger.LogError(ex, "Outbox publish loop failed; retrying in {Interval}", interval);
-      }
+  protected override string FailureMessage => "Outbox publish loop failed";
 
-      try { await Task.Delay(interval, stoppingToken); }
-      catch (OperationCanceledException) { break; }
-    }
-  }
+  protected override Task RunOnceAsync(CancellationToken ct) => PublishPendingAsync(ct);
 
   private async Task PublishPendingAsync(CancellationToken ct)
   {

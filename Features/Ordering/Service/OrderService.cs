@@ -4,7 +4,6 @@ using ApiEcommerce.Features.Ordering.Events;
 using ApiEcommerce.Features.Ordering.Models;
 using ApiEcommerce.Features.Ordering.Ports;
 using ApiEcommerce.Features.Ordering.Repository;
-using ApiEcommerce.Shared.Db;
 using ApiEcommerce.Shared.Documents;
 using ApiEcommerce.Shared.Idempotency;
 using ApiEcommerce.Shared.Messaging;

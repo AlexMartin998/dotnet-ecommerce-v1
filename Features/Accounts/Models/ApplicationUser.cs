@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Identity;
-using ApiEcommerce.Shared.Crud;
 using ApiEcommerce.Shared.Persistence;
 
 namespace ApiEcommerce.Features.Accounts.Models;

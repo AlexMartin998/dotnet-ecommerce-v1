@@ -1,5 +1,5 @@
+using ApiEcommerce.Shared.Hosting;
 using ApiEcommerce.Features.Accounts.Repository;
-using Microsoft.Extensions.Options;
 
 namespace ApiEcommerce.Features.Accounts;
 
@@ -11,43 +11,20 @@ namespace ApiEcommerce.Features.Accounts;
 /// </remarks>
 public sealed class RefreshTokenCleaner(
     IServiceScopeFactory scopeFactory,
-    IOptions<RefreshTokenOptions> options,
-    ILogger<RefreshTokenCleaner> logger) : BackgroundService
+    ILogger<RefreshTokenCleaner> logger) : PeriodicBackgroundService(logger)
 {
-  private readonly RefreshTokenOptions _options = options.Value;
-
-  private static readonly TimeSpan Interval = TimeSpan.FromHours(6);
 
   /// <summary>Filas por sentencia, para no bloquear la tabla entera.</summary>
   private const int DeleteBatchSize = 5_000;
 
-  protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-  {
-    // Un respiro antes de la primera pasada: al arrancar hay cosas más urgentes.
-    try { await Task.Delay(TimeSpan.FromMinutes(2), stoppingToken); }
-    catch (OperationCanceledException) { return; }
+  protected override TimeSpan Interval => TimeSpan.FromHours(6);
 
-    while (!stoppingToken.IsCancellationRequested)
-    {
-      try
-      {
-        await CleanAsync(stoppingToken);
-      }
-      catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-      {
-        break;   // apagado ordenado
-      }
-      catch (Exception ex)
-      {
-        // Sin filtro que excluya OperationCanceledException: una que no venga del stoppingToken
-        // se escaparía y, con StopHost por defecto, tumbaría la API por una tarea de limpieza.
-        logger.LogError(ex, "Refresh token cleanup failed; retrying in {Interval}", Interval);
-      }
+  /// <summary>Un respiro antes de la primera pasada: al arrancar hay cosas más urgentes.</summary>
+  protected override TimeSpan StartDelay => TimeSpan.FromMinutes(2);
 
-      try { await Task.Delay(Interval, stoppingToken); }
-      catch (OperationCanceledException) { break; }
-    }
-  }
+  protected override string FailureMessage => "Refresh token cleanup failed";
+
+  protected override Task RunOnceAsync(CancellationToken ct) => CleanAsync(ct);
 
   private async Task CleanAsync(CancellationToken ct)
   {

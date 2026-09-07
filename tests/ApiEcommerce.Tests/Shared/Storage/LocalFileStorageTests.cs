@@ -38,15 +38,15 @@ public sealed class LocalFileStorageTests : IDisposable
   // ---- validación ---------------------------------------------------------
 
   [Fact]
-  public async Task SaveProductImageAsync_WithAnEmptyFile_ThrowsBadRequest()
+  public async Task SaveImageAsync_WithAnEmptyFile_ThrowsBadRequest()
       => await Assert.ThrowsAsync<BadOperationAppException>(
-          () => Sut().SaveProductImageAsync(Upload([], "foto.png")));
+          () => Sut().SaveImageAsync(Upload([], "foto.png")));
 
   [Fact]
-  public async Task SaveProductImageAsync_OverTheSizeLimit_ThrowsBadRequest()
+  public async Task SaveImageAsync_OverTheSizeLimit_ThrowsBadRequest()
   {
     var ex = await Assert.ThrowsAsync<BadOperationAppException>(
-        () => Sut().SaveProductImageAsync(Upload(Png(2048), "foto.png")));
+        () => Sut().SaveImageAsync(Upload(Png(2048), "foto.png")));
 
     Assert.Contains("maximum size", ex.Message);
   }
@@ -56,44 +56,44 @@ public sealed class LocalFileStorageTests : IDisposable
   [InlineData("pagina.html")]
   [InlineData("shell.php")]
   [InlineData("sin-extension")]
-  public async Task SaveProductImageAsync_WithADisallowedExtension_ThrowsBadRequest(string fileName)
+  public async Task SaveImageAsync_WithADisallowedExtension_ThrowsBadRequest(string fileName)
   {
     // Allowlist, no denylist: una denylist siempre se olvida de algo.
     var ex = await Assert.ThrowsAsync<BadOperationAppException>(
-        () => Sut().SaveProductImageAsync(Upload(Png(64), fileName)));
+        () => Sut().SaveImageAsync(Upload(Png(64), fileName)));
 
     Assert.Contains("Unsupported file type", ex.Message);
   }
 
   [Fact]
-  public async Task SaveProductImageAsync_WhenTheContentIsNotTheDeclaredImage_ThrowsBadRequest()
+  public async Task SaveImageAsync_WhenTheContentIsNotTheDeclaredImage_ThrowsBadRequest()
   {
     // Extensión y Content-Type los pone el cliente y puede mentir en los dos; la firma
     // del archivo, no.
     var text = System.Text.Encoding.UTF8.GetBytes("esto no es una imagen, es texto plano");
 
     var ex = await Assert.ThrowsAsync<BadOperationAppException>(
-        () => Sut().SaveProductImageAsync(Upload(text, "foto.png", "image/png")));
+        () => Sut().SaveImageAsync(Upload(text, "foto.png", "image/png")));
 
     Assert.Contains("does not match", ex.Message);
   }
 
   [Fact]
-  public async Task SaveProductImageAsync_WithAFileTooShortToHaveASignature_ThrowsBadRequest()
+  public async Task SaveImageAsync_WithAFileTooShortToHaveASignature_ThrowsBadRequest()
   {
     // La firma se lee de 12 bytes: lo más corto no se puede verificar, así que se rechaza.
     await Assert.ThrowsAsync<BadOperationAppException>(
-        () => Sut().SaveProductImageAsync(Upload([0x89, 0x50, 0x4E, 0x47], "foto.png")));
+        () => Sut().SaveImageAsync(Upload([0x89, 0x50, 0x4E, 0x47], "foto.png")));
   }
 
   // ---- camino feliz -------------------------------------------------------
 
   [Fact]
-  public async Task SaveProductImageAsync_GeneratesTheNameOnTheServer()
+  public async Task SaveImageAsync_GeneratesTheNameOnTheServer()
   {
     // Del nombre que manda el cliente solo se lee la extensión: lo demás es la puerta de
     // entrada al path traversal.
-    var path = await Sut().SaveProductImageAsync(Upload(Png(64), "../../../etc/passwd.png"));
+    var path = await Sut().SaveImageAsync(Upload(Png(64), "../../../etc/passwd.png"));
 
     Assert.StartsWith("/ProductsImages/", path);
     Assert.DoesNotContain("passwd", path);
@@ -106,11 +106,11 @@ public sealed class LocalFileStorageTests : IDisposable
   }
 
   [Fact]
-  public async Task SaveProductImageAsync_ReturnsARelativePathAndNeverAnAbsoluteUrl()
+  public async Task SaveImageAsync_ReturnsARelativePathAndNeverAnAbsoluteUrl()
   {
     // Persistir una URL absoluta guardaría una cabecera que controla el cliente, y se
     // rompería al cambiar de dominio o al poner un proxy delante.
-    var path = await Sut().SaveProductImageAsync(Upload(Png(64), "foto.PNG"));
+    var path = await Sut().SaveImageAsync(Upload(Png(64), "foto.PNG"));
 
     Assert.StartsWith("/", path);
     Assert.DoesNotContain("http", path);
@@ -120,12 +120,12 @@ public sealed class LocalFileStorageTests : IDisposable
   [Theory]
   [InlineData("foto.jpg", new byte[] { 0xFF, 0xD8, 0xFF })]
   [InlineData("foto.gif", new byte[] { 0x47, 0x49, 0x46, 0x38 })]
-  public async Task SaveProductImageAsync_AcceptsEveryAllowedFormat(string fileName, byte[] signature)
+  public async Task SaveImageAsync_AcceptsEveryAllowedFormat(string fileName, byte[] signature)
   {
     var content = new byte[64];
     signature.CopyTo(content, 0);
 
-    Assert.StartsWith("/ProductsImages/", await Sut().SaveProductImageAsync(Upload(content, fileName)));
+    Assert.StartsWith("/ProductsImages/", await Sut().SaveImageAsync(Upload(content, fileName)));
   }
 
   // ---- borrado ------------------------------------------------------------
@@ -134,7 +134,7 @@ public sealed class LocalFileStorageTests : IDisposable
   public async Task DeleteAsync_RemovesAFileItManages()
   {
     var sut = Sut();
-    var path = await sut.SaveProductImageAsync(Upload(Png(64), "foto.png"));
+    var path = await sut.SaveImageAsync(Upload(Png(64), "foto.png"));
 
     await sut.DeleteAsync(path);
 

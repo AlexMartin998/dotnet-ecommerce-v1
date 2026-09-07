@@ -41,6 +41,45 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 
 ## 2. Bitácora
 
+### 2026-09-07 — Los menores de la revisión: nueve arreglos pequeños, ninguno cosmético
+
+Cierra la deuda que quedaba de la revisión multiagente antes de abrir `Payments`.
+
+1. **`PeriodicBackgroundService`** (`Shared/Hosting/`) — el bucle de un job periódico estaba
+   copiado **cuatro veces**. Lo que se copiaba no era estética: el `catch (Exception)` **sin
+   filtro** es lo único que impide que una excepción mate el servicio y, con `StopHost` por
+   defecto, tumbe la API. `ExecuteAsync` queda `sealed` para que ninguna subclase se lo salte.
+   `ReceiptCleaner` pasa de 90 líneas a 39; `RefreshTokenCleaner` de 78 a 51.
+2. **`RefreshTokenCleaner` inyectaba `IOptions<RefreshTokenOptions>` y no lo leía nunca.** Fuera.
+3. **`CacheKeys` → `Features/Catalog/CatalogCacheKeys`** — vivía en `Shared/Caching/` nombrando
+   vocabulario del catálogo, y **tres de sus cinco miembros estaban muertos** (`ProductAll`,
+   `Product(id)`, `ProductsByCategory(id)`: solo se cachean categorías).
+4. **`IFileStorage.SaveProductImageAsync` → `SaveImageAsync`** — un puerto de `Shared/` no
+   nombra una entidad de un slice. La carpeta sigue saliendo de `Storage:ProductImagesFolder`,
+   que es configuración, no tipo.
+5. **`IdentityMapping`** (`Features/Accounts/`) — `ToDto` estaba duplicado letra por letra en
+   `AuthService` y `UserAdminService`, y las dos copias **habían divergido al traducir
+   `IdentityResult`**: una agrupaba por campo y la otra metía todo bajo una clave inventada
+   `identity`. Eran **dos 422 con forma distinta** según qué endpoint fallara.
+6. **`AuthController` fijaba `version = "1.0"`** en el `CreatedAtRoute` del registro: con una
+   v2, el `Location` habría apuntado a la v1. Ahora sale de `HttpContext.ApiVersionValue()`.
+7. **`IReceiptRenderer` se muda de `Service/` a `Documents/`**, junto a su implementación: es
+   infraestructura del slice, no una regla de negocio. (No a `Ports/`, que aquí significa
+   «lo que habla con otro slice».)
+8. **El comentario de `RateLimitPolicies` mentía**: decía que resolver `IOptions<T>` por
+   petición respeta «un cambio en caliente». `IOptions<T>` es un singleton que se resuelve una
+   vez; para recargar haría falta `IOptionsMonitor<T>`, y con él un valor inválido recargado
+   rompería cada petición en vez de fallar al arrancar. Corregido el comentario, no el código.
+9. **Siete `using` muertos**, verificados **compilando uno a uno**: de 60 candidatos que dio el
+   análisis estático, 53 eran falsos positivos (métodos de extensión y `<see cref>`). Vale la
+   pena anotarlo: aquí un análisis de «usings sin usar» acierta el 12%.
+
+Verificado ejecutando, porque el punto 1 toca los cuatro servicios de fondo: orden colocada →
+`pending` → **`available` en 10 s** con PDF de 28.667 bytes (o sea outbox, broker, consumidor e
+inbox siguen funcionando); arranque con `Documents__CleanupIntervalHours=0` → la rama de apagado
+del recolector registra `orphan collection disabled` y la API arranca igual; 0 errores en los dos
+logs. Suite **288/288**, build limpio con `-warnaserror`.
+
 ### 2026-09-07 — La envoltura de idempotencia deja de estar copiada, y fuera dos piezas muertas
 
 Primera pieza de la deuda que dejó la revisión multiagente, y la que más pesaba: la

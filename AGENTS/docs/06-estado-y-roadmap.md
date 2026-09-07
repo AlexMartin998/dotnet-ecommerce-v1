@@ -53,6 +53,7 @@ paginación y seeding.
 | Consumidor | ✅ | `EventConsumer<TConsumer,TEvent>` (fontanería AMQP compartida) + `ProductPurchasedConsumer` y `OrderPlacedConsumer`: ack manual, prefetch, DLQ, dedupe por `ProcessedMessage` |
 | Varias colas / varios consumidores | ✅ | cada slice declara su `EventSubscription`; `RabbitMqConnection` declara la topología de todas, con **una DLX por cola** |
 | **Órdenes** (`Features/Ordering`) | ✅ | slice completo: `Order`/`OrderItem`, número por secuencia, puerto `ICatalogGateway`, `POST /api/v1/order` transaccional e idempotente |
+| Jobs periódicos | ✅ | `PeriodicBackgroundService`: un solo bucle con apagado ordenado y `catch` sin filtro, heredado por los cuatro jobs |
 | Comprobante en PDF | ✅ | **asíncrono** por `OrderPlaced` → `IReceiptGenerator`; QuestPDF detrás de `IReceiptRenderer` |
 | Listado de administración de órdenes | ✅ | `GET /api/v1/order/all` (`admin`): paginado sobre todos los compradores, filtro por prefijo de `Number`, índice `IX_Orders_PlacedAt` |
 | Almacén de documentos privados | ✅ | `IDocumentStore` + `LocalDocumentStore`, **fuera de `wwwroot`**, clave opaca; cambiar a S3/R2/MinIO/Cloudinary es una implementación y una línea |

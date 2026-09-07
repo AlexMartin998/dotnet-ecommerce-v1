@@ -1,4 +1,3 @@
-using ApiEcommerce.Shared.Crud;
 namespace ApiEcommerce.Shared.Persistence;
 
 

@@ -1,3 +1,4 @@
+using ApiEcommerce.Features.Ordering.Documents;
 using ApiEcommerce.Features.Ordering.Events;
 using ApiEcommerce.Features.Ordering.Repository;
 using ApiEcommerce.Features.Ordering.Service;
