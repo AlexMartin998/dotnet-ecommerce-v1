@@ -27,6 +27,7 @@ public sealed class AuthService(
     var email = dto.Email.Trim();
 
     // 409 y no 400: el request es válido en sí mismo, choca con el estado de la base.
+    // Quien garantiza la unicidad son los índices únicos de username y email; esto es el mensaje bonito.
     if (await userManager.FindByNameAsync(username) is not null)
       throw new ConflictAppException($"Username '{username}' is already taken.");
 
@@ -41,6 +42,10 @@ public sealed class AuthService(
     };
 
     var created = await userManager.CreateAsync(user, dto.Password);
+
+    // El duplicado que se cuela por la carrera sigue siendo 409, como el que ve la comprobación.
+    if (created.Errors.FirstOrDefault(IsDuplicate) is { } duplicate)
+      throw new ConflictAppException(duplicate.Description);
 
     // 422 y no 400: el DTO era válido, lo que no se cumple es la política de contraseñas.
     if (!created.Succeeded)
@@ -157,6 +162,10 @@ public sealed class AuthService(
     Roles = [.. roles],
     CreatedAt = user.CreatedAt
   };
+
+  /// <summary>Códigos con los que Identity avisa de un username o email ya usados.</summary>
+  private static bool IsDuplicate(IdentityError error)
+      => error.Code is "DuplicateUserName" or "DuplicateEmail";
 
   /// <summary>
   /// Agrupa los <c>IdentityError</c> en el formato <c>{ campo: [mensajes] }</c> de

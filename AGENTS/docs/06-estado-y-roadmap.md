@@ -9,7 +9,7 @@ paginación y seeding.
 
 | Componente | Estado | Nota |
 | --- | --- | --- |
-| `AppDbContext` + migraciones | ✅ | 13 migraciones aplicadas (la última, `AddOrdering`); auditoría automática en `SaveChangesAsync` |
+| `AppDbContext` + migraciones | ✅ | 14 migraciones aplicadas (la última, `UniqueEmailAndSessionRevocationIndex`); auditoría automática en `SaveChangesAsync` |
 | `IEntity` / `IAuditable` | ✅ | implementadas por `Category` y `Product`; sin reflexión en los genéricos |
 | `IBaseRepository<T>` / `BaseRepository<T>` | ✅ | `where T : class, IEntity`, `CancellationToken`, orden genérico por `CreatedAt` |
 | `CategoryRepository` | ✅ | `NameExistsAsync(excludeId)`, `HasProductsAsync` |
@@ -43,7 +43,8 @@ paginación y seeding.
 | Logging estructurado | ✅ | Serilog + `UseSerilogRequestLogging` (sección `Serilog`, no `Logging`) |
 | Health checks | ✅ | `/health` liveness (controller) y `/health/ready` (SQL Server + Redis) |
 | Concurrencia: stock | ✅ | `TryDecrementStockAsync` con `ExecuteUpdateAsync` (UPDATE condicional atómico) |
-| Concurrencia: unicidad | ✅ | índice único en `Category.Name` + `Product.SKU`; `DbUpdateException` → 409 |
+| Concurrencia: unicidad | ✅ | índice único en `Category.Name`, `Product.SKU`, `Order.Number` y `AspNetUsers.NormalizedEmail`; `DbUpdateException` → 409 |
+| Concurrencia: último administrador | ✅ | `sp_getapplock` exclusivo en la transacción de la baja: recontar y quitar el rol dejan de ser dos viajes |
 | Concurrencia optimista | ✅ | `Product.RowVersion` para el PATCH; `DbUpdateConcurrencyException` → 409 |
 | Idempotencia de peticiones | ✅ | `[Idempotent]` + `Idempotency-Key` sobre Redis (`SET NX`) |
 | Outbox transaccional | ✅ | `OutboxMessage` en la misma transacción que el negocio; la API funciona con el broker caído |
@@ -102,7 +103,7 @@ reales, con base (`ApiEcommerceNET8_Tests`) y prefijo de Redis propios.
 ⚠️ **Sin Testcontainers**: no hay Docker en el dev container. Entra en CI.
 
 Cubren la matriz de autorización de `features/02`, el versionado, la paginación, la
-idempotencia, las **tres carreras** con `Task.WhenAll` (que secuencialmente pasaban
+idempotencia, las **cinco carreras** con `Task.WhenAll` (que secuencialmente pasaban
 también con la implementación defectuosa), la degradación con Redis caído y el
 arranque en `Production` y sin clave de firma.
 

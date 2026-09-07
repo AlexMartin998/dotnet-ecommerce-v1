@@ -77,3 +77,15 @@ Feature: Administrar usuarios sin tocar la base a mano
     Given un usuario bloqueado
     When lo desbloqueo
     Then puede volver a hacer login
+
+  # --- Lo que no se ve probando de uno en uno --------------------------------
+
+  Scenario: Varios administradores degradandose a la vez no dejan el sistema sin ninguno
+    Given cuatro administradores
+    When cada uno degrada al siguiente al mismo tiempo
+    Then queda al menos un administrador
+    And los que sobran reciben 409
+    # Comprobar el recuento y borrar el rol son dos viajes a la base: entre uno y otro
+    # cabe la comprobacion del otro, y los dos creen que sobra un admin. Medido con
+    # cuatro en corro: 4x204 y CERO administradores, sin vuelta atras por la API porque
+    # ya nadie puede reasignar el rol.

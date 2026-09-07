@@ -1,7 +1,9 @@
 using ApiEcommerce.Exceptions;
 using ApiEcommerce.Features.Accounts.Dtos;
 using ApiEcommerce.Features.Accounts.Models;
+using ApiEcommerce.Features.Accounts.Repository;
 using ApiEcommerce.Shared.Auth;
+using ApiEcommerce.Shared.Db;
 using ApiEcommerce.Shared.Paging;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -13,9 +15,14 @@ namespace ApiEcommerce.Features.Accounts.Service;
 public sealed class UserAdminService(
     UserManager<ApplicationUser> userManager,
     RoleManager<IdentityRole> roleManager,
+    IUserRoleRepository userRoles,
     IRefreshTokenService sessions,
+    ITransactionRunner transactions,
     ILogger<UserAdminService> logger) : IUserAdminService
 {
+  /// <summary>Espera máxima por el bloqueo que serializa las bajas de administrador.</summary>
+  private static readonly TimeSpan AdminRoleLockTimeout = TimeSpan.FromSeconds(5);
+
   public async Task<PagedResult<UserDto>> GetPagedAsync(
       PageQuery query, CancellationToken ct = default)
   {
@@ -85,14 +92,14 @@ public sealed class UserAdminService(
       if (userId == actingAdminId)
         throw new ConflictAppException("An administrator cannot remove their own admin role.");
 
-      // Nunca sin administradores. Va después de la regla anterior para dar el mensaje que toca.
-      if ((await userManager.GetUsersInRoleAsync(Roles.Admin)).Count <= 1)
-        throw new ConflictAppException("The last administrator cannot be demoted.");
+      await DemoteAdminAsync(userId, ct);
     }
+    else
+    {
+      var result = await userManager.RemoveFromRoleAsync(user, normalized);
 
-    var result = await userManager.RemoveFromRoleAsync(user, normalized);
-
-    if (!result.Succeeded) throw Failure(result);
+      if (!result.Succeeded) throw Failure(result);
+    }
 
     logger.LogWarning(
         "ROLE REVOKED: admin {ActingAdminId} removed role {Role} from user {UserId}",
@@ -136,6 +143,32 @@ public sealed class UserAdminService(
   }
 
   // ---- helpers ------------------------------------------------------------
+
+  /// <summary>
+  /// Quita el rol administrador dejando que la base arbitre que nunca quede en cero.
+  /// </summary>
+  /// <remarks>
+  /// Con <c>sp_getapplock</c> y no con un DELETE condicional sobre <c>AspNetUserRoles</c>: así la
+  /// baja la sigue haciendo <c>UserManager</c>, el único que escribe en las tablas de Identity.
+  /// </remarks>
+  private Task DemoteAdminAsync(string userId, CancellationToken ct)
+      => transactions.ExecuteAsync(async token =>
+      {
+        // Sin serializar, dos degradaciones simultáneas cuentan dos admins y se van las dos.
+        if (!await userRoles.TryLockAdminRoleAsync(AdminRoleLockTimeout, token))
+          throw new ConflictAppException("Another role change is in progress. Retry the operation.");
+
+        // Nunca sin administradores. Va después de la regla anterior para dar el mensaje que toca.
+        if (await userRoles.CountUsersInRoleAsync(Roles.Admin, token) <= 1)
+          throw new ConflictAppException("The last administrator cannot be demoted.");
+
+        // Se relee dentro: el runner limpia el change tracker antes de cada intento.
+        var result = await userManager.RemoveFromRoleAsync(await FindAsync(userId), Roles.Admin);
+
+        if (!result.Succeeded) throw Failure(result);
+
+        return true;
+      }, ct);
 
   private async Task<ApplicationUser> FindAsync(string userId)
       => await userManager.FindByIdAsync(userId)

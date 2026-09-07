@@ -112,6 +112,20 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         .HasIndex(t => t.ExpiresAt)
         .HasDatabaseName("IX_RefreshTokens_ExpiresAt");
 
+    // Por aquí se cortan todas las sesiones de un usuario: cambio de contraseña, logout-all y bloqueo.
+    modelBuilder.Entity<RefreshToken>()
+        .HasIndex(t => new { t.UserId, t.RevokedAt })
+        .HasDatabaseName("IX_RefreshTokens_User_RevokedAt");
+
+    // ---- cuentas ------------------------------------------------------------
+
+    // Único en la BASE: `RequireUniqueEmail` solo valida en C#, y ahí cabe una carrera.
+    modelBuilder.Entity<ApplicationUser>()
+        .HasIndex(u => u.NormalizedEmail)
+        .IsUnique()
+        .HasFilter("[NormalizedEmail] IS NOT NULL")   // SQL Server admite un solo NULL por índice único
+        .HasDatabaseName("EmailIndex");
+
     // ---- órdenes ------------------------------------------------------------
 
     // Secuencia y no MAX()+1: eso último es un leer-y-escribir y dos compras simultáneas
