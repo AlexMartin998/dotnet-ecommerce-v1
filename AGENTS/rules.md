@@ -342,7 +342,9 @@ roadmap. Cada `Scenario` debería poder convertirse en un test.
 - **`dotnet build` limpio (0 warnings, 0 errores)** tras cada cambio estructural.
 - **`dotnet test tests/ApiEcommerce.Tests` en verde** (278 tests). Los de integración
   necesitan SQL Server y Redis arriba; usan base y prefijo propios y no tocan los de
-  desarrollo. GitHub Actions corre ambos en cada push y PR (`.github/workflows/ci.yml`).
+  desarrollo. ⚠️ **La CI está DESACTIVADA** (`AGENTS/ci/`, fuera de `.github/workflows/`):
+  un PAT sin scope `workflow` no puede empujar ese fichero. Mientras siga así, el único
+  check es el que corras tú.
 - **Lo que toque concurrencia, dependencias externas o el arranque se prueba de verdad**,
   no solo compilando. Concretamente:
   - concurrencia → peticiones **simultáneas** (`for … & done; wait`), no secuenciales;

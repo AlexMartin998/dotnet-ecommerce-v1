@@ -107,7 +107,8 @@ idempotencia, las **cinco carreras** con `Task.WhenAll` (que secuencialmente pas
 también con la implementación defectuosa), la degradación con Redis caído y el
 arranque en `Production` y sin clave de firma.
 
-**CI hecha**: `.github/workflows/ci.yml` corre build con `-warnaserror` y los 153
+**CI escrita pero DESACTIVADA** (vive en `AGENTS/ci/`, fuera de `.github/workflows/`, porque
+el PAT no tiene scope `workflow` y GitHub rechazaba el push). Haría build con `-warnaserror` y los 153
 tests en cada push y PR, con SQL Server y Redis como `services` del runner, y
 construye el `Dockerfile` (que nunca se había construido). ⚠️ Queda que el owner lo
 suba y active la protección de rama: el agente no hace `push`.
@@ -140,7 +141,7 @@ Todo lo que se dejó abierto a propósito está hecho. Lo que se decidió y por 
 | `RowVersion` no cierra el *lost update* | `ETag` en el GET + `If-Match` en el PATCH → **412**. Opcional, para no romper a los clientes actuales |
 | Idempotencia sin hash del cuerpo | SHA-256 de los argumentos enlazados, guardado **desde la reserva**; clave reutilizada con otro cuerpo → **422** |
 | Sin OpenTelemetry | Trazas y métricas + `X-Correlation-Id`. **Se instrumenta siempre, se exporta solo si hay endpoint** |
-| Sin CI | `.github/workflows/ci.yml`, con `-warnaserror` y un job que construye la imagen |
+| Sin CI | escrita en `AGENTS/ci/ci.yml.disabled`, **sin activar**: hace falta remoto por SSH o un PAT con scope `workflow` |
 | `UseHsts()` | Añadido fuera de Development |
 | Tres conexiones a Redis | Un solo multiplexer para la cache, el store de idempotencia y el health check |
 
