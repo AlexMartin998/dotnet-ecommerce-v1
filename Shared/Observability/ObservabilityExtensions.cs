@@ -38,7 +38,8 @@ public static class ObservabilityExtensions
           $"[observability] Observability:OtlpEndpoint ('{options.OtlpEndpoint}') is not an " +
           "absolute URI; telemetry will be collected in-process but NOT exported.");
 
-    // Mismo motivo: un valor fuera de rango reventaba con una excepción cruda de terceros.
+    // El `.ValidateOnStart()` tampoco cubre esto: un valor fuera de rango reventaba con una
+    // excepción cruda de terceros.
     var samplingRatio = Math.Clamp(options.SamplingRatio, 0d, 1d);
     var serviceName = string.IsNullOrWhiteSpace(options.ServiceName) ? "apiecommerce" : options.ServiceName;
 

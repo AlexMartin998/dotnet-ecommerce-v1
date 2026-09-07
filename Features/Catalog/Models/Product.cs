@@ -44,11 +44,11 @@ public class Product : IAuditable
 
 
   /// <summary>
-  /// Token de concurrencia optimista que SQL Server mantiene solo. EF lo añade al
-  /// <c>WHERE</c> de todo UPDATE y lanza <c>DbUpdateConcurrencyException</c> si cambió.
+  /// Token de concurrencia optimista que SQL Server mantiene solo. EF lo añade al <c>WHERE</c>
+  /// de los UPDATE que salen del change tracker, no a los de <c>ExecuteUpdateAsync</c>.
   /// </summary>
   /// <remarks>
-  /// Por sí sola no cierra el <i>lost update</i> entre dos PATCH, que necesita el
+  /// Por sí sola no cierra el lost update entre dos PATCH, que necesita el
   /// <c>ETag</c>/<c>If-Match</c> de <c>ProductRules</c>: aquí es la segunda red, para la
   /// ventana entre esa comparación y el UPDATE.
   /// </remarks>

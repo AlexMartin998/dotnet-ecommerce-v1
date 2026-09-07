@@ -3501,3 +3501,142 @@ curl -X POST ".../dead-letter/apiecommerce.order-placed/replay?max=10"   # {"rep
   - -- ⚠️ lo que **NO** se verifico: que un mensaje reemitido que **vuelve a fallar** tenga
        otra vez sus N intentos. El codigo pone el contador a cero y `RetryAttempts` tiene sus
        6 tests, pero ese ciclo concreto no se provoco. Queda dicho
+
+
+
+
+<br>
+
+
+
+
+## 38. Limpiar los comentarios  <- y lo que aparecio al revisar despues
+
+- --- ⭐ **El dato que lo justifica todo: el 40% del codigo fuente eran COMENTARIOS**
+```
+5.241 lineas de comentario sobre 13.200 de codigo
+   <remarks> de TRES PARRAFOS para explicar un semaforo
+   emojis por todas partes
+   la historia de cada cambio incrustada entre las lineas que pretendia explicar
+```
+  - -- eso **no documenta: TAPA**. Se lee peor, se mantiene peor y se escala peor
+  - -- resultado: **5.241 -> 3.215 (-39%)**, ratio 40% -> 28%, y **cero iconos**
+  - -- y **no se pierde nada**: el porque largo se va a `docs/07-decisiones-en-el-codigo.md`,
+       **indexado por ruta de archivo**. 174 secciones, y las 174 rutas verificadas
+  - -- el contrato queda en `rules.md` §1.1 para que no se vuelva a contaminar
+
+- --- **Como se hizo sin romper nada: seis agentes y una maquina de estados**
+  - -- seis en paralelo, uno por area, con el **mismo contrato de estilo** en el prompt —
+       si cada uno improvisa el suyo, el resultado es peor que no tocarlo
+  - -- cada uno volcando a **su propio** fichero de decisiones: seis agentes escribiendo en
+       un mismo MD es un conflicto garantizado
+  - -- ⭐ y la verificacion que lo hace seguro: un script que compara el codigo **con los
+       comentarios eliminados** antes y despues. Primera version dio 3 falsos positivos
+       (lineas cuyo comentario de cola llevaba comillas); la segunda, con una **maquina de
+       estados que entiende literales de C#**, confirmo: en 194 ficheros, cero lineas de
+       codigo ejecutable tocadas
+  - -- leccion: si vas a dejar que seis agentes reescriban tu repo, **necesitas una prueba
+       mecanica de lo que NO puede haber cambiado**, no leerte el diff
+
+- --- 🔴 **Y ENTONCES vino la revision, que es donde estaba lo caro**
+```
+tres revisores en paralelo: arquitectura / operacion real / calidad de la limpieza
+   -> cinco P0, todos REPRODUCIDOS ejecutando, ninguno visible compilando
+```
+
+- --- 🔴 **1. Con Redis caido no se degradaba: se caia**
+```
+GET /api/v1/category   Redis sano: 3 ms   Redis muerto: 3.400-4.000 ms
+```
+  - -- los timeouts estaban puestos (`ConnectTimeout=1000`) y aun asi
+  - -- ⚠️ la **`BacklogPolicy` por defecto ENCOLA** los comandos mientras la conexion esta
+       caida, y cada uno espera su timeout entero. Una lectura cache-aside hace **dos**
+       llamadas -> 4 s
+  - -- y `/health/ready` devolvia **200** (Degraded, que es lo correcto), asi que el
+       orquestador seguia mandando trafico a replicas que tardaban cuatro segundos
+  - -- `config.BacklogPolicy = BacklogPolicy.FailFast;` **una linea**. Medido despues: 5 ms
+  - -- leccion: "degradar en abierto" no es una intencion, es un **numero**. Si no lo has
+       medido con la dependencia caida, no sabes si degradas
+
+- --- 🔴 **2. El rate limiter de `auth` se esquivaba con una cabecera**
+```
+AuthPermitLimit=5, 8 logins malos:
+  sin cabecera:                401 401 401 401 401 429 429 429
+  rotando X-Forwarded-For:     401 401 401 401 401 401 401 401   <- fuerza bruta sin limite
+```
+  - -- `KnownNetworks.Clear()` + `KnownProxies.Clear()` = confiar en la cabecera de
+       **cualquiera**, y el limitador particiona por `RemoteIpAddress`, que para entonces
+       **ya viene reescrita por la cabecera**
+  - -- ⚠️ **NO se reproduce desde localhost**: el cliente es loopback, o sea un proxy de
+       confianza por defecto, asi que la cabecera se respeta igualmente. Hay que probarlo
+       desde una IP no-loopback — mi primer test dio "arreglado" cuando no lo estaba
+  - -- ahora solo se confia en los proxies declarados por configuracion; sin declararlos,
+       el default (solo loopback) **ignora** la cabecera de fuera
+
+- --- 🔴 **3. La CI no podia arrancar SQL Server, y el YAML parecia correcto**
+```yaml
+options: >-
+  # Con respaldo a la ruta antigua: si mssql-tools18 no estuviera...
+  --health-cmd "..."
+```
+  - -- ⚠️ dentro de un **escalar plegado** (`>-`), una linea que empieza por `#` **NO es un
+       comentario: es contenido**. Esas tres lineas acababan pasadas como argumentos a
+       `docker create`
+  - -- se ve parseando el fichero, no leyendolo. Los comentarios van FUERA de `options:`
+
+- --- 🔴 **4. Dos carreras de la misma forma: comprobar y escribir en dos viajes**
+```
+cuatro admins degradandose en corro a la vez  -> 4x204 y CERO administradores
+seis registros del mismo email a la vez       -> 2 cuentas, y ese email da 500 PARA SIEMPRE
+```
+  - -- lo de los admins **no tiene vuelta atras por la API**: ya nadie puede reasignar el
+       rol. La unica ventana de rescate son los tokens viejos (15 min, porque el rol viaja
+       dentro del JWT) y eso es **accidental**, no un plan
+  - -- lo del email es peor de lo que parece: `RequireUniqueEmail` **no crea indice unico**,
+       y con dos filas `FindByEmailAsync` hace `SingleOrDefault` y **lanza** -> ese email
+       queda inutilizable con un 500, no un 409
+  - -- ⚠️ **el `DELETE ... WHERE (SELECT COUNT(*)) > 1` NO cierra la carrera**: bajo READ
+       COMMITTED las dos sesiones evaluan la subconsulta antes de que ninguna borre y las
+       dos ven 2. Haria falta `UPDLOCK, HOLDLOCK`, o sea SQL crudo contra las tablas de
+       Identity. Se serializa con `sp_getapplock`, como el outbox
+  - -- ⚠️ **con DOS corredores el test pasaba aunque el bug siguiera**: la ventana sobre
+       `TestServer` no se solapaba. Hacen falta **cuatro** para reproducirlo siempre. Un
+       test de concurrencia que pasa no prueba nada si no lo has visto fallar
+
+- --- ✏️ **5. Y una correccion mia de bulto**
+```
+capitulo anterior: "arreglado el desbordamiento de paginacion" -> PageQuery.Skip
+realidad:           BaseRepository y ProductRepository NO usan Skip, repiten (page-1)*pageSize en int
+```
+  - -- arregle la propiedad y **no comprobe quien la usaba**. Nadie. El 500 seguia ahi y yo
+       lo habia dado por cerrado en un commit
+  - -- leccion: arreglar el sitio donde **esta escrita** la formula no es arreglar el bug si
+       la formula esta **copiada**. `grep` del patron, no del nombre del metodo
+
+- --- **Menores de la misma tanda, todas reales**
+  - -- los **indices unicos de SKU y Name no se usaban**: `p.SKU.ToLower().Trim() == x`
+       envuelve la COLUMNA en funciones e impide el seek. Cada compra y cada alta hacian
+       scan. La colacion ya era `CI_AS` (comprobado ejecutando), asi que sobraba — pero
+       quitarlo solo es equivalente **si nada guarda espacios por delante**, y nada lo
+       impedia: ahora se recorta al escribir, que ademas es lo que hace que el indice unico
+       signifique algo
+  - -- la **validacion del grafo de DI** solo estaba activa en Development, y los tests
+       corren en `"Testing"`: justo los que recorren las ramas sin Redis y sin broker lo
+       hacian sin validar
+  - -- **MARS metia 136 de 450 lineas de log** (30% del camino feliz): desactiva los
+       savepoints de EF y este avisa a nivel Warning en **cada** `SaveChanges` dentro de una
+       transaccion. EF Core no lo necesita, venia del scaffold
+  - -- el compose no tenia **limites de recursos** (un pico de la API se lleva por delante a
+       SQL Server y Redis, que estan en la misma maquina), ni rotacion de logs, ni volumen
+       para las claves de **DataProtection**, que se regeneraban en cada arranque
+
+- --- ⭐ **La leccion transversal de todo el capitulo**
+```
+la limpieza la verifico una maquina:      194 ficheros, 0 lineas de codigo tocadas
+lo que la maquina NO puede verificar:     si el comentario que queda dice la verdad
+```
+  - -- un tercer revisor, dedicado solo a eso, encontro **13 comentarios que mentian** —tres
+       de ellos **invertidos** al comprimirlos, diciendo justo lo contrario del hecho— y
+       ~40 `<summary>` de relleno del tipo "Clave primaria." sobre `int Id`
+  - -- o sea: **comprimir texto tecnico introduce errores**, y el que comprime no los ve.
+       Si vas a resumir 5.000 lineas de razones, presupuesta a alguien que las relea

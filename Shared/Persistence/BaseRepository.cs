@@ -15,16 +15,13 @@ namespace ApiEcommerce.Shared.Persistence;
 /// </remarks>
 public class BaseRepository<T> : IBaseRepository<T> where T : class, IEntity
 {
-  /// <summary>Contexto de EF Core del request.</summary>
   protected readonly AppDbContext _db;
 
-  /// <summary>Conjunto de la entidad <typeparamref name="T"/>.</summary>
   protected readonly DbSet<T> _dbSet;
 
   /// <summary>Cacheado: <c>typeof</c> por llamada sería desperdicio en un método caliente.</summary>
   private static readonly bool IsAuditable = typeof(IAuditable).IsAssignableFrom(typeof(T));
 
-  /// <summary>Crea el repositorio sobre el contexto del request.</summary>
   public BaseRepository(AppDbContext db)
   {
     _db = db;

@@ -6,7 +6,6 @@ namespace ApiEcommerce.Shared.Documents;
 /// <summary>Almacén de documentos privados, sección <c>Documents</c>.</summary>
 public sealed class DocumentStorageOptions
 {
-  /// <summary>Nombre de la sección de configuración.</summary>
   public const string SectionName = "Documents";
 
   /// <summary>

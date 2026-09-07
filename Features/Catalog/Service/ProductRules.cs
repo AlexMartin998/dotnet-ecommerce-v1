@@ -45,7 +45,7 @@ public sealed class ProductRules(
 
   /// <summary>
   /// Compara el <c>If-Match</c> del cliente con la versión en base y cierra el
-  /// <i>lost update</i> entre dos administradores.
+  /// lost update entre dos administradores.
   /// </summary>
   /// <remarks>
   /// Es opcional: sin <c>If-Match</c> el PATCH funciona como siempre. La ventana entre

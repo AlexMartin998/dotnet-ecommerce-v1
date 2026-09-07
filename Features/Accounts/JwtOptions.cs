@@ -10,7 +10,6 @@ namespace ApiEcommerce.Features.Accounts;
 /// </remarks>
 public sealed class JwtOptions
 {
-  /// <summary>Nombre de la sección en configuración.</summary>
   public const string SectionName = "Jwt";
 
   /// <summary>Quién emite el token (esta API).</summary>

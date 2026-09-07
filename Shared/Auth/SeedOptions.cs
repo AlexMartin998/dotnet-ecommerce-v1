@@ -11,7 +11,6 @@ namespace ApiEcommerce.Shared.Auth;
 /// </remarks>
 public sealed class SeedOptions
 {
-  /// <summary>Nombre de la sección de configuración.</summary>
   public const string SectionName = "Seed";
 
   /// <summary>Si se siembran datos al arrancar.</summary>

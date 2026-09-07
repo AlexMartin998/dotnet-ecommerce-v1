@@ -31,6 +31,8 @@ public static class HealthCheckExtensions
     // Degraded y no Unhealthy: Redis es una optimización y la app degrada en abierto, pero
     // su caída la ven todas las réplicas a la vez, así que un 503 aquí las sacaba de
     // rotación todas. Degraded responde 200 y sigue visible en el detalle de la sonda.
+    // Esta condición debe ser la MISMA que la de AddDistributedCaching: si no, el readiness
+    // peta al resolver un IConnectionMultiplexer que nadie registró.
     if (redis is not null && redis.IsEnabled)
       checks.AddRedis(
           sp => sp.GetRequiredService<IConnectionMultiplexer>(),

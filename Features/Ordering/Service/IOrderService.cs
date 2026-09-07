@@ -40,8 +40,9 @@ public interface IOrderService
   /// <exception cref="Exceptions.NotFoundAppException">
   /// No existe, no es de ese comprador, o su documento ya no está en el almacén.
   /// </exception>
-  /// <exception cref="Exceptions.ConflictAppException">
-  /// Todavía se está generando (<c>receipt_not_ready</c>). Es reintentable.
+  /// <exception cref="Exceptions.CustomAppException">
+  /// 409 con <c>receipt_not_ready</c> si todavía se genera (reintentable) o con
+  /// <c>receipt_failed</c> si su generación falló (definitivo).
   /// </exception>
   Task<DocumentContent> GetReceiptAsync(
       int orderId, string buyerUserId, CancellationToken ct = default);

@@ -11,7 +11,6 @@ namespace ApiEcommerce.Shared.Http;
 /// </remarks>
 public sealed class RateLimitOptions
 {
-  /// <summary>Nombre de la sección de configuración.</summary>
   public const string SectionName = "RateLimit";
 
   /// <summary>Peticiones permitidas por IP y ventana, para toda la API.</summary>

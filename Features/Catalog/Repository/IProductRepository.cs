@@ -39,7 +39,7 @@ public interface IProductRepository : IBaseRepository<Product>
   Task<Product?> GetBySkuAsync(string sku, CancellationToken ct = default);
 
 
-  /// <summary>¿Hay ya otro producto con ese SKU? <paramref name="excludeId"/> se ignora al comparar.</summary>
+  /// <summary>¿Hay ya otro producto con ese SKU? <paramref name="excludeId"/> se excluye de la comprobación.</summary>
   Task<bool> SkuExistsAsync(string sku, int? excludeId = null, CancellationToken ct = default);
 
 

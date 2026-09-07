@@ -26,6 +26,7 @@ public sealed class TransactionRunner(AppDbContext db) : ITransactionRunner
       // `Unchanged` y el segundo haría commit de una transacción vacía.
       db.ChangeTracker.Clear();
 
+      // Con EnableRetryOnFailure, EF PROHÍBE BeginTransactionAsync fuera de strategy.ExecuteAsync.
       await using var tx = await db.Database.BeginTransactionAsync(ct);
 
       try

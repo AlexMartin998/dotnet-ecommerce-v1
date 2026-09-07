@@ -19,7 +19,7 @@ public interface IDeadLetterAdmin
   /// Devuelve recuentos y no contenido: volcar los payloads de la DLQ sería una fuga, y para
   /// decidir si hay que reemitir basta con saber cuántos hay.
   /// </remarks>
-  /// <returns><c>null</c> si no hay broker configurado o no responde.</returns>
+  /// <exception cref="BrokerUnavailableException">No hay broker configurado, o no responde.</exception>
   Task<IReadOnlyList<DeadLetterStatus>> GetStatusAsync(CancellationToken ct = default);
 
   /// <summary>

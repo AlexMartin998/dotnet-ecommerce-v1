@@ -497,7 +497,7 @@ un bug de documentación: se borra su sección.
 - **No se toca nada sin procesar.** El filtro exige `ProcessedAt != null`: un evento que agotó sus reintentos sigue pendiente de revisión manual, y borrarlo sería perder el hecho de negocio en silencio.
 - **El `catch (Exception)` va SIN filtro que excluya `OperationCanceledException`.** Una OCE que no venga del `stoppingToken` (la cancelación de un `SqlCommand`, por ejemplo) se escapaba y, con `BackgroundServiceExceptionBehavior.StopHost` por defecto desde .NET 6, tumbaba la API entera.
 - **El corte (`cutoff`) se calcula en una VARIABLE LOCAL.** Dentro del árbol de expresión, `DateTime.Now` se traduce a `GETDATE()` y lo evaluaría el reloj del servidor SQL — otro reloj distinto del que escribió las filas.
-- **El plazo de `ExecutedCommands` NO se copia de nadie:** tiene que cubrir el PEOR reintento de un cliente, porque a partir de ahí la misma `Idempotency-Key` vuelve a ejecutar de verdad. (Stripe recuerda 24 h, Adyen 7-14 días.)
+- **`ExecutedCommands` se purga con el MISMO corte que el outbox** (`Outbox:RetentionDays`): el recolector calcula un único `cutoff` y lo aplica a las tres tablas. Ese plazo tiene que cubrir el PEOR reintento de un cliente, porque a partir de ahí la misma `Idempotency-Key` vuelve a ejecutar de verdad. (Stripe recuerda 24 h, Adyen 7-14 días.)
 - **Borrado troceado (`DeleteBatchSize = 5000`):** un `ExecuteDeleteAsync` de cientos de miles de filas escala el bloqueo a toda la tabla y bloquea a las compras que están escribiendo su evento.
 - **Un minuto de espera antes de la primera pasada:** al arrancar hay cosas más urgentes (migraciones, seeding, el primer drenaje del outbox).
 
@@ -619,7 +619,7 @@ un bug de documentación: se borra su sección.
   1. **Un replay desde la DLQ no reseteaba el presupuesto.** `x-death` sobrevive al paso por la DLQ, así que un mensaje reencolado por un operador volvía con el contador agotado y moría en la primera entrega. Con cabecera propia, el procedimiento de replay es borrarla — una, con nombre conocido.
   2. **El parseo era frágil.** `x-death` es una lista de diccionarios cuyos valores de texto viajan como `byte[]`: compararlos con un `string` sin convertir devuelve `false` en silencio (ya pasó). Y había que filtrar por el NOMBRE de la cola de reintento, que lleva el TTL dentro, o sea que el contador se habría reseteado solo al cambiar el plazo.
 - **Es una función pura y vive fuera del consumidor para poder probarla sin broker** — misma razón por la que salieron de ahí el efecto y la unidad transaccional.
-- **`Read` acepta los tres formatos** (`int` propio, texto crudo o `byte[]` de quien la ponga a mano desde la UI del broker). Un valor ilegible cuenta como cero: preferible un reintento de más que descartar un mensaje por no saber leer una cabecera.
+- **`Read` acepta los cuatro formatos** en que puede llegar el valor (`int` propio, `long`, `byte[]` y texto, estos dos últimos de quien la ponga a mano desde la UI del broker). Un valor ilegible cuenta como cero: preferible un reintento de más que descartar un mensaje por no saber leer una cabecera.
 - **Un valor negativo se normaliza a cero:** solo puede venir de una edición manual y daría un presupuesto infinito de reintentos.
 - **`With` copia y no muta:** el diccionario de entrada es del mensaje que estamos consumiendo, y reutilizarlo acopla lo que publicamos a lo que recibimos.
 
@@ -745,7 +745,7 @@ un bug de documentación: se borra su sección.
 - **Semántica del PATCH:** omitir el campo (o enviarlo null) significa «no tocar»; para vaciar `Description`/`ImageUrl` hay que enviar `""`, no null.
 - **`CategoryName` viaja plano en la lectura** porque la navegación puede venir sin cargar.
 - **`RowVersion` se convierte a base64 al leer:** es binario en la base y texto en una cabecera HTTP.
-- **`UpdateProductDto.RowVersion` NO se mapea a la entidad:** lo gestiona SQL Server, y el valor del cliente sirve solo para comparar (ver `ProductRules`).
+- **`RowVersion` se ignora al escribir:** lo gestiona SQL Server. El `IfMatch` que manda el cliente tampoco se mapea a la entidad: sirve solo para comparar (ver `ProductRules`).
 
 ### `Features/Catalog/Mapping/CategoryProfile.cs`
 
@@ -825,6 +825,8 @@ un bug de documentación: se borra su sección.
 - **Aquí no se hashea nada a mano.** `UserManager.CreateAsync(user, password)` aplica PBKDF2 con salt por usuario y el conteo de iteraciones vigente; cualquier `SHA256(password)` casero de tutorial es una vulnerabilidad.
 - **Mapa mental desde Spring Security** (nota de aprendizaje del autor): `UserManager` ≈ `UserDetailsService` + `PasswordEncoder`, `SignInManager` ≈ `AuthenticationManager`, `RoleManager` ≈ la gestión de `GrantedAuthority`.
 - **Username/email repetido -> 409 y no 400**: el request es válido en sí mismo, choca con el estado de la base.
+- **Quien garantiza la unicidad del email es el índice único de `NormalizedEmail`, no el `if`.** La comprobación previa sigue ahí porque da el mensaje bonito (*"Email 'x' is already registered"*), pero entre ella y `CreateAsync` cabe otra petición: la carrera la resuelve la base y `GlobalExceptionHandler` traduce el 2601/2627 a 409. Es el mismo reparto que en el nombre de categoría, el SKU y el número de orden.
+- **`DuplicateUserName`/`DuplicateEmail` de Identity también son 409, no 422.** `UserManager.CreateAsync` valida la unicidad por su cuenta justo antes del `INSERT`, así que en una carrera de 6 registros unas peticiones caían por el validador (422) y otras por el índice (409): el mismo choque contestaba con dos códigos distintos según cuánto se hubiesen adelantado. El 422 se queda para lo que de verdad es una regla de negocio sobre el contenido, como la política de contraseñas.
 - **Política de contraseñas de Identity -> 422 y campo a campo**: la forma del DTO ya la filtró DataAnnotations.
 - **Se distingue "la actual no es correcta" de "la nueva no cumple la política"** al cambiar contraseña: son dos errores muy distintos para quien está delante, y devolver siempre lo mismo obliga a adivinar qué casilla corregir. No es un oráculo, porque para llegar ahí ya hay que estar autenticado como ese usuario.
 - **Proyección a mano en vez de AutoMapper** para `UserDto`: los roles no son una propiedad de `ApplicationUser` sino una consulta aparte, así que un Profile tendría que inyectar el `UserManager` para resolverlos.
@@ -838,6 +840,11 @@ un bug de documentación: se borra su sección.
 - **Auditoría de concesión/revocación de roles con `LogWarning`**: una promoción a administrador es el cambio de permisos más grande que admite el sistema, y sin rastro no hay forma de responder "¿quién le dio admin a este?" tres meses después.
 - **Regla 1 al quitar admin: uno no se lo quita a sí mismo.** Es el clic con el que un admin se deja fuera de su propio panel, y el camino más rápido a dejar el sistema sin nadie que pueda arreglarlo.
 - **Regla 2: nunca sin administradores.** Se comprueba *después* de la regla 1 para que el mensaje devuelto sea el que de verdad explica el rechazo.
+- **La regla 2 la arbitra la base, no el `if`.** Contar administradores y quitar el rol eran dos viajes sin transacción: los dos contaban dos y los dos se degradaban. Medido con 4 administradores y 4 degradaciones simultáneas en corro (cada uno quita el rol al siguiente): **4×204 y cero administradores**. Y no hay vuelta atrás — con un token nuevo, `POST /user/{id}/roles` devuelve 403; la única ventana de rescate eran los 15 minutos que le quedaran a un access token viejo, porque el rol viaja dentro del JWT. Con el bloqueo: 3×204, 1×409 y **siempre queda uno**.
+- **`sp_getapplock` exclusivo y no un `DELETE` condicional sobre `AspNetUserRoles`.** El `DELETE … WHERE (SELECT COUNT(*) …) > 1` en una sola sentencia **no cierra la carrera por sí solo**: bajo `READ COMMITTED` las dos sesiones pueden evaluar el subconsulta antes de que ninguna haya borrado, y las dos ven 2. Para que sirva hace falta `WITH (UPDLOCK, HOLDLOCK)` en el recuento, o sea SQL crudo contra las tablas de Identity — y en este repo quien escribe ahí es siempre `UserManager` (`DataSeeder` no hace un solo `INSERT` directo, y por buenas razones: `SecurityStamp` y `ConcurrencyStamp`). El applock serializa la sección sin sacar la escritura de `UserManager`, y es el mismo patrón ya medido en `OutboxPublisher`.
+- **Con espera (5 s) y no con `@LockTimeout = 0` como el outbox.** Allí, saltarse la vuelta no pierde trabajo: el lote sigue en la tabla y se drena en el siguiente ciclo. Aquí detrás hay una persona, y no conceder el bloqueo significa no hacer la operación; si aun así se agota, es un 409 explícito que invita a reintentar.
+- **Solo se serializa QUITAR el rol, no darlo.** Añadir administradores solo puede aumentar el recuento, que es la dirección segura: un alta simultánea sin confirmar hace que el recuento salga bajo y la baja se rechace, nunca al revés.
+- **El delegado transaccional relee el usuario.** `ITransactionRunner` limpia el change tracker en cada intento (la estrategia de reintentos puede reejecutarlo entero) y `UserStore.UpdateAsync` hace `Context.Attach(user)`: pasarle la instancia leída fuera de la transacción reventaba con *"another instance with the same key value is already being tracked"*. La lambda tiene que ser replayable, igual que la de `ProductService.BuyAsync`.
 - **`DateTimeOffset.MaxValue` = bloqueo indefinido.** Identity no tiene "bloqueado para siempre": tiene una fecha de fin, y el infinito se expresa así.
 - **Bloquear revoca además las sesiones.** Sin eso la cuenta queda marcada como bloqueada y el usuario sigue dentro: su access token vale hasta que expire y —lo grave— podría seguir renovándolo indefinidamente, porque renovar no vuelve a pedir credenciales y por tanto no pasa por el bloqueo.
 - **Desbloquear limpia también los intentos fallidos acumulados**: si no, la cuenta recién desbloqueada se volvería a bloquear al primer error de contraseña.
@@ -909,6 +916,13 @@ un bug de documentación: se borra su sección.
 - **La condición `RevokedAt == null` va dentro del `UPDATE`**: es lo que hace que dos peticiones simultáneas con el mismo token no puedan gastarlo las dos.
 - **Los borrados van en tandas acotadas**, como el resto de purgas: un DELETE de toda la tabla escala el bloqueo y se lleva por delante a quien esté autenticándose.
 
+### `Features/Accounts/Repository/IUserRoleRepository.cs` y `UserRoleRepository.cs`
+
+- **Existe porque un servicio no toca `AppDbContext`** (`docs/01-capas-y-contratos.md`), y el bloqueo que serializa las bajas de administrador necesita la conexión y la transacción en curso. No hereda de `IBaseRepository<T>`: `IdentityUserRole<string>` no es una `IEntity` y aquí no se escribe nada — quien escribe en las tablas de Identity sigue siendo `UserManager`.
+- **`@LockOwner = 'Transaction'`**: el bloqueo se suelta en el commit, aunque el proceso muera a mitad. Con `'Session'` habría que soltarlo a mano y una excepción dejaría la operación bloqueada para todos.
+- **`CountUsersInRoleAsync` es un `COUNT` con `AsNoTracking`** y no `UserManager.GetUsersInRoleAsync().Count`: ese materializa todos los administradores para contarlos y, sobre todo, los **rastrea**, y luego `UserManager` no puede adjuntar la instancia que recibe.
+- **El nombre del rol se pasa a mayúsculas** antes de comparar: Identity guarda `NormalizedName`, y el resto del proyecto nombra los roles en minúsculas (`Roles.Admin`).
+
 ### `Features/Accounts/RefreshTokenCleaner.cs`
 
 - **La tabla solo crece**: cada login abre una familia y cada refresco añade un eslabón. Un usuario activo genera decenas al día, y ninguno sirve para nada pasada su fecha —ni siquiera los revocados, porque la comprobación de reuso solo mira dentro de la ventana de gracia—.
@@ -921,7 +935,7 @@ un bug de documentación: se borra su sección.
 ### `Features/Accounts/AccountsExtensions.cs`
 
 - **Equivale al `SecurityFilterChain` + `UserDetailsService` de Spring Security** (nota de aprendizaje del autor).
-- **`ApplicationUser` no implementa `IEntity`** y por eso este slice no siguió el patrón `Repository/` genérico del resto.
+- **`ApplicationUser` no implementa `IEntity`** (su clave es `string` y su ciclo de vida es de `UserManager`), así que los repositorios de `Features/Accounts/Repository/` existen pero NO heredan de `IBaseRepository<T>`/`BaseRepository<T>`: solo exponen las operaciones que el slice necesita.
 - **`ValidateOnStart`** hace que un secreto ausente o corto reviente el arranque, no el primer login. Equivale a `@ConfigurationProperties` + `@Validated`.
 - **`AddIdentityCore` y no `AddIdentity`**: esta es una API stateless con Bearer token. `AddIdentity` registraría además los esquemas de cookie de Identity, que nadie usa y que se pelean con el esquema JWT por ser el "default".
 - **La política de contraseñas se escribe explícita** aunque los defaults de Identity sean razonables: dejarlos implícitos hace que nadie sepa cuál es la política real.
@@ -1167,6 +1181,7 @@ un bug de documentación: se borra su sección.
 - **`UseStaticFiles` es TERMINAL para los archivos que sirve.** Puesto más arriba, las imágenes no pasaban por el limitador (descarga en bucle sin cuota) ni recibían cabeceras CORS (un `<img>` no las necesita, pero un `fetch()` del front sí).
 - **El `Predicate` del health check de readiness.** Hoy todos los checks llevan el tag `ready`, pero sin el predicado los tags eran decorativos y un check futuro sin tag entraría en readiness sin querer.
 - **`/health` (liveness) no toca ninguna dependencia externa a propósito.** Si la sonda de vida depende de la base, una caída de la base provoca que el orquestador reinicie procesos que están perfectamente sanos.
+- **`UseStatusCodePages` no es redundante con `UseExceptionHandler`.** El framework emite 401, 403 y 404 SIN lanzar excepción (autorización y enrutado), así que esos nunca pasan por `GlobalExceptionHandler` y salían con el cuerpo vacío. Con esto también ellos llegan al cliente como `ProblemDetails`.
 - **`public partial class Program`.** La clase generada por las instrucciones de nivel superior nace `internal`, así que `WebApplicationFactory<Program>` no la ve y el proyecto de tests no compila. Declararla `public partial` es la forma oficial de abrirla sin tocar nada más.
 
 ### `Data/AppDbContext.cs`
@@ -1179,12 +1194,22 @@ un bug de documentación: se borra su sección.
 - **La precisión de los importes se fija explícitamente.** `decimal` sin precisión cae a `decimal(18,2)` por convención de EF, que aquí vale, pero dejarlo implícito hace que un cambio de convención mueva dinero sin que nadie lo note.
 - **La auditoría automática equivale a `@EnableJpaAuditing` + `@CreatedDate`/`@LastModifiedDate` de Spring.** Antes cada repositorio asignaba `UpdatedAt` a mano (`ProductRepository.BuyProduct`); ahora es imposible olvidarlo.
 - **`DateTime.Now` (hora local) es la decisión ya tomada en el proyecto**, documentada en `AGENTS/docs/02-repository.md`.
+- **`EmailIndex` se redefine como ÚNICO y filtrado.** Identity lo crea **no único**: `options.User.RequireUniqueEmail = true` es solo una validación en C# dentro de `UserManager.CreateAsync`, y entre esa comprobación y el `INSERT` cabe otra petición. Medido con 6 registros simultáneos del mismo email contra la base sin el índice: **2 cuentas creadas** y, a partir de ahí, ese email devolvía **500 permanente** — `FindByEmailAsync` usa `SingleOrDefaultAsync` y con dos filas lanza `InvalidOperationException: Sequence contains more than one element`, así que el email quedaba inutilizable para siempre. Con el índice: 1×201 y 5×409, y el registro posterior sigue dando 409.
+- **Filtrado por `[NormalizedEmail] IS NOT NULL`, como el `UserNameIndex` de Identity.** SQL Server trata `NULL` como un valor más en un índice único: sin el filtro, dos usuarios sin email chocarían entre sí. El filtro es además lo que permite que la migración libere el email de las copias en vez de borrar cuentas.
+- **`IX_RefreshTokens_User_RevokedAt`.** `RevokeAllForUserAsync` filtra por `UserId` y `RevokedAt IS NULL`, y la tabla solo tenía índices por `TokenHash`, `FamilyId` y `ExpiresAt`: era un scan. No es un camino raro —se recorre al cambiar la contraseña, en `logout-all` y al bloquear a un usuario—, y es justo el que tiene que ser rápido cuando alguien cree que le han robado la cuenta. `RevokedAt` va en el índice y no solo `UserId` para que el filtro se resuelva sin ir a la tabla.
 
 ### `Data/DataSeeder.cs`
 
 - **Se ejecuta desde `Program.cs` dentro de un scope propio.** El contenedor raíz no puede resolver servicios `Scoped` como `AppDbContext` o `UserManager`, y hacerlo lanza en el arranque.
 - **Roles y usuarios se crean con `RoleManager`/`UserManager` y nunca con `INSERT` directo.** Un insert a mano se salta el `SecurityStamp` y el `ConcurrencyStamp`, y sin `SecurityStamp` el lockout y la invalidación de credenciales de Identity dejan de funcionar — un fallo que no se ve hasta que hace falta.
 - **`SaveChanges` antes de crear los productos.** Es lo que asigna los `Id` reales; el seeder de referencia hacía `Categories.Find(1)` sobre categorías todavía no persistidas y solo funcionaba por accidente, si el IDENTITY empezaba en 1.
+
+### `Migrations/20260907000623_UniqueEmailAndSessionRevocationIndex.cs`
+
+- **La migración limpia antes de crear el índice, y no borra ninguna cuenta.** Si la carrera de registro ya dejó emails repetidos, `CREATE UNIQUE INDEX` falla y la migración deja la base a medias. El paso previo se queda con la copia más antigua (`ROW_NUMBER() OVER (PARTITION BY NormalizedEmail ORDER BY CreatedAt, Id)`) y a las demás les pone `Email`/`NormalizedEmail` a `NULL`: la cuenta sigue viva y se puede seguir entrando con ella —el login es por username—, pero deja de ocupar un email que no le pertenece en exclusiva. Borrar filas de usuario en una migración es irreversible y no es decisión de un script.
+- **Esas cuentas quedan identificables** con un `WHERE Email IS NULL`, para que alguien decida qué hacer con ellas. Se pone `EmailConfirmed = 0` porque no queda nada que confirmar.
+- **En las bases de este proyecto no había duplicados** al escribir la migración (comprobado en `ApiEcommerceNET8` y `ApiEcommerceNET8_Tests`); el paso está por lo que pueda haber en cualquier otra copia.
+- **Revisada antes de aplicarla** (`rules.md` §11): son un `DROP INDEX` + `CREATE INDEX` sobre `AspNetUsers` y un `CREATE INDEX` sobre `RefreshTokens`, sin drop/recreate de tablas.
 
 ### `Exceptions/IdempotencyConflictAppException.cs`
 
@@ -1215,6 +1240,15 @@ un bug de documentación: se borra su sección.
 - **Un usuario nuevo por test y no uno compartido.** Cinco fallos de login bloquean la cuenta cinco minutos, y una cuenta compartida convierte ese bloqueo en fallos intermitentes por toda la suite.
 - **El host arranca en `InitializeAsync` y no dentro del primer test**, para que un fallo de migración o de seeding se lea como lo que es.
 - **Al terminar se borran los ficheros pero no la base**: los ficheros son basura del sistema de ficheros del host, no evidencia.
+
+### `tests/ApiEcommerce.Tests/Integration/VersioningAndHealthTests.cs`
+
+- **Todo esto solo se ve levantando la aplicación:** el enrutado no existe hasta que hay pipeline, así que son fallos que ninguna prueba unitaria puede alcanzar y que se rompen al añadir un controller.
+- **La ruta sin versión tiene que dar 404 y no caer en v1 por defecto.** Con una v1 implícita, el día que exista una v2 los clientes viejos cambiarían de comportamiento sin tocar una línea.
+- **`/health` es `[ApiVersionNeutral]`.** Sin eso la sonda de vida vive bajo `/api/v{version}` y responde 404: el orquestador mata un proceso perfectamente sano.
+- **`/health/ready` responde `Healthy` o `Degraded`, nunca 404.** Redis caído degrada (200) a propósito, así que la aserción admite las dos y lo que verifica es que la sonda contesta algo interpretable.
+- **`CreatedAtRoute` sobre una ruta versionada necesita el parámetro `version` explícito**, o revienta al construir el `Location` y sale un 500. El test sigue el `Location` devuelto: estar bien formado no basta, tiene que servir.
+- **El primer test cubre de una vez migraciones al arrancar, seeding del admin y validación del contenedor de DI**, que son los tres caminos que pueden romper el arranque en un despliegue limpio.
 
 ### `tests/ApiEcommerce.Tests/Integration/IntegrationCollection.cs`
 
@@ -1286,6 +1320,9 @@ un bug de documentación: se borra su sección.
 
 - **Con `Task.WhenAll` de peticiones reales, nunca en secuencia.** En secuencia estos mismos escenarios pasaban también con la implementación defectuosa, y por eso el bug del stock sobrevivió tanto tiempo.
 - **El stock se descuenta con un UPDATE condicional atómico y no con concurrencia optimista.** Con `RowVersion` + reintentos se MIDIÓ que no servía: no sobrevendía, pero rechazaba compras válidas (5×200 + 5×409 sobre stock 10) al agotar los reintentos. La concurrencia optimista sirve para EDITAR una entidad, no para un contador con contención. Medición actual: 10×200, 5×409 y stock 0.
+- **La carrera de administradores necesita CUATRO corredores, no dos.** Con dos peticiones simultáneas sobre `TestServer` la versión rota pasaba el test: la ventana entre el recuento y el borrado es de microsegundos y no se solapaba. Con cuatro administradores degradándose en corro se reproduce siempre — verificado revirtiendo el arreglo: **4×204 y cero administradores**.
+- **El test devuelve el rol al admin sembrado en un `finally`, y por DI.** Toda la suite depende de `ApiFactory.AsAdminAsync()`, y este escenario tiene que dejar al sembrado fuera del recuento para llegar al borde donde vive la carrera. Se restaura con `UserManager` desde un scope y no por HTTP porque, si el arreglo se rompe, no queda ningún administrador que pueda hacer la llamada — que es exactamente lo que el test denuncia.
+- **La carrera de email comprueba también el registro POSTERIOR.** Que se creen dos cuentas es la mitad del daño; la otra mitad es que el email queda envenenado con un 500 permanente. Sin el índice, el escenario completo daba **0×201, 6×500, 2 cuentas con el mismo email** y un 500 en el intento secuencial siguiente.
 
 ### `tests/ApiEcommerce.Tests/Integration/PaginationTests.cs`
 

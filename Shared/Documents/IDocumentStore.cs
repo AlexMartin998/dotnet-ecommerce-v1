@@ -12,7 +12,7 @@ namespace ApiEcommerce.Shared.Documents;
 /// </remarks>
 public interface IDocumentStore
 {
-  /// <summary>Guarda un documento y devuelve la clave con la que recuperarlo.</summary>
+  /// <summary>Guarda un documento y devuelve su <see cref="DocumentReference"/>: clave y tamaño.</summary>
   /// <remarks>
   /// La clave la genera el almacén e incluye una parte aleatoria: una clave adivinable
   /// convierte cualquier despiste futuro en una fuga.
@@ -74,6 +74,5 @@ public readonly record struct DocumentReference(string Key, long SizeBytes);
 /// </param>
 public sealed record DocumentContent(Stream Stream, string ContentType, string FileName) : IAsyncDisposable
 {
-  /// <summary>Libera el <see cref="Stream"/>.</summary>
   public ValueTask DisposeAsync() => Stream.DisposeAsync();
 }

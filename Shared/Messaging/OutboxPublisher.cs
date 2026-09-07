@@ -113,6 +113,7 @@ public sealed class OutboxPublisher(
           alreadyPublished.Add(message.Id);
         }
 
+        // Se marca DESPUÉS de publicar: al revés, morir entremedias pierde el mensaje.
         message.ProcessedAt = DateTime.Now;
         message.LastError = null;
         published++;

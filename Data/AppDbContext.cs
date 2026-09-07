@@ -163,6 +163,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
 
   // Auditoría automática: equivale a @EnableJpaAuditing + @CreatedDate/@LastModifiedDate.
+  // Quitar la llamada a StampAuditFields compila y deja de estampar en silencio.
 
   public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
   {

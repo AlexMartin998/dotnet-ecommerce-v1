@@ -19,12 +19,10 @@ namespace ApiEcommerce.Shared.Db;
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
 public sealed class TransactionalAttribute : Attribute, IAsyncActionFilter, IOrderedFilter
 {
-  /// <summary>Por DENTRO de <c>[Idempotent]</c> (Order -100): la respuesta se memoriza tras el commit.</summary>
+  /// <summary>Por DENTRO de <c>[Idempotent]</c> (Order -100): su puerta se cruza antes de abrir la transacción.</summary>
   public int Order => 0;
 
   /// <summary>Abre la transacción, ejecuta la acción y confirma si no hubo excepción.</summary>
-  /// <param name="context">Contexto de la acción.</param>
-  /// <param name="next">Continuación de la cadena de filtros.</param>
   public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
   {
     var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
@@ -46,6 +44,7 @@ public sealed class TransactionalAttribute : Attribute, IAsyncActionFilter, IOrd
 
       // `await using` ya hace rollback al disponerse, y así un rollback que lance no
       // sustituye a la excepción original.
+      // Con EnableRetryOnFailure, EF PROHÍBE BeginTransactionAsync fuera de strategy.ExecuteAsync.
       await using var tx = await db.Database.BeginTransactionAsync(ct);
 
       var executed = await next(); // ejecuta la acción

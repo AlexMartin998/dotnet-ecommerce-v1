@@ -35,6 +35,7 @@ public class OrderController : ControllerBase
     // Corta la petición antes de leerla entera; validar después de recibir no protege.
     [RequestSizeLimit(64 * 1024)]
     // Atajo, no la garantía: quien impide la doble compra es OrderService.
+    // Sin [Transactional]: la transacción la abre el servicio, y el atributo aquí lanzaría.
     [Idempotent]
     [ProducesResponseType(StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]

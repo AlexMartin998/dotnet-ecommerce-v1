@@ -13,7 +13,7 @@ namespace ApiEcommerce.Features.Catalog;
 
 
 /// <summary>
-/// Registro del contexto acotado <b>Catálogo</b>: categorías y productos.
+/// Registro del contexto acotado Catálogo: categorías y productos.
 /// </summary>
 /// <remarks>
 /// El slice registra aquí todo lo suyo. Una entidad más del catálogo (una marca, una

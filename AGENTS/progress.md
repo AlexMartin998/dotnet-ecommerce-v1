@@ -4,7 +4,7 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-06** (recuperación desde la DLQ y recolector de huérfanos).
+Última actualización: **2026-09-07** (limpieza de comentarios y la revisión prod-ready que destapó cinco P0).
 
 ---
 
@@ -40,6 +40,53 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 ---
 
 ## 2. Bitácora
+
+### 2026-09-07 — Limpiar el codigo, y las cinco cosas que la revision destapo
+
+El 40 % del codigo fuente eran comentarios (5.241 de 13.200 lineas): `<remarks>` de tres
+parrafos para explicar un semaforo, emojis por todas partes, la historia de cada cambio
+incrustada entre las lineas que pretendia explicar. Peticion del owner, y con razon: eso no
+documenta, **tapa**.
+
+**Comentarios: 5.241 → 3.215 (−39 %)**, ratio del 40 % al 28 %, y **cero iconos**. El
+contrato de estilo queda en `rules.md` §1.1 para que no se vuelva a contaminar, y **no se
+perdio nada**: el porque largo vive en `docs/07-decisiones-en-el-codigo.md`, 174 secciones
+indexadas por ruta de archivo (las 174 rutas verificadas: todas existen). Seis agentes en
+paralelo, uno por area, con el mismo contrato para que no divergieran.
+
+Verificado con una maquina de estados que entiende literales de C#: **en los 194 ficheros
+solo cambiaron comentarios**, ni una linea de codigo ejecutable.
+
+**Y despues, tres revisiones en paralelo — arquitectura, operacion real y calidad de la
+limpieza— encontraron mas de lo que esperaba.** Lo de operacion es lo que duele:
+
+- 🔴 **Con Redis caido no se degradaba, se caia.** Los timeouts estaban puestos, pero la
+  `BacklogPolicy` por defecto **encola** los comandos mientras la conexion esta caida y cada
+  uno espera su timeout entero —y una lectura cache-aside hace dos llamadas—. Medido: `GET
+  /category` pasaba de 3 ms a **3,4–4,0 s**, con `/health/ready` devolviendo 200, o sea el
+  orquestador mandando trafico a replicas que tardaban cuatro segundos. Con `FailFast`: 5 ms.
+- 🔴 **El rate limiter de `auth` se esquivaba con una cabecera.** `KnownNetworks.Clear()`
+  hacia confiar en `X-Forwarded-For` de cualquiera. Rotandola, fuerza bruta sin limite.
+  ⚠️ Y no se reproduce desde localhost, porque el cliente **es** un proxy de confianza por
+  defecto: hay que probarlo desde una IP no-loopback.
+- 🔴 **La CI no podia arrancar SQL Server**: tres lineas de comentario estaban DENTRO del
+  escalar plegado `options: >-`, y en YAML eso es contenido, no comentario.
+- 🔴 **Dos carreras**: cuatro admins degradandose a la vez dejaban **cero administradores**
+  sin vuelta atras por la API, y seis registros del mismo email creaban dos cuentas y dejaban
+  ese email dando **500 permanente** (`FindByEmailAsync` hace `SingleOrDefault`).
+- 🔴 **El desbordamiento de paginacion seguia vivo**: lo di por arreglado en `PageQuery`,
+  pero los repositorios **no usan `Skip`**, repiten la formula en `int`.
+
+✏️ **Y una correccion mia de bulto**: al arreglar el desbordamiento la vez anterior toque
+`PageQuery` y no comprobe quien lo usaba. Nadie. El 500 seguia ahi y yo lo habia dado por
+cerrado en un commit.
+
+Ademas: los indices unicos de SKU y Name **no se usaban** (la columna iba envuelta en
+`ToLower().Trim()`, lo que impide el seek), la validacion del grafo de DI estaba apagada en
+Testing y Production, MARS metia **136 de 450 lineas de log** en el camino feliz, y el compose
+no tenia limites de recursos, rotacion de logs ni volumen para las claves de DataProtection.
+
+Todo verificado ejecutando, no compilando. **278 tests** en verde.
 
 ### 2026-09-06 — La DLQ deja de ser un callejón sin salida
 

@@ -79,6 +79,8 @@ public static class MessagingExtensions
     var options = configuration.GetSection(RabbitMqOptions.SectionName).Get<RabbitMqOptions>()
                   ?? new RabbitMqOptions();
 
+    // La suscripción se registra DENTRO: subirla haría que una réplica sin broker declarara
+    // colas que nadie consume.
     if (!options.IsEnabled) return services;
 
     services.AddSingleton(subscription);

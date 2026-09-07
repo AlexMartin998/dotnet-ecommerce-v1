@@ -21,9 +21,9 @@ public sealed class ProductPurchasedConsumer(
     : EventConsumer<ProductPurchasedConsumer, ProductPurchased>(
         connection, scopeFactory, options, subscription, logger)
 {
-  /// <summary>Resuelve el efecto del scope del mensaje y se lo pasa al handler.</summary>
+  /// <summary>Resuelve el handler en el scope del mensaje y le pasa el evento.</summary>
   /// <remarks>
-  /// El handler no se inyecta porque este consumidor es singleton y el efecto es scoped:
+  /// El handler no se inyecta porque este consumidor es singleton y él es scoped:
   /// así comparte el <c>AppDbContext</c> con la transacción del inbox.
   /// </remarks>
   protected override Task HandleAsync(

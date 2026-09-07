@@ -9,7 +9,7 @@ using QuestPDF.Infrastructure;
 namespace ApiEcommerce.Features.Ordering;
 
 
-/// <summary>Registro del contexto acotado <b>Ordering</b>: órdenes y su comprobante.</summary>
+/// <summary>Registro del contexto acotado Ordering: órdenes y su comprobante.</summary>
 /// <remarks>
 /// Es un contexto acotado propio, con su lenguaje e invariantes, y toda su dependencia del
 /// catálogo cabe en <see cref="CatalogGateway"/>. El almacén de documentos no se registra
@@ -51,7 +51,8 @@ public static class OrderingExtensions
 
 
   /// <summary>
-  /// El motor de PDF. Cambiar de librería es cambiar esta línea: nada más nombra QuestPDF.
+  /// El motor de PDF: la licencia y el renderizador. Cambiar de librería toca aquí y
+  /// <c>QuestPdfReceiptRenderer</c>, los dos únicos sitios que nombran QuestPDF.
   /// </summary>
   /// <remarks>
   /// La licencia se declara aquí al arrancar o QuestPDF lanza al generar, ya con la API en

@@ -13,7 +13,6 @@ namespace ApiEcommerce.Features.Accounts.Models;
 /// </remarks>
 public class RefreshToken
 {
-  /// <summary>Clave primaria.</summary>
   public int Id { get; set; }
 
   /// <summary>SHA-256 del token en hexadecimal. Nunca el token en claro.</summary>
@@ -25,7 +24,6 @@ public class RefreshToken
   [MaxLength(64)]
   public required string TokenHash { get; set; }
 
-  /// <summary>Dueño de la sesión.</summary>
   [Required]
   [MaxLength(450)]
   public required string UserId { get; set; }
@@ -37,7 +35,6 @@ public class RefreshToken
   /// </remarks>
   public Guid FamilyId { get; set; }
 
-  /// <summary>Cuándo deja de valer.</summary>
   public DateTime ExpiresAt { get; set; }
 
   /// <summary>Cuándo se gastó o se revocó. <c>null</c> = sigue vivo.</summary>
@@ -50,9 +47,7 @@ public class RefreshToken
   [MaxLength(64)]
   public string? CreatedByIp { get; set; }
 
-  /// <summary>Cuándo se emitió.</summary>
   public DateTime CreatedAt { get; set; } = DateTime.Now;
 
-  /// <summary>¿Sigue siendo utilizable?</summary>
   public bool IsActive(DateTime now) => RevokedAt is null && ExpiresAt > now;
 }
