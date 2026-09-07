@@ -134,7 +134,11 @@ desarrollo. Tras clonar hay que poner tres valores (`ConnectionStrings:ConexionS
 `UserSecretsId` = `apiecommerce-dev-2026`. Sin la clave JWT, el arranque falla con
 `OptionsValidationException` — es lo correcto, no un fallo de configuración del entorno.
 
-**CI**: `.github/workflows/ci.yml` corre build (`-warnaserror`) + los 278 tests en cada
+⚠️ **CI DESACTIVADA** (2026-09-07): el pipeline vive en `AGENTS/ci/ci.yml.disabled`, fuera
+de `.github/workflows/`, porque un PAT sin scope `workflow` hacía que GitHub rechazara el
+push entero. Nunca ha llegado a correr. Para reactivarla hacen falta dos cosas: mover el
+fichero de vuelta **y** un remoto por SSH (o un PAT con ese scope). Ver `AGENTS/ci/README.md`.
+Lo que haría, cuando se active: build (`-warnaserror`) + los 278 tests en cada
 push y PR, con SQL Server y Redis como `services` del runner, y construye el `Dockerfile`.
 
 ### Los tests (paso 11, fases 1–5; falta la 6, CI)

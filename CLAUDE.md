@@ -537,7 +537,9 @@ Para toda tarea no trivial: **spec → planning → código**.
 
 ### Verificación — el suelo innegociable (`rules.md` §11)
 
-- **`dotnet build` limpio, 0 warnings** (la CI compila con `-warnaserror`).
+- **`dotnet build` limpio, 0 warnings** (compila con `-warnaserror`).
+  ⚠️ **No hay CI que te cubra**: está escrita pero desactivada (`AGENTS/ci/`), porque el PAT
+  no tiene scope `workflow`. El único check es el que corras tú.
 - **`dotnet test tests/ApiEcommerce.Tests` en verde.**
 - **Lo que toque concurrencia, dependencias externas o el arranque se prueba EJECUTANDO**,
   no compilando: concurrencia con peticiones **simultáneas** (`for … & done; wait`),
