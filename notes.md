@@ -1,3 +1,153 @@
+# Mapa de infra y librerias  <- la chuleta: que uso, por que ESA, y donde se registra
+
+> Lo de arriba de todo a proposito: es lo que se olvida y lo que no esta en ningun otro
+> sitio junto. Cada fila tiene `archivo:linea` para ir a verlo, no para creerselo.
+
+## Los tres servicios externos
+
+Viven **fuera de este repo**, en el compose central del autor (`~/Documents/code/000_infra`),
+compartidos con otros proyectos. Dos direcciones valen para lo mismo: `192.168.3.82` (IP LAN
+del host, **cambia con DHCP**) y `172.17.0.1` (puerta del bridge de Docker, estable desde el
+dev container y lo que usan los tests).
+
+| Servicio | Puerto publicado | Dentro de la red `backend` | Si se cae |
+|---|---|---|---|
+| SQL Server (`ApiEcommerceNET8`) | `1434` | `sqlserver_ecommerce,1433` | 🔴 la API no hace nada util: es la fuente de verdad |
+| Redis (`redis_generic`) | `6999` | `redis_generic:6379` | 🟢 **arranca igual**: cache, atajo de idempotencia y denylist degradan en ABIERTO |
+| RabbitMQ (`rabbitmq_generic`) | `5672` (UI `15672`) | `rabbitmq_generic:5672` | 🟢 **arranca igual**: los eventos se acumulan en `OutboxMessages` |
+
+## Una libreria por pieza, y por que ESA
+
+| Pieza | Libreria | Por que esa, en una linea | Donde se registra |
+|---|---|---|---|
+| **SQL Server** | `Microsoft.EntityFrameworkCore.SqlServer` 9.0.9 | ORM de la casa; `ExecuteUpdateAsync` da el UPDATE condicional atomico que el stock necesita | `Shared/Persistence/PersistenceExtensions.cs:25` |
+| **Redis — cache** | `Microsoft.Extensions.Caching.StackExchangeRedis` 9.0.9 | da `IDistributedCache`, que es la abstraccion del framework: cambiar a otro backend no toca el dominio | `Shared/Caching/CachingExtensions.cs:46` |
+| **Redis — crudo** | `StackExchange.Redis` 2.8.58 | ⭐ **porque `IDistributedCache` NO expone `SET NX`**, y sin eso no hay reserva de idempotencia ni denylist de `jti` | `Shared/Caching/CachingExtensions.cs:58` |
+| **RabbitMQ** | `RabbitMQ.Client` 7.2.2 | el cliente **oficial** y crudo: el outbox, el inbox y la DLQ son justo lo que un MassTransit esconderia, y aqui son lo que se viene a aprender | `Shared/Messaging/RabbitMq/RabbitMqConnection.cs:72` |
+| **PDF** | `QuestPDF` 2026.8.0 | ⭐ compone el PDF **directamente**, sin motor HTML→PDF: ni Chromium en la imagen ni un proceso navegador por comprobante | `Features/Ordering/Documents/QuestPdfReceiptRenderer.cs:36` |
+| **Pasarela de pago** | `Stripe.net` 52.4.1 | por **una** funcion: `EventUtility.ConstructEvent`, la verificacion de firma del webhook. Eso no se escribe a mano | `Features/Payments/Gateways/StripePaymentGateway.cs:77` |
+| **Identidad** | `Microsoft.AspNetCore.Identity.EntityFrameworkCore` 9.0.9 | hash de password, lockout y roles ya resueltos y auditados | `Features/Accounts/AccountsExtensions.cs` |
+| **JWT** | `Authentication.JwtBearer` 9.0.9 + `System.IdentityModel.Tokens.Jwt` 8.14.0 | validacion del token como middleware, no como codigo propio | `Features/Accounts/AccountsExtensions.cs:54` |
+| **Logs** | `Serilog.AspNetCore` 9.0.0 | logging **estructurado**: el `CorrelationId` viaja como propiedad, no pegado al mensaje | `Program.cs:15` |
+| **Trazas y metricas** | `OpenTelemetry.*` 1.18.0 | estandar, no vendor: sin `OtlpEndpoint` se instrumenta y **no** se exporta | `Shared/Observability/ObservabilityExtensions.cs:46` |
+| **Mapeo DTO↔entidad** | `AutoMapper` 15.1.1 | un profile por entidad; el PATCH parcial se expresa campo a campo. ⚠️ **licencia comercial** desde la 14: decision abierta del owner | `Shared/Mapping/MappingExtensions.cs:21` |
+| **Swagger + versionado** | `Swashbuckle.AspNetCore` 9.0.4 + `Asp.Versioning.Mvc` 8.1.0 | un documento de Swagger **por version descubierta**: anadir una v2 no toca `Program.cs` | `Shared/Http/ApiDocumentationExtensions.cs:22` y `:43` |
+| **Sondas** | `AspNetCore.HealthChecks.Redis` 9.0.0 + `...HealthChecks.EntityFrameworkCore` | ⚠️ Redis va en `Degraded`, no `Unhealthy`: la caida la ven todas las replicas y el orquestador las sacaria TODAS de rotacion | `Shared/Http/Health/HealthCheckExtensions.cs:23` (SQL) y `:38` (Redis) |
+| **Tests** | `xunit` 2.9.3 + `Moq` 4.20.72 + `Mvc.Testing` 9.0.9 | ⚠️ **NO FluentAssertions**: desde la v8 exige licencia comercial. `Assert` de xunit basta | `tests/ApiEcommerce.Tests/` |
+
+- --- ⭐ **Redis lleva DOS paquetes, y no es duplicado**
+```cs
+// Shared/Caching/CachingExtensions.cs
+services.AddStackExchangeRedisCache(...);                  // -> IDistributedCache  (cache-aside)
+services.AddSingleton<IConnectionMultiplexer>(...);         // -> conexion CRUDA     (SET NX, denylist)
+```
+  - -- `IDistributedCache` habla en `byte[]` y solo sabe get/set/remove: **no tiene `SET NX`**,
+       que es una operacion atomica «pon esto solo si no existe». Sin ella no hay reserva de
+       idempotencia
+  - -- ⚠️ el multiplexer que crea `AddStackExchangeRedisCache` es **interno y no se puede
+       reutilizar**: por eso hay uno propio, `Lazy`, compartido por idempotencia + denylist +
+       sonda. Dos multiplexers serian dos pools de conexiones a la misma instancia
+  - -- ⚠️ el Redis es **compartido con otros proyectos**: si alguien le pone `allkeys-lru`, las
+       claves del atajo de idempotencia se desalojan. La GARANTIA no depende de eso (vive en
+       `ExecutedCommands`, en SQL); el atajo si
+
+- --- ⭐ **RabbitMQ: como se queda escuchando el consumidor** (`Shared/Messaging/RabbitMq/EventConsumer.cs`)
+```cs
+class EventConsumer<TConsumer,TEvent> : BackgroundService   // el MECANISMO, escrito UNA vez
+
+ExecuteAsync(stoppingToken):                 // bucle exterior
+    ConsumeAsync(ct)                         // si el broker esta caido, vuelve enseguida
+    await Task.Delay(10s)                    // y se reintenta: no es un fallo, es una espera
+
+ConsumeAsync(ct):
+    conn    = await connection.TryGetConnectionAsync(ct);   // null = broker caido, NO excepcion
+    channel = await conn.CreateChannelAsync(publisherConfirmationsEnabled: true);
+    await channel.BasicQosAsync(0, PrefetchCount, global: false);  // N sin confirmar, como maximo
+
+    consumer = new AsyncEventingBasicConsumer(channel);
+    consumer.ReceivedAsync += (_, args) => HandleAsync(channel, args, ct);   // el handler
+
+    await channel.BasicConsumeAsync(queue, autoAck: false, consumer);  // <- aqui EMPIEZA a escuchar
+
+    while (!ct.IsCancellationRequested && channel.IsOpen)              // <- y aqui se QUEDA
+        await Task.Delay(1s, ct);
+```
+  - -- 🔴 **lo que no es obvio: `BasicConsumeAsync` NO bloquea.** Registra el consumidor y
+       vuelve al instante. Lo unico que mantiene vivo el consumo es que el `BackgroundService`
+       **no termine**: de ahi el `while`. Si `ExecuteAsync` retornara, el host daria el hosted
+       service por acabado y **nadie volveria a escuchar, sin un solo error en el log**
+  - -- `autoAck: false`: el `ack` lo hacemos **despues** del efecto, y el efecto va dentro de la
+       transaccion del inbox (marca + efecto juntos). Confirmar antes hacia que un efecto
+       fallido se reconociera como duplicado y el mensaje **desapareciera sin procesarse**
+  - -- el canal lleva **publisher confirms** porque tambien publica el reintento: `BasicPublishAsync`
+       vuelve sin excepcion aunque el mensaje no llegue a ninguna cola
+  - -- ⚠️ un `BackgroundService` que lanza **muere y no vuelve**, y desde .NET 6 el default es
+       `StopHost`: **tumba la API entera**. El patron es
+       `catch (OCE) when (stoppingToken.IsCancellationRequested) { break; }` y luego
+       `catch (Exception)` **sin filtro**
+
+- --- ⭐ **RabbitMQ: como se registra un consumidor nuevo — tres pasos y ni uno mas**
+```cs
+// 1. en el SLICE, el consumidor declara SU cola (estatica: el DI la lee sin instanciar nada)
+public static EventSubscription Subscription { get; } =
+    EventSubscription.For("apiecommerce.order-paid", OrderPaid.EventType);
+
+// 2. hereda el mecanismo y pone SOLO el efecto
+protected override Task HandleAsync(IServiceProvider services, OrderPaid e, CancellationToken ct)
+    => services.GetRequiredService<IReceiptGenerator>().HandleAsync(e, ct);
+
+// 3. UNA linea en el XxxExtensions.cs del slice  (Features/Ordering/OrderingExtensions.cs:42)
+services.AddEventConsumer<OrderPaidConsumer>(configuration, OrderPaidConsumer.Subscription);
+```
+  - -- la suscripcion la trae **el slice**, no `Shared`: asi `Shared/Messaging` no conoce a sus
+       consumidores y la direccion sigue siendo Web → Features → Shared
+  - -- 🔴 **sin el paso 3 no hay binding**, y el evento vuelve como **312 NO_ROUTE**: el outbox
+       lo cuenta como intento, se agota, la operacion funciona y el consumidor **no se entera
+       nunca**. Es el bug que costo generalizar la mensajeria entera
+  - -- `AddEventConsumer` **no registra nada** si `RabbitMq:ConnectionString` esta vacio: una
+       replica sin broker no declara colas que nadie va a consumir
+  - -- ⚠️ **redeclarar** una cola existente con otros argumentos da **406 PRECONDITION_FAILED**
+       y deja la mensajeria abajo. Es configuracion, es permanente, y reintentar no lo arregla:
+       por eso el TTL de la cola de espera va **en su nombre** y hay **una DLX por cola**
+
+- --- ⭐ **PDF: por que QuestPDF y no un HTML→PDF**
+```cs
+// Features/Ordering/Documents/QuestPdfReceiptRenderer.cs
+Document.Create(document => { /* composicion fluida en C#: page, column, table... */ })
+        .GeneratePdf(stream);                 // bytes, directos, en el mismo proceso
+```
+  - -- ⭐ **la alternativa tipica es renderizar HTML** (wkhtmltopdf, Puppeteer, Chromium
+       headless). Eso significa: ~300 MB de navegador en la imagen, **un proceso por
+       comprobante**, arranque en frio, y un motor de layout web resolviendo algo que es una
+       tabla. QuestPDF compone el PDF **directamente**, en proceso y sin dependencias externas
+  - -- lo que cuesta a cambio: **`libfontconfig1`** en la imagen (Linux), y que el layout se
+       escribe en C# en vez de en HTML — mas verboso, pero es codigo que compila y se testea
+  - -- ⚠️ **no se pide `FontFamily`**: Calibri no existe en Linux. QuestPDF **embebe Lato**, y
+       pedir una del sistema es un PDF distinto segun donde corra
+  - -- ⚠️ dos trampas que fallan **en ejecucion y no al arrancar**: la licencia se declara al
+       arrancar (`Features/Ordering/OrderingExtensions.cs:78`) o **lanza al generar** — la API
+       arranca sana y los comprobantes fallan uno a uno
+  - -- ⚠️ **licencia**: Community es gratis, tambien comercialmente, **por debajo de 1 M USD**
+       de ingresos brutos anuales. Es un umbral, no un «gratis para siempre»
+  - -- medido: un comprobante real pesa **29.332 bytes**, generado **fuera de la peticion** (lo
+       dispara el evento `order.paid`, no el checkout)
+
+- --- **Y las dos decisiones de arquitectura que gobiernan todo lo de arriba**
+```
+¿Redis vacio?                -> NoCacheService / NoIdempotencyStore / NoAccessTokenDenylist
+¿RabbitMq vacio?             -> nada de mensajeria; los eventos se quedan en OutboxMessages
+¿Documents:Provider?         -> 'filesystem' hoy; un valor desconocido TUMBA el arranque
+¿Sin pasarela de pago?       -> POST /payment da 503. Cobrar NO es una optimizacion
+```
+  - -- la implementacion de un puerto se elige **una vez, al construir el grafo de DI**, no por
+       peticion. La **unica** excepcion consciente es `IPaymentGateway`: ahi quien elige es el
+       **comprador**, en cada peticion (Strategy + factory)
+  - -- lo que degrada en abierto es lo que **tiene fuente de verdad alternativa**. Una garantia
+       no tiene plan B, y por eso no puede vivir fuera de la transaccion que protege
+
+
+
+
 # Init
 
 - --- Crear proyecto de C#
