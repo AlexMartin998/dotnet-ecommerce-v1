@@ -1185,7 +1185,7 @@ que necesita credenciales del owner, y deuda menor** (`docs/06` §Paso 12).
 
 | Tema | Pregunta |
 |---|---|
-| **Licencia de AutoMapper** | La 15.1.1 exige licencia comercial en producción (avisa por log). ¿Comprar, fijar ≤13.x (última MIT), o migrar a Mapperly? |
+| **Licencia de AutoMapper** | ⚠️ **El dato que había aquí era FALSO** (verificado el 2026-09-12). La 15.1.1 es dual **RPL-1.5 + comercial**, y existe una **licencia Community gratuita** por debajo de **5 M USD** de ingresos brutos y ≤10 M de capital externo, de autoservicio y sin aprobación. Y la última **MIT** es la **14.0.0** (feb 2025), no la 13.x. Así que las opciones son: **registrar la Community** (0 €, una clave), **fijar 14.0.0**, o **migrar a Mapperly** (Apache 2.0, source generator, sin umbral ni clave). ⚠️ Lo que NO conviene es quedarse en 15.x sin registrar: entonces aplica **RPL-1.5, que es copyleft recíproco** |
 | **Política de commits** | `rules.md` §12 dice que el agente commitea (práctica de este repo). En el repo de frontend del owner la regla es la contraria. ¿Se confirma? |
 | 🔴 **Token de GitHub en `.git/config`** | El remoto es `https://ghp_…@github.com/AlexMartin998/dotnet-ecommerce-v1.git`: un **PAT en texto plano** que aparece en cualquier `git remote -v`. **Revocarlo en GitHub** (Settings → Developer settings → Personal access tokens) y volver a autenticar con `gh auth login` o con SSH. Es lo más urgente del repo. |
 | **Secretos ya en el historial** | Resuelto para adelante (user-secrets), pero la clave JWT y la password de SQL **siguen en los commits anteriores**. La JWT ya se rotó al migrar; la de SQL es la del contenedor local compartido. Limpiar el historial (`git filter-repo`) solo compensa si el repo se hace público. |

@@ -131,7 +131,7 @@ binding), pero se ven en la UI. Se borran a mano cuando estorben.
 | | |
 |---|---|
 | 🔴 **Token de GitHub en `.git/config`** | Un PAT en texto plano en el remoto. **Revocarlo.** Ver §6.bis |
-| **Licencia de AutoMapper** | La 15.1.1 exige licencia comercial en producción. Es lo único que queda de `planning/12` |
+| **Licencia de AutoMapper** | ⚠️ **Corregido el 2026-09-12, el dato anterior era falso.** La 15.1.1 es dual RPL-1.5 + comercial, **pero hay licencia Community GRATIS** por debajo de 5 M USD de ingresos brutos (y ≤10 M de capital externo): autoservicio, sin aprobación. O sea que **no hay que pagar**; hay que **registrarse**. Alternativas sin papeleo: fijar **14.0.0** (última MIT) o migrar a **Mapperly** (Apache 2.0, source generator, sin umbral). Es lo único que queda de `planning/12` |
 | **Umbral de QuestPDF** | Community es gratis —también comercialmente— **por debajo de 1 M USD** de ingresos brutos anuales, con 90 días de transición. No es «gratis para siempre» |
 | **Subir la CI** | El workflow está commiteado pero **sin push**; falta activarlo y proteger la rama |
 | **Migrar a `net10.0`** | Hoy resuelto instalando el runtime 9 |
@@ -449,8 +449,9 @@ gh auth login            # o pasar el remoto a SSH
 - **AutoMapper, no Mapster.** El curso migró a Mapster en su sección 15; aquí no, porque
   `docs/` fija AutoMapper *y* porque el curso usó `.TwoWays()` indiscriminado en DTOs de
   escritura, que es justo lo que hace que un update pise `CreatedAt`.
-  ⚠️ **Pendiente de decisión del owner**: AutoMapper 15 exige licencia comercial en
-  producción (avisa por log al arrancar).
+  ⚠️ **Pendiente de decisión del owner**: AutoMapper 15 avisa por log al arrancar, pero
+  **NO hay que pagar** por debajo de 5 M USD de ingresos (licencia Community, autoservicio).
+  Ver la tabla de decisiones en §0.
 - **Redis en vez de `[ResponseCache]`.** El del curso no invalida, no funciona con
   cabecera `Authorization` y vive en la memoria de un proceso.
 - **`RowVersion` NO es para el stock.** Se probó y se midió: rechazaba compras válidas.
