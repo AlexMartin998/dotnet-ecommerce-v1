@@ -13,6 +13,9 @@ migra siguiendo el roadmap.
 el código — y el documento se corrige. Lo que sigue siendo autoridad es su **razonamiento**,
 que es lo que ningún documento regenerado reproduce. `00` y `06` están al día.
 
+⚠️ Y el `08` es la excepción al «diseño objetivo»: es **descriptivo**, un mapa de lo que hoy
+existe. Si discrepa del código, el equivocado es él.
+
 ## Índice
 
 | Doc | Léelo cuando… |
@@ -25,6 +28,7 @@ que es lo que ningún documento regenerado reproduce. `00` y `06` están al día
 | [`05-convenciones.md`](05-convenciones.md) | dudes de naming, estilo, DTOs, DI o migraciones |
 | [`06-estado-y-roadmap.md`](06-estado-y-roadmap.md) | vayas a empezar a trabajar: qué está hecho y qué sigue |
 | [`07-decisiones-en-el-codigo.md`](07-decisiones-en-el-codigo.md) | **vayas a tocar un archivo**: busca su ruta y mira qué no debes romper sin querer |
+| [`08-mapa-de-endpoints.md`](08-mapa-de-endpoints.md) | necesites saber **qué hace un endpoint** o por dónde pasa una petición: la lista completa, el pipeline, el ciclo de vida de una orden y un recorrido de humo en 6 comandos |
 
 El `07` es la contrapartida de haber limpiado los comentarios: el código se quedó con el
 porqué en una línea y el desarrollo —la medición, la alternativa descartada, el bug que lo

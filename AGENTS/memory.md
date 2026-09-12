@@ -422,6 +422,7 @@ Para que no vuelva a pasar, cada dato tiene **un solo dueño**:
 | Dato | Dueño |
 |---|---|
 | Arquitectura, convenciones, trampas, comandos | `CLAUDE.md` |
+| Qué hace cada endpoint y por dónde pasa una petición | `docs/08-mapa-de-endpoints.md` |
 | Las reglas duras, en su forma larga | `rules.md` |
 | El razonamiento de diseño (por qué composición, por qué no `virtual`…) | `docs/01`–`05` |
 | Qué está hecho y qué falta | `docs/06` + `progress.md` |

@@ -36,6 +36,7 @@ de dominio en inglés (viajan al cliente); mensajes de commit en español.
 | `AGENTS/memory.md` | punto de continuación, trampas, decisiones que esperan al owner | **primero, siempre** |
 | `AGENTS/rules.md` | las reglas duras, en su forma larga y con su porqué | antes de tocar código |
 | `AGENTS/docs/` | lineamientos de arquitectura (**mandan** sobre el código) | según la tarea; índice en `docs/README.md` |
+| `AGENTS/docs/08-mapa-de-endpoints.md` | qué hace cada endpoint y por dónde pasa una petición (**descriptivo**: si discrepa del código, se corrige él) | para orientarte rápido, o antes de tocar un controller |
 | `AGENTS/progress.md` | bitácora: qué se hizo, cómo se verificó | para saber por qué algo está así |
 | `AGENTS/planning/NN_*.md` | el checklist técnico de cada tarea, con lo que quedó abierto | al retomar una tarea |
 | `AGENTS/features/NN_*.feature` | el contrato Gherkin de cada tarea | al escribir tests |
