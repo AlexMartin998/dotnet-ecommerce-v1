@@ -4,7 +4,8 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-07** (limpieza de comentarios y la revisión prod-ready que destapó cinco P0).
+Última actualización: **2026-09-12** (verificación del estado: build a 0 warnings tras sacar
+un `IEventOutbox` que `planning/22` dejó sin usar, y 318/318 tests).
 
 ---
 
@@ -33,6 +34,7 @@
 | 19 | Errores bajo carga | ✅ | [`planning/19`](planning/19_errores-bajo-carga.md) | `347f901` |
 | 20 | **Órdenes y comprobante en PDF** | ✅ | [`features/20`](features/20_ordenes-y-comprobante.feature) · [`planning/20`](planning/20_ordenes-y-comprobante.md) | `7df6df0` |
 | 21 | Recuperar de la DLQ y recoger basura | ✅ | [`features/21`](features/21_recuperar-comprobantes-y-recoger-basura.feature) · [`planning/21`](planning/21_recuperar-comprobantes-y-recoger-basura.md) | — |
+| 22 | **Pagos (Stripe) y el ciclo de vida de la orden** | ✅ ⚠️ camino feliz contra Stripe **sin verificar**: necesita `sk_test_…` y URL pública | [`features/22`](features/22_pagos.feature) · [`planning/22`](planning/22_pagos.md) | `3769e99` |
 
 **Ya no queda ningún ⚠️.** El 09 se cerró el 2026-09-05 contra un RabbitMQ real, y esa
 verificación destapó un bug que el build y el smoke test no veían (abajo).
@@ -40,6 +42,28 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 ---
 
 ## 2. Bitácora
+
+### 2026-09-12 — Verificar el estado, y el warning que decía que no era verdad
+
+Sesión de estado, no de feature. Lo único que se tocó de código es una línea, y esa línea
+dice algo sobre el proceso:
+
+- **`OrderService` seguía recibiendo `IEventOutbox`** después de que `planning/22` dejara de
+  emitir `order.placed`. Warning **CS9113** (`Parameter 'outbox' is unread`), o sea que el
+  build **no** estaba a 0 warnings aunque el commit anterior lo afirmara.
+- ⚠️ **Por qué nadie lo vio**: `-warnaserror` **no está en el `.csproj`**. Es un flag que
+  solo pone la CI, y la CI está desactivada desde el 2026-09-07. Un `dotnet build` normal
+  imprime el warning y sigue con `Build succeeded`. La regla de «0 warnings» lleva desde
+  entonces sostenida por que alguien mire la salida.
+- Fuera la dependencia y los dos `using` que quedaban colgando de ella.
+
+**Medido**: `dotnet build -warnaserror` → 0 warnings; `dotnet test` → **318/318** en ~16 s
+contra SQL Server, Redis y RabbitMQ reales. Las dos direcciones de la infra responden
+(`192.168.3.82` y `172.17.0.1`, los seis puertos).
+
+Y se corrigió el punto de continuación de `memory.md`, que decía que **`Payments` no
+existía** y daba 274 tests: ese archivo se lee al empezar **toda** sesión, así que una
+afirmación falsa ahí contamina todas a la vez.
 
 ### 2026-09-07 — Pagos: quinto contexto acotado, y la orden deja de nacer pagada
 
@@ -1127,19 +1151,25 @@ Docker en el dev container, los ejecuta el owner en el host.
 
 ## 4. Pendientes, en orden
 
-1. **Tests** ([`planning/11`](planning/11_proyecto-de-tests.md)) — fases 1–5 hechas
-   (153 tests). Falta la **fase 6, CI**: hoy nada corre `dotnet build` ni `dotnet test`
-   antes de un merge, así que la red existe pero nadie la obliga a estar tendida.
-   Pendiente también migrar la fase 3 a Testcontainers **en el runner**, donde sí hay
-   Docker.
-2. **Deuda de la revisión** ([`planning/12`](planning/12_deuda-revision-multiagente.md)) —
-   reintentos del consumidor sin contador real, outbox sin claim para multi-réplica, purga
-   de tablas, `ETag`/`If-Match`, hash del cuerpo en la clave de idempotencia.
-3. **Refresh tokens** ([`planning/13`](planning/13_refresh-tokens.md)).
-4. **Administración de usuarios** ([`planning/14`](planning/14_admin-usuarios.md)) — hoy el
-   único camino para tener un admin es el seeder.
-5. **Partir en proyectos** ([`planning/15`](planning/15_partir-en-proyectos.md)) —
-   diferido a propósito: hacerlo antes de que el proyecto lo pida solo añade fricción.
+Ningún paso del roadmap está abierto salvo el 15. Lo que queda es **dominio, verificación
+que necesita credenciales del owner, y deuda menor** (`docs/06` §Paso 12).
+
+1. 🔴 **Cobro real contra Stripe, sin verificar.** Está probado el 503 sin pasarela, el 503
+   de pasarela caída y la verificación de firma (firmando a mano con el mismo esquema).
+   Falta el camino feliz entregado por Stripe: `sk_test_…` + `whsec_…` en user-secrets y una
+   URL pública (`stripe listen --forward-to localhost:8021/api/v1/payment/webhook/stripe`).
+2. **CI** ([`planning/11`](planning/11_proyecto-de-tests.md) fase 6) — **escrita y
+   desactivada** en `AGENTS/ci/ci.yml.disabled`: nunca ha corrido, porque el PAT del remoto
+   no tiene scope `workflow`. Es lo que habría cazado el CS9113 de esta sesión: `-warnaserror`
+   solo lo pone la CI, y sin CI la regla de «0 warnings» depende de que alguien mire.
+   Mientras no haya remoto por SSH, lo barato es meter `-warnaserror` en el `.csproj`.
+3. **`Shipping`** — el sexto y último contexto acotado previsto, y lo único grande que falta
+   de dominio. De paso le daría consumidor a `order.placed`, que hoy no se emite porque
+   publicar sin cola vuelve como 312 NO_ROUTE.
+4. **Deuda menor anotada** — `docs/06` §Paso 12. Lo más caro de ahí es `DateTime.Now` → UTC
+   (entidades, DTOs y datos, todo a la vez) y que **nadie alerta cuando la DLQ crece**.
+5. **Partir en proyectos** ([`planning/15`](planning/15_partir-en-proyectos.md)) — diferido
+   a propósito: hacerlo antes de que el proyecto lo pida solo añade fricción.
 
 ---
 

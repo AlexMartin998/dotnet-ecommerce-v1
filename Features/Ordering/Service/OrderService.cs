@@ -1,12 +1,10 @@
 using ApiEcommerce.Exceptions;
 using ApiEcommerce.Features.Ordering.Dtos;
-using ApiEcommerce.Features.Ordering.Events;
 using ApiEcommerce.Features.Ordering.Models;
 using ApiEcommerce.Features.Ordering.Ports;
 using ApiEcommerce.Features.Ordering.Repository;
 using ApiEcommerce.Shared.Documents;
 using ApiEcommerce.Shared.Idempotency;
-using ApiEcommerce.Shared.Messaging;
 using ApiEcommerce.Shared.Paging;
 
 namespace ApiEcommerce.Features.Ordering.Service;
@@ -17,7 +15,6 @@ public sealed class OrderService(
     IOrderRepository repository,
     ICatalogGateway catalog,
     IDocumentStore documents,
-    IEventOutbox outbox,
     IIdempotentCommandRunner runner,
     ILogger<OrderService> logger) : IOrderService
 {

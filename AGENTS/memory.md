@@ -7,12 +7,40 @@
 
 ---
 
-## 0. 🔖 Punto de continuación — **última sesión: 2026-09-07**
+## 0. 🔖 Punto de continuación — **última sesión: 2026-09-12**
 
 **Todo lo commiteado está en `dev`, árbol limpio, SIN push.** El agente commitea pero
 nunca hace push (`rules.md` §12).
 
-### Qué se hizo en la última sesión
+### Estado medido hoy (2026-09-12)
+
+`dotnet build -warnaserror` **limpio** y **318/318 tests** en verde (~16 s) contra SQL
+Server, Redis y RabbitMQ reales. Las dos direcciones de la infra responden: `192.168.3.82`
+(LAN del host, confirmada por el owner) y `172.17.0.1` (puerta del bridge, la que usan los
+tests por defecto).
+
+⚠️ Al verificar apareció un residuo de `planning/22`: `OrderService` seguía recibiendo
+`IEventOutbox` después de que colocar una orden dejara de emitir evento → **warning CS9113**,
+o sea el build **no** estaba a 0 warnings aunque el commit dijera que sí. El `-warnaserror`
+**no está en el `.csproj`**: es un flag que solo pone la CI, y la CI está desactivada. Por eso
+no lo cazó nadie. Arreglado (dependencia fuera).
+
+### Qué se hizo en la sesión del 2026-09-07 (los tres últimos commits)
+
+- **`planning/22` — Pagos, quinto contexto acotado** (`Features/Payments/`). La orden
+  **nace `Placed`**, no `Paid`: el único que la mueve es un cobro capturado por la pasarela.
+  Stripe de verdad detrás de `IPaymentGateway`, con **Strategy + factory** porque aquí quien
+  elige proveedor es **el comprador en cada petición** — la única excepción consciente a «la
+  implementación se elige en el composition root». El comprobante se muda de `order.placed`
+  a `order.paid`, y **colocar una orden ya no emite ningún evento**.
+  `AbandonedOrderCleaner` devuelve el stock de lo que nadie paga en `ReservationMinutes`.
+- **Los menores de la revisión** (`164b99f`): `PeriodicBackgroundService` (el bucle estaba
+  copiado cuatro veces), `CacheKeys` → `CatalogCacheKeys` con tres miembros muertos fuera,
+  `IdentityMapping` (dos 422 con forma distinta según el endpoint), y seis más.
+- **La envoltura de idempotencia deja de estar copiada** (`f319ec0`): nace
+  `IIdempotentCommandRunner`.
+
+### Qué se hizo antes (sesión del 2026-09-06)
 
 **`planning/20` — órdenes y su comprobante en PDF.** Cuarto contexto acotado
 (`Features/Ordering/`), el primero añadido con el slicing ya asentado: carpeta + una línea
@@ -69,17 +97,30 @@ en `AddFeatures()`, y toda la dependencia hacia `Catalog` en **una** clase (`Cat
 
 ### Por dónde seguir (en este orden)
 
-**El roadmap sigue sin pendientes salvo el 15, diferido a propósito**, y `planning/21` cerró
-las dos deudas que dejaba `planning/20` (recuperar desde la DLQ y recoger huérfanos). Lo que
-queda son deudas menores, todas en `docs/06` §Paso 12:
+**El roadmap no tiene ningún paso abierto salvo el 15, diferido a propósito.** Lo que queda
+NO es infraestructura: es dominio, verificación que necesita credenciales del owner, y las
+deudas menores anotadas en `docs/06` §Paso 12.
 
-1. **Deuda menor viva**: `planning/13` (la cookie es una decisión para SPA: un cliente móvil
+1. 🔴 **Lo que no se puede verificar aquí y bloquea a `Payments`**: el camino feliz contra
+   Stripe de verdad. Necesita una `sk_test_…` en user-secrets
+   (`Payments:Stripe:SecretKey` + `Payments:Stripe:WebhookSecret`, **las dos o ninguna**) y
+   una URL pública para el webhook (`stripe listen --forward-to
+   localhost:8021/api/v1/payment/webhook/stripe` da las dos cosas: túnel y `whsec_…`).
+   Hoy está probado el 503 sin pasarela, el 503 de pasarela caída y la **verificación de
+   firma** firmando a mano; **no** un cobro real entregado por Stripe.
+2. **Activar la CI, que es lo que habría cazado el CS9113 de arriba.** El pipeline vive en
+   `AGENTS/ci/ci.yml.disabled` y nunca ha corrido. Alternativa barata mientras no haya
+   remoto por SSH: meter `-warnaserror` en el `.csproj`, para que la regla de «0 warnings»
+   la obligue el build y no la buena memoria de quien commitea.
+3. **`Shipping`, el sexto y último contexto previsto.** Es lo único grande que falta de
+   dominio, y de paso le daría consumidor a `order.placed`, que hoy no se emite porque nadie
+   lo escucha. `Ordering` y `Payments` dejaron el molde hecho: carpeta, `Ports/` con su
+   gateway, y una línea en `AddFeatures()`.
+4. **Deuda menor viva**: `planning/13` (la cookie es una decisión para SPA: un cliente móvil
    no está cubierto), `planning/17` §17.4, `planning/19` §19.4 (EF loguea a Error sus fallos
    de conexión — se deja a propósito), `planning/21` §21.6 (nadie **alerta** cuando la DLQ
-   crece: hay que mirar).
-2. **Lo grande que falta es dominio, no infraestructura**: `Payments` y `Shipping` son los
-   contextos acotados previstos y no existen. `Ordering` dejó el molde hecho.
-3. `planning/15` (partir en proyectos) sigue **diferido a propósito**. La señal para
+   crece: hay que mirar), y `DateTime.Now` → UTC, que es una migración de todo a la vez.
+5. `planning/15` (partir en proyectos) sigue **diferido a propósito**. La señal para
    retomarlo está en `docs/06`.
 
 ⚠️ **Colas huérfanas en el broker de desarrollo**: al cambiar `RetryDelaySeconds` quedan
