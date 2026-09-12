@@ -619,6 +619,12 @@ Para toda tarea no trivial: **spec → planning → código**.
   y la configuración mínima.
 - **Revisar siempre la migración generada** antes de aplicarla: EF a veces propone un
   drop/recreate que pierde datos.
+- 🔴 **Las operaciones delicadas sobre la base se PREGUNTAN antes de hacerlas**
+  (`rules.md` §11.1): borrar o renombrar columnas con datos, añadir una FK o un índice único
+  sobre filas que ya existen, hacer `NOT NULL` algo que admitía nulos, o cualquier
+  `UPDATE`/`DELETE` de relleno dentro de una migración. No se pide permiso a secas: se dice
+  **qué deja de ser posible después**. La respuesta depende del entorno —hoy la base es local
+  y de desarrollo—, y por eso la decide el owner.
 - **Para trabajo grande, revisión multiagente** (`rules.md` §9), un agente por eje
   (concurrencia / seguridad / infraestructura) con la instrucción de **verificar
   ejecutando**, no de opinar. Es como se han encontrado los bugs que el build y los tests no

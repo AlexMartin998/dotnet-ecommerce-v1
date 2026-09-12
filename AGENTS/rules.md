@@ -357,6 +357,37 @@ roadmap. Cada `Scenario` debería poder convertirse en un test.
 - **Revisar siempre la migración generada** antes de aplicarla: EF a veces propone un
   drop/recreate que pierde datos.
 
+### 11.1 🔴 Operaciones delicadas sobre la base: se PREGUNTA antes
+
+> Regla del 2026-09-12, a petición del owner.
+
+Hay cambios que no se pueden deshacer con un `git revert` porque **el daño no está en el
+código, está en los datos**. Antes de hacer ninguno de estos, el agente **para y pregunta**,
+aunque sea la forma obviamente correcta de resolver la tarea:
+
+| Operación | Por qué se pregunta |
+|---|---|
+| **Borrar o renombrar una columna o una tabla** con datos | Los datos no vuelven. Un rename mal hecho en EF es drop + create |
+| **Añadir una FK sobre datos existentes** | Puede fallar al aplicar, y a partir de ahí **cambia qué borrados son posibles**: lo que hoy funciona empieza a dar 409 |
+| **Añadir un índice ÚNICO** sobre una columna con valores repetidos | La migración revienta a mitad, o obliga a inventarse valores para las filas que ya están |
+| **Hacer obligatoria (`NOT NULL`) una columna que hoy admite nulos** | Hay que rellenar las filas viejas con algo, y ese «algo» es una decisión de negocio |
+| **Cambiar el tipo o la precisión de una columna de dinero o de fecha** | Trunca en silencio |
+| **Cualquier `UPDATE`/`DELETE` masivo de relleno** dentro de una migración | Es una escritura sobre datos reales disfrazada de esquema |
+| **Cambiar el significado de un estado** de un enum ya persistido | Las filas viejas pasan a decir otra cosa |
+
+**Qué hay que decir al preguntar**, no basta con pedir permiso: qué se va a cambiar, **qué
+deja de ser posible después**, y qué alternativa hay si la respuesta es que no.
+
+⚠️ **La respuesta depende del entorno, y por eso la decide el owner, no el agente.** En este
+repo hoy la base es **local y de desarrollo**, así que estas operaciones son baratas y la
+respuesta suele ser que sí. **El día que exista un despliegue real, la misma pregunta se
+responde distinto**: ahí una FK nueva o un `NOT NULL` sobre datos vivos se hace en varios
+pasos (columna nullable → backfill → constraint), no en una migración.
+
+Lo que **no** hace falta consultar: añadir una tabla nueva, añadir una columna **nullable**,
+añadir un índice **no único**, o cualquier cosa que solo afecte a datos que la propia
+migración crea.
+
 ---
 
 ## 12. Versionado — el agente commitea, **nunca** hace push
