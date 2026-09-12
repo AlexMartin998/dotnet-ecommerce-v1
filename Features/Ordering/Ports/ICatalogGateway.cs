@@ -22,6 +22,17 @@ public interface ICatalogGateway
   /// <returns><c>null</c> si el SKU no existe o no hay stock suficiente.</returns>
   Task<OrderableItem?> TryTakeAsync(string sku, int quantity, CancellationToken ct = default);
 
+  /// <summary>
+  /// Mira qué se vende bajo ese SKU y cuánto queda, <b>sin apartar nada</b>.
+  /// </summary>
+  /// <remarks>
+  /// Es lo contrario de <see cref="TryTakeAsync"/> y por eso es un método aparte: cotizar un
+  /// carrito que apartara stock dejaría el catálogo a cero con los carritos abandonados.
+  /// Lo que devuelve es una foto, no una reserva.
+  /// </remarks>
+  /// <returns><c>null</c> si el SKU no existe.</returns>
+  Task<QuotableItem?> PeekAsync(string sku, CancellationToken ct = default);
+
   /// <summary>Devuelve al catálogo lo que una orden había apartado.</summary>
   /// <remarks>
   /// Se identifica por id de producto y no por SKU: el SKU pudo cambiar desde la compra, y
@@ -37,3 +48,13 @@ public interface ICatalogGateway
 /// <param name="Name">Nombre tal y como estaba.</param>
 /// <param name="UnitPrice">Precio tal y como estaba.</param>
 public readonly record struct OrderableItem(int ProductId, string Sku, string Name, decimal UnitPrice);
+
+
+/// <summary>Lo que la cotización enseña de un artículo, sin comprometerlo.</summary>
+/// <param name="ProductId">Id en el catálogo.</param>
+/// <param name="Sku">SKU tal y como está ahora.</param>
+/// <param name="Name">Nombre tal y como está ahora.</param>
+/// <param name="UnitPrice">Precio de hoy, que puede cambiar antes de comprar.</param>
+/// <param name="Stock">Unidades disponibles en este instante.</param>
+public readonly record struct QuotableItem(
+    int ProductId, string Sku, string Name, decimal UnitPrice, int Stock);

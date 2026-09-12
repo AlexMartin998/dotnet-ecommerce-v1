@@ -25,6 +25,15 @@ public sealed class CatalogGateway(IProductRepository products) : ICatalogGatewa
     return new OrderableItem(product.Id, product.SKU, product.Name, product.Price);
   }
 
+  public async Task<QuotableItem?> PeekAsync(string sku, CancellationToken ct = default)
+  {
+    var product = await products.GetBySkuAsync(sku, ct);
+
+    return product is null
+        ? null
+        : new QuotableItem(product.Id, product.SKU, product.Name, product.Price, product.Stock);
+  }
+
   public Task ReturnAsync(int productId, int quantity, CancellationToken ct = default)
       => products.IncrementStockAsync(productId, quantity, ct);
 }

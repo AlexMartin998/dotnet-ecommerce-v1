@@ -774,6 +774,13 @@ Comprobación de unicidad genérica por nombre de campo, resuelta con reflexión
 - **`[MapperIgnoreSource]` sobre `CreatedAt`/`UpdatedAt` lo pidió el compilador**, no el estilo: `CategoryDto` no expone auditoría (a diferencia de `ProductDto`), y eso son dos **RMG020** en el primer build. Con `-warnaserror`, errores. Es el aviso que AutoMapper solo daba al ejecutar `AssertConfigurationIsValid()` en un test.
 - **Se recorta al escribir**: sin normalizar, `" Bebidas"` y `"Bebidas"` conviven pese al índice único, y compararlos obliga a envolver la columna en `TRIM()`, que anula ese mismo índice.
 
+### Los tres `/stats` (`order`, `product`, `user`)
+
+- **No hay un `/admin/dashboard` único, y es deliberado.** Un solo endpoint con órdenes, productos y usuarios obligaría a un slice a conocer a los otros tres, o a inventar un sexto contexto cuyo único dominio es *una pantalla*. Cada contexto publica los suyos y el panel compone con tres llamadas en paralelo, que para algo que se refresca cada 30 s no cuesta nada.
+- **`lowStock` excluye el 0.** Mezclar lo agotado con lo escaso hace que el panel pida reponer lo que ya no se puede vender, y esconde cuánto se está perdiendo por rotura de stock. Es el mismo 🩹 que el proyecto de origen marcaba en su dashboard.
+- **`OrderService.GetStatsAsync` rellena con 0 los estados sin filas:** un `GROUP BY` no devuelve la clave que no existe, y un hueco en el panel se lee como un fallo.
+- **Se cuenta en SQL, nunca trayendo filas** (`CountStockAsync` hace los tres `COUNT` condicionales en una sola agregación). Contar en memoria funciona hasta que el catálogo crece.
+
 ### `Features/Catalog/Models/Category.cs`
 
 - **El índice único en BD es la ÚNICA garantía real de unicidad.** `CategoryRules` comprueba el nombre antes de escribir, pero entre esa comprobación y el INSERT cabe otra petición: dos POST simultáneos con el mismo nombre pasaban los dos. La regla sigue existiendo porque da un 409 con mensaje útil en el caso normal; el índice es la red que atrapa la carrera.
@@ -788,6 +795,28 @@ Comprobación de unicidad genérica por nombre de campo, resuelta con reflexión
 - **La navegación es opcional en C# (`Category?`) a propósito:** la relación sigue siendo obligatoria en la base porque `CategoryId` es `int` no-nullable, pero dejarla como `required Category` impedía que el mapeador construyera un `Product` desde `CreateProductDto` (`AGENTS/docs/05-convenciones.md` → Mapping).
 - Referencia que estaba enlazada en el archivo: <https://learn.microsoft.com/es-mx/ef/core/modeling/relationships>
 - `SKU` = Stock Keeping Unit, con formato tipo `PROD-001-BLK-M`.
+
+### `Features/Ordering/Service/OrderPricing.cs`
+
+- **Existe por un bug ajeno que no queríamos heredar.** En el proyecto del que se trajo la feature, el impuesto se calculaba en el cliente (0.15) y en el servidor (0.12) y se comparaban los totales con igualdad exacta de floats: sin la variable de entorno, *todas* las órdenes fallaban. Aquí la cotización y el checkout llaman a la misma función, así que no pueden divergir.
+- **Devuelve el desglose completo aunque hoy todo sea cero**: el día que entren impuestos o portes, el sitio donde ponerlos es este archivo y ninguno más.
+
+### `Features/Ordering/Service/CartService.cs`
+
+- **Cotizar usa `PeekAsync` y nunca `TryTakeAsync`:** son operaciones opuestas. Apartar es correcto al comprar y veneno al cotizar — un carrito abandonado dejaría el catálogo a cero.
+- **Una línea sin stock devuelve 200 y no 409**, al revés que `POST /order`. La diferencia es el caso de uso: el front tiene que **enseñar** «solo quedan 2» y dejar ajustar la cantidad; un 409 deja el carrito inservible. El que rechaza es el checkout.
+- **El total solo suma las líneas servibles.** Incluir lo que no hay sería el peor total posible: el cliente vería un importe que nunca va a poder pagar.
+- **Los SKU repetidos se agrupan igual que en `OrderService.BuildAsync`.** Si las dos reglas se separan, el mismo carrito sale con distinto número de líneas en la cotización y en la orden.
+- **`MaxQuantity` es el mínimo entre el stock y el tope del DTO**, no el stock a secas: es lo que el front debe dejar pedir, y por encima del tope la petición sería un 422.
+
+### `Features/Ordering/Service/OrderFulfillment.cs`
+
+- **El diccionario va de DESTINO a origen, no al revés.** El cliente manda a dónde quiere llegar y el servidor decide desde dónde se llega: si el origen viniera en la petición, un administrador podría saltarse un paso pidiendo `delivered` desde `paid`.
+- **Cancelar y reembolsar no están aquí a propósito.** Cancelar una orden pagada exige devolver el dinero, y cancelar una sin pagar ya tiene dueño (`AbandonedOrderCleaner`, que devuelve el stock en la misma transacción que la transición). Es la deuda que `docs/06` §Paso 12 ya registra.
+
+### `Features/Ordering/Controllers/CartController.cs`
+
+- **`[AllowAnonymous]` es la decisión de producto, no un descuido:** el carrito existe antes que la sesión, y pedir la cuenta para ver el precio de lo que ya se está mirando pone la cuenta por delante del producto. No expone nada que `GET /product` no exponga ya.
 
 ### `Features/Catalog/Events/ProductPurchased.cs`
 

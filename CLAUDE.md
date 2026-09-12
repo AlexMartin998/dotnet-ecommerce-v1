@@ -294,10 +294,11 @@ Rutas **versionadas por segmento**: `[Route("api/v{version:apiVersion}/[controll
 | Controller | Endpoints |
 |---|---|
 | `CategoryController` | CRUD + `/paged`. Lecturas anónimas, escrituras `admin` |
-| `ProductController` | CRUD + `/paged` + `/category/{id}` + `/search` + `/{id}/image` + **`POST /buy`** |
+| `ProductController` | CRUD + `/paged` + `/category/{id}` + `/search` + `/{id}/image` + `GET /stats` (`admin`) + **`POST /buy`** |
 | `AuthController` | `register`, `login`, `refresh`, `logout`, `logout-all`, `password`, `me` |
-| `UserController` | listado, detalle, roles, bloqueo — todo `admin` |
-| `OrderController` | `POST /order`, `GET /{id}`, `GET /paged`, **`GET /{id}/receipt`** (PDF), `GET /all` (`admin`) |
+| `UserController` | listado, detalle, roles, bloqueo, `GET /stats` — todo `admin` |
+| `CartController` | **`POST /cart/quote`** — cotiza el carrito. **Anónimo**: existe antes que la sesión |
+| `OrderController` | `POST /order`, `GET /{id}`, `GET /paged`, **`GET /{id}/receipt`** (PDF), `GET /all` + `GET /stats` + **`PATCH /{id}/status`** (`admin`) |
 | `PaymentController` | `POST /payment`, `GET /{id}`, `GET /paged`, `GET /all` (`admin`) |
 | `PaymentWebhookController` | `POST /payment/webhook/{provider}` — **anónimo: la firma es la autenticación** |
 | `DeadLetterController` | `GET /dead-letter`, `POST /{queue}/replay` — solo `admin` |
@@ -312,6 +313,19 @@ Rutas **versionadas por segmento**: `[Route("api/v{version:apiVersion}/[controll
   (`HttpContext.ApiVersionValue()`), o el `Location` falla con un 500 sin relación.
 - Swagger genera **un documento por versión descubierta**, así que añadir una v2 no toca
   `Program.cs`.
+
+⚠️ **Cotizar no aparta stock y no obliga a nada.** `POST /cart/quote` es una foto: entre
+cotizarlo y comprarlo el precio y el stock pueden cambiar, y manda el checkout. Una línea sin
+stock vuelve **marcada dentro de un 200**, no como 409 — el front tiene que poder enseñar
+«solo quedan 2».
+⚠️ **El desglose lo calcula UNA pieza** (`OrderPricing`), que usan la cotización y
+`OrderService`. Calcularlo en los dos sitios es cómo se acaba cobrando un total distinto del
+que el cliente vio; es el bug conocido del proyecto del que se trajo esta feature.
+⚠️ **`PATCH /order/{id}/status` no lleva `Idempotency-Key`, y es correcto**: la transición es
+un UPDATE condicional (`WHERE Status = @origen`), así que reenviarla no repite nada. 0 filas
+→ se relee: si ya estaba en el destino es un reenvío (**204**), si no, **409
+`invalid_transition`**. Solo `paid → preparing → shipped → delivered`; cancelar y reembolsar
+quedan fuera porque devolver dinero y stock tiene sus propias invariantes.
 
 **`POST /product/buy` y `POST /order` conviven a propósito**: el primero es una operación de
 *catálogo* que solo mueve el stock y no deja rastro; el segundo es el checkout de

@@ -72,6 +72,18 @@ public class ProductController : ControllerBase
         return Ok(product);
     }
 
+    /// <summary>Contadores del catálogo. Solo administración.</summary>
+    /// <remarks>
+    /// Cada contexto publica los suyos: el panel compone con tres llamadas en paralelo.
+    /// </remarks>
+    [Authorize(Roles = Roles.Admin)]
+    [HttpGet("stats", Name = "GetProductStats")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<ProductStatsDto>> GetProductStats(CancellationToken ct)
+        => Ok(await _service.GetStatsAsync(ct));
+
     [Authorize(Roles = Roles.Admin)]
     [HttpPost(Name = "CreateProduct")]
     [ProducesResponseType(StatusCodes.Status201Created)]

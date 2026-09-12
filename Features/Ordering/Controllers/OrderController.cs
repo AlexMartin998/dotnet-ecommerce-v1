@@ -112,6 +112,43 @@ public class OrderController : ControllerBase
         return Ok(await _service.GetPagedForAdminAsync(query, number, ct));
     }
 
+    /// <summary>Contadores de órdenes por estado. Solo administración.</summary>
+    /// <remarks>
+    /// Cada contexto publica los suyos: el panel hace tres llamadas en paralelo en vez de
+    /// obligar a un slice a conocer el catálogo y los usuarios.
+    /// </remarks>
+    [Authorize(Roles = Roles.Admin)]
+    [HttpGet("stats", Name = "GetOrderStats")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<OrderStatsDto>> GetOrderStats(CancellationToken ct)
+        => Ok(await _service.GetStatsAsync(ct));
+
+    /// <summary>Mueve una orden por su ciclo de entrega. Solo administración.</summary>
+    /// <remarks>
+    /// Sin <c>Idempotency-Key</c> a propósito: la transición es un UPDATE condicional, así
+    /// que repetirla no repite nada y devuelve 204 igual.
+    /// </remarks>
+    [Authorize(Roles = Roles.Admin)]
+    [HttpPatch("{id:int}/status", Name = "UpdateOrderStatus")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> UpdateOrderStatus(
+        int id, [FromBody] UpdateOrderStatusDto dto, CancellationToken ct)
+    {
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        await _service.AdvanceAsync(id, dto, ct);
+
+        return NoContent();
+    }
+
     /// <summary>Descarga el comprobante en PDF.</summary>
     /// <remarks>
     /// El PDF se sirve por aquí y no como estático, con tres barreras: vive fuera de

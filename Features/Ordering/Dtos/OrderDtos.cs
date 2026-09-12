@@ -41,6 +41,36 @@ public class PlaceOrderDto
 }
 
 
+/// <summary>El estado al que un administrador quiere mover una orden.</summary>
+/// <remarks>
+/// Es el destino, no el origen: desde dónde se llega lo decide el servidor
+/// (<see cref="Service.OrderFulfillment"/>), o el cliente podría saltarse un paso.
+/// </remarks>
+public class UpdateOrderStatusDto
+{
+  [Required]
+  [MaxLength(20)]
+  public string Status { get; set; } = string.Empty;
+}
+
+
+/// <summary>Cuántas órdenes hay en cada estado. Para el panel de administración.</summary>
+/// <remarks>
+/// Solo contadores de ESTE contexto: un único endpoint con los del catálogo y los de
+/// usuarios obligaría a un slice a conocer a los otros.
+/// </remarks>
+public class OrderStatsDto
+{
+  public int Total { get; set; }
+  public int Placed { get; set; }
+  public int Paid { get; set; }
+  public int Preparing { get; set; }
+  public int Shipped { get; set; }
+  public int Delivered { get; set; }
+  public int Cancelled { get; set; }
+}
+
+
 /// <summary>Una línea, ya con el precio congelado.</summary>
 public class OrderItemDto
 {

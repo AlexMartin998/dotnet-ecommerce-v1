@@ -46,4 +46,7 @@ public interface IUserAdminService
 
   /// <summary>Levanta el bloqueo.</summary>
   Task UnlockAsync(string userId, string actingAdminId, CancellationToken ct = default);
+
+  /// <summary>Contadores de usuarios para el panel.</summary>
+  Task<UserStatsDto> GetStatsAsync(CancellationToken ct = default);
 }

@@ -4,8 +4,8 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-12** (fuera AutoMapper: el mapeo pasa a un source generator,
-322/322 tests y build a 0 warnings).
+Última actualización: **2026-09-12** (paridad de negocio con una tienda real: cotizar el
+carrito, mover la orden y los contadores del panel. 359/359 tests).
 
 ---
 
@@ -36,6 +36,7 @@
 | 21 | Recuperar de la DLQ y recoger basura | ✅ | [`features/21`](features/21_recuperar-comprobantes-y-recoger-basura.feature) · [`planning/21`](planning/21_recuperar-comprobantes-y-recoger-basura.md) | — |
 | 22 | **Pagos (Stripe) y el ciclo de vida de la orden** | ✅ ⚠️ camino feliz contra Stripe **sin verificar**: necesita `sk_test_…` y URL pública | [`features/22`](features/22_pagos.feature) · [`planning/22`](planning/22_pagos.md) | `3769e99` |
 | 23 | Salir de AutoMapper (`Riok.Mapperly`) | ✅ | [`planning/23`](planning/23_mapeador-sin-licencia.md) | — |
+| 24 | **Paridad con TesloShop**: carrito, fulfillment y contadores | ✅ pasos 1–3; 4–6 abiertos | [`features/24`](features/24_carrito-y-fulfillment.feature) · [`planning/24`](planning/24_paridad-con-tesloshop.md) | — |
 
 **Ya no queda ningún ⚠️.** El 09 se cerró el 2026-09-05 contra un RabbitMQ real, y esa
 verificación destapó un bug que el build y el smoke test no veían (abajo).
@@ -43,6 +44,72 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 ---
 
 ## 2. Bitácora
+
+### 2026-09-12 — Lo que le falta a este backend para ser una tienda de verdad
+
+`planning/24`. Comparación contra un e-commerce Next.js con panel de administración
+(TesloShop) y su documento de migración a API separada. El diagnóstico cabe en una línea:
+**las garantías sobran, falta superficie de tienda.** Todo lo que aquel pone como objetivo
+difícil —reserva de stock en transacción, idempotencia, estados condicionales, jobs— aquí
+estaba hecho y medido. Lo que faltaba eran endpoints que cualquier front da por sentados.
+
+**1. `POST /cart/quote`, y la pieza que lo hace seguro.** El bug nº4 de aquel proyecto es el
+impuesto calculado en **dos sitios** (0.15 en el cliente, 0.12 en el servidor, comparados con
+igualdad exacta de floats). Escribir la cotización con su propio cálculo habría reproducido
+ese bug **dentro de este repo**, así que primero nace `OrderPricing`: una función pura que
+usan la cotización y `OrderService.BuildAsync`. Hay un test que compara los dos totales; si
+alguien añade el IVA en un solo sitio, cae.
+
+- ⚠️ **Cotizar no aparta stock**: `TryTakeAsync` reserva —correcto al comprar, veneno al
+  cotizar— así que el puerto gana `PeekAsync`, de solo lectura. Medido: cotizar 5 de 5 dos
+  veces deja el stock en 5.
+- ⚠️ **Una línea sin stock es 200 con la línea marcada, no 409.** Diferencia deliberada con
+  `POST /order`: el front tiene que poder enseñar «solo quedan 2». El que rechaza es el
+  checkout.
+- **Anónimo**: el carrito existe antes que la sesión.
+
+**2. `PATCH /order/{id}/status`, y tres estados que llevaban meses muertos.** `Preparing`,
+`Shipped` y `Delivered` estaban en el enum y **ningún camino llegaba a ellos**: una orden
+tocaba `paid` y se quedaba ahí para siempre. Es el mismo defecto que `ReceiptStatus.Failed`
+antes de `OnExhaustedAsync` — un estado inalcanzable es un enum que miente.
+
+- **Sin `Idempotency-Key`, y es lo correcto**: la transición es un UPDATE condicional, así que
+  reenviarla no repite nada. 0 filas → se relee: ya estaba en el destino → **204**; venía de
+  otro estado → **409 `invalid_transition`**.
+- **El origen lo pone el servidor**, no la petición: si viniera del cliente se podría saltar
+  un paso pidiendo `delivered` desde `paid`.
+- ⚠️ **No emite ningún evento**, por la misma razón que colocar una orden: nadie consume
+  `order.shipped` y publicar sin cola vuelve como 312 NO_ROUTE.
+- **Cancelar y reembolsar quedan fuera a propósito** (deuda ya registrada en `docs/06`).
+
+**3. Contadores del panel, uno por contexto.** ⚠️ Aquí se **rechaza** el diseño del documento
+de origen: un `GET /admin/dashboard` único obligaría a un slice a conocer a otros tres, o a
+inventar un sexto contexto cuyo dominio es *una pantalla*. Cada contexto publica los suyos
+(`/order/stats`, `/product/stats`, `/user/stats`) y el panel compone con tres llamadas en
+paralelo. `lowStock` **excluye el 0**: mezclarlo con lo agotado hace que el panel pida
+reponer lo que ya no se puede vender.
+
+**Verificado ejecutando**, contra SQL Server y Redis reales:
+
+| Prueba | Resultado |
+|---|---|
+| Cotizar 5 de 5, dos veces | stock **sigue en 5** |
+| Cotizar 10 de 5 + un SKU inexistente | 200, `insufficient_stock` / `not_found`, total **0** |
+| Cotizar y comprar el mismo carrito | **59.97 = 59.97** |
+| `placed → preparing` | **409 `invalid_transition`** |
+| destino `paid` | **400** enumerando `preparing, shipped, delivered` |
+| **8 administradores simultáneos** sobre la misma transición | **8×204**, estado final `preparing`, una sola escritura |
+| `preparing → shipped → delivered`, y repetir | 204, 204, y **409** (entregada es final) |
+| Los tres `/stats` con un usuario sin rol | **403, 403, 403** |
+
+Suite **359/359** (+37), build limpio con `-warnaserror`.
+
+⚠️ **Lo que queda de esa comparación** (pasos 4–6 de `planning/24`): el catálogo no tiene
+`slug`, ni varias imágenes, ni tallas, ni tags, ni borrado lógico; la dirección de envío es un
+`string(500)`; y falta PayPal. Sobre PayPal hay un hallazgo: `IPaymentGateway` tiene
+`CreateIntentAsync` y `ParseEvent`, o sea que **está hecho a la medida del modelo de Stripe**
+—crear, confirmar, webhook— y PayPal necesita un tercer paso, **capturar desde el servidor**,
+que hoy no cabe en el puerto.
 
 ### 2026-09-12 — Fuera AutoMapper: el mapeo se comprueba al compilar
 
@@ -1234,15 +1301,18 @@ que necesita credenciales del owner, y deuda menor** (`docs/06` §Paso 12).
    no tiene scope `workflow`. Es lo que habría cazado el CS9113 de esta sesión: `-warnaserror`
    solo lo pone la CI, y sin CI la regla de «0 warnings» depende de que alguien mire.
    Mientras no haya remoto por SSH, lo barato es meter `-warnaserror` en el `.csproj`.
-3. **`Shipping`** — el sexto y último contexto acotado previsto, y lo único grande que falta
+3. **Paridad con una tienda real**, pasos 4–6 de [`planning/24`](planning/24_paridad-con-tesloshop.md):
+   catálogo de tienda (`slug`, varias imágenes, tallas, tags, borrado lógico), dirección de
+   envío estructurada, y **PayPal** junto a Stripe (que además trae el reembolso).
+4. **`Shipping`** — el sexto y último contexto acotado previsto, y lo único grande que falta
    de dominio. De paso le daría consumidor a `order.placed`, que hoy no se emite porque
    publicar sin cola vuelve como 312 NO_ROUTE.
-4. **Deuda menor anotada** — `docs/06` §Paso 12. Lo más caro de ahí es `DateTime.Now` → UTC
+5. **Deuda menor anotada** — `docs/06` §Paso 12. Lo más caro de ahí es `DateTime.Now` → UTC
    (entidades, DTOs y datos, todo a la vez) y que **nadie alerta cuando la DLQ crece**.
    ⚠️ Y una que no es de código: **repasar las licencias antes de añadir un paquete**. Ya han
    mordido tres veces (AutoMapper, FluentAssertions, MassTransit); el estado del stack está
    en `notes.md` cap. 44.
-5. **Partir en proyectos** ([`planning/15`](planning/15_partir-en-proyectos.md)) — diferido
+6. **Partir en proyectos** ([`planning/15`](planning/15_partir-en-proyectos.md)) — diferido
    a propósito: hacerlo antes de que el proyecto lo pida solo añade fricción.
 
 ---

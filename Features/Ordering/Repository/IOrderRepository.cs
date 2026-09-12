@@ -55,6 +55,26 @@ public interface IOrderRepository
   /// <returns><c>true</c> si esta llamada fue la que la canceló.</returns>
   Task<bool> TryCancelAsync(int orderId, CancellationToken ct = default);
 
+  /// <summary>Mueve la orden de un estado a otro, y solo desde ese estado.</summary>
+  /// <remarks>
+  /// Misma forma que las dos de arriba y por la misma razón: la condición va dentro del
+  /// UPDATE, así que dos administradores a la vez no pueden saltarse un paso del ciclo.
+  /// </remarks>
+  /// <returns><c>true</c> si esta llamada fue la que la movió.</returns>
+  Task<bool> TryTransitionAsync(
+      int orderId, OrderStatus from, OrderStatus to, CancellationToken ct = default);
+
+  /// <summary>Cuántas órdenes hay en cada estado, en una sola consulta.</summary>
+  /// <remarks>Se cuenta en la base: traer las filas para contarlas no escala con la tabla.</remarks>
+  Task<IReadOnlyDictionary<OrderStatus, int>> CountByStatusAsync(CancellationToken ct = default);
+
+  /// <summary>El estado actual, o <c>null</c> si la orden no existe.</summary>
+  /// <remarks>
+  /// Solo se consulta cuando el UPDATE condicional no movió nada, para distinguir «ya
+  /// estaba ahí» de «venía de otro estado». Nunca para decidir antes de escribir.
+  /// </remarks>
+  Task<OrderStatus?> FindStatusAsync(int orderId, CancellationToken ct = default);
+
   /// <summary>Órdenes que siguen esperando pago desde antes del corte.</summary>
   /// <remarks>Por lotes: el recolector no puede traerse la tabla entera.</remarks>
   Task<IReadOnlyList<Order>> FindAwaitingPaymentBeforeAsync(

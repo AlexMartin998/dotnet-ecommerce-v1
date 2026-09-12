@@ -73,6 +73,26 @@ public class ProductService : IProductService
     return _mapper.ToDto(product);
   }
 
+  /// <summary>Hasta dónde se considera stock bajo.</summary>
+  /// <remarks>
+  /// Constante y no configuración: es un criterio de presentación del panel, no una regla de
+  /// negocio, y hacerlo configurable añade una opción que validar sin que nadie la cambie.
+  /// </remarks>
+  private const int LowStockThreshold = 10;
+
+  public async Task<ProductStatsDto> GetStatsAsync(CancellationToken ct = default)
+  {
+    var (total, outOfStock, lowStock) = await _repository.CountStockAsync(LowStockThreshold, ct);
+
+    return new ProductStatsDto
+    {
+      Total = total,
+      OutOfStock = outOfStock,
+      LowStock = lowStock,
+      LowStockThreshold = LowStockThreshold
+    };
+  }
+
   public Task<int> CreateAsync(CreateProductDto dto, CancellationToken ct = default)
       => _crud.CreateAsync(dto, ct);
 

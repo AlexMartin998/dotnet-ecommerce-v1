@@ -85,6 +85,24 @@ public class ProductRepository(AppDbContext db)
         .FirstOrDefaultAsync(p => p.SKU == normalized, ct);   // usa IX_Products_SKU
   }
 
+  public async Task<(int Total, int OutOfStock, int LowStock)> CountStockAsync(
+      int lowStockThreshold, CancellationToken ct = default)
+  {
+    // Una sola ida a la base: tres COUNT condicionales en la misma agregación.
+    var counts = await Query()
+        .GroupBy(_ => 1)
+        .Select(g => new
+        {
+          Total = g.Count(),
+          OutOfStock = g.Count(p => p.Stock <= 0),
+          LowStock = g.Count(p => p.Stock > 0 && p.Stock <= lowStockThreshold)
+        })
+        .FirstOrDefaultAsync(ct);
+
+    // Catálogo vacío: el GROUP BY no devuelve ninguna fila.
+    return counts is null ? (0, 0, 0) : (counts.Total, counts.OutOfStock, counts.LowStock);
+  }
+
   public async Task<bool> TryDecrementStockAsync(
       int productId, int quantity, CancellationToken ct = default)
   {

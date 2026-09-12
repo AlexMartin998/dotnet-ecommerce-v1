@@ -31,6 +31,9 @@ public static class OrderingExtensions
     // ---- servicios ---------------------------------------------------------
     services.AddScoped<IOrderService, OrderService>();
 
+    // Cotizar el carrito: solo lectura del catálogo, sin reservar nada.
+    services.AddScoped<ICartService, CartService>();
+
     // ---- comprobante -------------------------------------------------------
     AddReceiptRendering(services);
 

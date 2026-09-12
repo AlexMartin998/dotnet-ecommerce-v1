@@ -54,4 +54,18 @@ public interface IOrderService
   /// </exception>
   Task<DocumentContent> GetReceiptAsync(
       int orderId, string buyerUserId, CancellationToken ct = default);
+
+  /// <summary>Mueve una orden por su ciclo de vida de entrega. Solo para administradores.</summary>
+  /// <remarks>
+  /// No hace falta <c>Idempotency-Key</c>: la transición es un UPDATE condicional, así que
+  /// reenviarla no repite nada. Tampoco emite ningún evento — nadie consume
+  /// <c>order.shipped</c> y publicar sin cola que lo acepte agota el outbox en silencio.
+  /// </remarks>
+  /// <exception cref="Exceptions.BadOperationAppException">El destino no es alcanzable.</exception>
+  /// <exception cref="Exceptions.NotFoundAppException">No hay ninguna orden con ese id.</exception>
+  /// <exception cref="Exceptions.ConflictAppException">La orden no venía del estado que ese destino exige.</exception>
+  Task AdvanceAsync(int orderId, UpdateOrderStatusDto dto, CancellationToken ct = default);
+
+  /// <summary>Contadores de órdenes por estado, para el panel. Solo administración.</summary>
+  Task<OrderStatsDto> GetStatsAsync(CancellationToken ct = default);
 }

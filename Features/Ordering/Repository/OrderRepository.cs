@@ -81,24 +81,39 @@ public sealed class OrderRepository(AppDbContext db) : IOrderRepository
   }
 
   public async Task<bool> TryMarkPaidAsync(int orderId, CancellationToken ct = default)
-      => await TryTransitionAsync(orderId, OrderStatus.Paid, ct);
+      => await TryTransitionAsync(orderId, OrderStatus.Placed, OrderStatus.Paid, ct);
 
   public async Task<bool> TryCancelAsync(int orderId, CancellationToken ct = default)
-      => await TryTransitionAsync(orderId, OrderStatus.Cancelled, ct);
+      => await TryTransitionAsync(orderId, OrderStatus.Placed, OrderStatus.Cancelled, ct);
 
-  /// <summary>Mueve la orden desde <c>Placed</c> en una sola sentencia.</summary>
+  public async Task<IReadOnlyDictionary<OrderStatus, int>> CountByStatusAsync(
+      CancellationToken ct = default)
+      => await db.Orders
+          .AsNoTracking()
+          .GroupBy(o => o.Status)
+          .Select(g => new { Status = g.Key, Count = g.Count() })
+          .ToDictionaryAsync(x => x.Status, x => x.Count, ct);
+
+  public async Task<OrderStatus?> FindStatusAsync(int orderId, CancellationToken ct = default)
+      => await db.Orders
+          .AsNoTracking()
+          .Where(o => o.Id == orderId)
+          .Select(o => (OrderStatus?)o.Status)
+          .FirstOrDefaultAsync(ct);
+
+  /// <summary>Mueve la orden en una sola sentencia.</summary>
   /// <remarks>
   /// La condición va DENTRO del UPDATE: leer el estado y escribir después dejaría hueco a
   /// que un webhook y el recolector movieran la misma orden a la vez.
   /// </remarks>
-  private async Task<bool> TryTransitionAsync(
-      int orderId, OrderStatus target, CancellationToken ct)
+  public async Task<bool> TryTransitionAsync(
+      int orderId, OrderStatus from, OrderStatus target, CancellationToken ct = default)
   {
     // Fuera del árbol de expresión: dentro, DateTime.Now se traduciría a GETDATE().
     var now = DateTime.Now;
 
     var affected = await db.Orders
-        .Where(o => o.Id == orderId && o.Status == OrderStatus.Placed)
+        .Where(o => o.Id == orderId && o.Status == from)
         .ExecuteUpdateAsync(setters => setters
             .SetProperty(o => o.Status, target)
             .SetProperty(o => o.UpdatedAt, now), ct);

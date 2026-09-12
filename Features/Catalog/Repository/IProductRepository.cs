@@ -55,6 +55,14 @@ public interface IProductRepository : IBaseRepository<Product>
   /// </remarks>
   Task<bool> TryDecrementStockAsync(int productId, int quantity, CancellationToken ct = default);
 
+  /// <summary>Total de productos, agotados y con stock bajo, en la base.</summary>
+  /// <remarks>
+  /// <paramref name="lowStockThreshold"/> es el tope de «bajo», y el agotado no cuenta como
+  /// tal. Se cuenta en SQL: traer el catálogo para contarlo no escala.
+  /// </remarks>
+  Task<(int Total, int OutOfStock, int LowStock)> CountStockAsync(
+      int lowStockThreshold, CancellationToken ct = default);
+
   /// <summary>Devuelve stock al catálogo. Suma incondicional.</summary>
   /// <remarks>
   /// Sin condición porque no la hay: devolver siempre puede. Quien decide que se puede

@@ -16,3 +16,16 @@ public class UserDto
 
   public DateTime CreatedAt { get; set; }
 }
+
+
+/// <summary>Contadores de usuarios, para el panel de administración.</summary>
+public class UserStatsDto
+{
+  public int Total { get; set; }
+
+  /// <summary>Cuántos tienen el rol administrador.</summary>
+  public int Admins { get; set; }
+
+  /// <summary>Cuentas con el bloqueo VIGENTE, no las que alguna vez se bloquearon.</summary>
+  public int Locked { get; set; }
+}

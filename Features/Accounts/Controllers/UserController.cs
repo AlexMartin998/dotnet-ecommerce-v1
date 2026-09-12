@@ -26,6 +26,17 @@ public class UserController : ControllerBase
         _service = service;
     }
 
+    /// <summary>Contadores de usuarios. El rol admin ya lo exige la clase.</summary>
+    /// <remarks>
+    /// Cada contexto publica los suyos: el panel compone con tres llamadas en paralelo.
+    /// </remarks>
+    [HttpGet("stats", Name = "GetUserStats")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<UserStatsDto>> GetUserStats(CancellationToken ct)
+        => Ok(await _service.GetStatsAsync(ct));
+
     /// <summary>Listado paginado de usuarios.</summary>
     [HttpGet(Name = "GetUsers")]
     [ProducesResponseType(StatusCodes.Status200OK)]

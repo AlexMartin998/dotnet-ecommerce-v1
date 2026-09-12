@@ -370,6 +370,31 @@ arreglar → reemitir → la orden vuelve a `available` con su PDF.
   materializa las `SigningCredentials` en el constructor, así que rotar la clave
   exige reiniciar. Se resuelve cambiando `IOptions` por `IOptionsMonitor`.
 
+### Paso 13 — Paridad de negocio con una tienda real — ✅ **pasos 1–3** (2026-09-12)
+
+[`planning/24`](../planning/24_paridad-con-tesloshop.md). De la comparación con un e-commerce
+Next.js con panel de administración salieron tres huecos, ya cerrados: **cotizar el carrito**
+(`POST /cart/quote`, anónimo y sin apartar stock), **mover la orden** por su ciclo de entrega
+(`PATCH /order/{id}/status`, UPDATE condicional sin `Idempotency-Key`) y **los contadores del
+panel**, uno por contexto en vez de un `/admin/dashboard` que obligaría a un slice a conocer a
+los otros tres.
+
+Lo que sigue abierto de ahí, en orden: **catálogo de tienda** (`slug`, varias imágenes,
+tallas, tags, borrado lógico — una migración sobre el slice de referencia), **dirección de
+envío estructurada** (hoy es un `string(500)`) y **PayPal**.
+
+⚠️ Sobre PayPal, lo que no se ve hasta mirar el puerto: `IPaymentGateway` tiene
+`CreateIntentAsync` y `ParseEvent`, o sea que está hecho a la medida del modelo de Stripe
+—crear, que el cliente confirme, webhook—. PayPal necesita un tercer paso, **capturar desde el
+servidor**, que no cabe ahí. Añadirlo sin tocar Stripe es un `CaptureAsync` con
+implementación por defecto en la interfaz. Y con PayPal entra el **reembolso**, que es lo que
+desbloquea poder cancelar una orden ya pagada.
+
+⚠️ Hallazgo lateral de la comparación: **`OrderItems` no tiene FK a `Products`** (solo a
+`Orders`). Borrar un producto vendido funciona en silencio y el `ProductId` de la línea queda
+colgando. La orden sobrevive porque congela sku, nombre y precio, pero el front no puede
+enlazar «volver a comprar». Entra con el borrado lógico.
+
 ## Cómo mantener este documento
 
 Al terminar un paso, actualizar la tabla de estado en el mismo commit que el

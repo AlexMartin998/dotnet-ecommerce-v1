@@ -37,3 +37,23 @@ public class ProductDto
   public string? RowVersion { get; set; }
 
 }
+
+
+/// <summary>Contadores del catálogo, para el panel de administración.</summary>
+public class ProductStatsDto
+{
+  public int Total { get; set; }
+
+  /// <summary>Stock 0: no se puede vender.</summary>
+  public int OutOfStock { get; set; }
+
+  /// <summary>Stock entre 1 y el umbral. NO incluye el 0.</summary>
+  /// <remarks>
+  /// Mezclar el agotado con el escaso hace que el panel pida reponer lo que ya no se puede
+  /// vender, y esconde cuánto se está perdiendo por rotura de stock.
+  /// </remarks>
+  public int LowStock { get; set; }
+
+  /// <summary>Hasta dónde se considera «bajo», para que el panel lo pueda decir.</summary>
+  public int LowStockThreshold { get; set; }
+}

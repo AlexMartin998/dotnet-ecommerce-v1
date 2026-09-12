@@ -5,7 +5,8 @@
 > `AGENTS/docs/` y en `CLAUDE.md`; lo que hay aquí es el **mapa**.
 >
 > Estado: verificado contra el código el **2026-09-12** — las rutas de §1, una a una, contra
-> los `[Http…]` de cada controller.
+> los `[Http…]` de cada controller. Incluye `planning/24` (cotizar el carrito, mover la orden
+> y los contadores del panel).
 >
 > Vivió hasta hoy en `AGENTS/__ref__/docs/summary/`, que está **gitignorado**: no viajaba en
 > ningún commit, nadie más lo veía actualizado y ningún `git log` explicaba sus cambios. Por
@@ -92,7 +93,24 @@ Base: `http://localhost:8021/api/v1/…` — todas las rutas van versionadas por
 | POST | `/{id}/image` | 👑 | Sube la imagen (multipart, máx. 2 MB). Va **dentro de `wwwroot/`**: es pública |
 | **POST** | **`/buy`** | 🔒 | **Descuenta stock por SKU. NO crea ninguna orden.** Idempotente (`Idempotency-Key`). Emite `product.purchased` |
 
-### 1.5 `OrderController` — `/api/v1/Order` (todo 🔒)
+### 1.5 `CartController` — `/api/v1/Cart`
+
+| Método | Ruta | Auth | Qué hace |
+|---|---|---|---|
+| **POST** | `/quote` | 🔓 | Cotiza `{ items:[{sku,quantity}] }` con el **precio y el stock de este instante**. El cliente **nunca** manda precios |
+
+> ⚠️ **Cotizar no aparta stock ni compromete el precio.** Es una foto: entre cotizar y
+> comprar, las dos cosas pueden cambiar, y manda `POST /Order`.
+>
+> ⚠️ **Una línea sin stock vuelve marcada dentro de un 200**, no como 409 — al revés que el
+> checkout. El front tiene que poder enseñar «solo quedan 2» y dejar ajustar la cantidad; un
+> 409 deja el carrito inservible. Cada línea trae `status` (`ok` · `insufficient_stock` ·
+> `not_found`), `available` y `maxQuantity`, y **el total solo suma las líneas servibles**.
+>
+> ⚠️ **El desglose lo calcula la misma pieza que el checkout** (`OrderPricing`). Calcularlo en
+> los dos sitios es cómo se acaba cobrando un total distinto del que el cliente vio.
+
+### 1.6 `OrderController` — `/api/v1/Order` (todo 🔒)
 
 | Método | Ruta | Qué hace |
 |---|---|---|
@@ -100,6 +118,8 @@ Base: `http://localhost:8021/api/v1/…` — todas las rutas van versionadas por
 | GET | `/{id}` | Una orden **del comprador autenticado**. La de otro devuelve **404**, no 403 |
 | GET | `/paged` | Las órdenes **del comprador autenticado**, de la más reciente a la más antigua |
 | GET | `/all` 👑 | **Todas las órdenes, de cualquier comprador.** Paginado + `?number=` (prefijo del número de orden). Ruta aparte, no un parámetro de `/paged` |
+| **PATCH** | `/{id}/status` 👑 | Mueve la orden por su ciclo de entrega: `paid → preparing → shipped → delivered`. **204** también al repetir |
+| GET | `/stats` 👑 | Recuento de órdenes por estado, para el panel |
 | GET | `/{id}/receipt` | Descarga el PDF. 409 `receipt_not_ready` si aún se está generando, 409 `receipt_failed` si murió, 404 si la orden no es tuya |
 
 > ⚠️ **`/Product/buy` y `/Order` conviven a propósito.** El primero es una operación de
@@ -112,7 +132,20 @@ Base: `http://localhost:8021/api/v1/…` — todas las rutas van versionadas por
 > compras de terceros no es quien puede ver las suyas, y separar las rutas hace imposible que
 > un fallo de filtrado convierta un listado propio en uno global.
 
-### 1.6 `PaymentController` — `/api/v1/Payment` (todo 🔒)
+> ⚠️ **`PATCH /{id}/status` no lleva `Idempotency-Key`, y es correcto.** La transición es un
+> UPDATE condicional (`WHERE Status = @origen`), así que reenviarla no repite nada: si la
+> orden ya estaba en el destino son **204**, y si venía de otro estado es **409
+> `invalid_transition`**. Medido: 8 administradores simultáneos sobre la misma transición →
+> **8×204** y una sola escritura.
+>
+> ⚠️ **El origen lo pone el servidor, no la petición**: si viniera del cliente se podría
+> saltar un paso. Y **cancelar y reembolsar quedan fuera** — devolver dinero y stock tiene
+> sus propias invariantes; cancelar una orden sin pagar ya es cosa de `AbandonedOrderCleaner`.
+>
+> ⚠️ **Mover una orden no emite ningún evento todavía**, por la misma razón que colocarla:
+> nadie consume `order.shipped` y publicar sin cola vuelve como 312 NO_ROUTE.
+
+### 1.7 `PaymentController` — `/api/v1/Payment` (todo 🔒)
 
 
 | Método | Ruta | Qué hace |
@@ -127,12 +160,13 @@ Base: `http://localhost:8021/api/v1/…` — todas las rutas van versionadas por
 > `no_payment_provider`**. Cobrar no es una optimización: **no degrada en abierto**.
 > Un proveedor que no existe es **400** enumerando los que sí.
 
-### 1.7 Infraestructura
+### 1.8 Infraestructura
 
 | Método | Ruta | Auth | Qué hace |
 |---|---|---|---|
 | GET | `/health` | 🔓 | *Liveness*: responde sin tocar ninguna dependencia. `[ApiVersionNeutral]`, **fuera** de `/api/v1` |
 | GET | `/health/ready` | 🔓 | *Readiness*: SQL Server + Redis + backlog del outbox. Redis caído = `Degraded`, **nunca** `Unhealthy` |
+| GET | `/api/v1/product/stats` · `/api/v1/user/stats` | 👑 | Contadores del catálogo y de usuarios. **No hay un `/admin/dashboard` único**: cada contexto publica los suyos y el panel compone con tres llamadas, en vez de obligar a un slice a conocer a los otros |
 | GET | `/api/v1/dead-letter` | 👑 | Recuento de mensajes muertos por cola |
 | POST | `/api/v1/dead-letter/{queue}/replay` | 👑 | Reemite la DLQ a su cola principal con el contador de intentos **a cero**. El nombre de cola se valida contra una allowlist de las suscripciones registradas |
 | GET | `/swagger/index.html` | 🔓 | Solo en Development. Un documento por versión |
@@ -619,6 +653,9 @@ stateDiagram-v2
     [*] --> Placed: POST /order (stock ya apartado)
     Placed --> Paid: webhook firmado -> payment.captured
     Placed --> Cancelled: nadie paga en 30 min (AbandonedOrderCleaner, devuelve el stock)
+    Paid --> Preparing: PATCH /order/id/status (admin)
+    Preparing --> Shipped: PATCH /order/id/status (admin)
+    Shipped --> Delivered: PATCH /order/id/status (admin)
     Paid --> [*]: order.paid -> comprobante en PDF
     note right of Placed
         Aqui NO hay comprobante.
@@ -650,7 +687,10 @@ tocan.
 
 ## 12. Lo que NO existe todavía
 
-- **`Shipping`** está previsto como contexto acotado y no existe.
+- **`Shipping`** está previsto como contexto acotado y no existe. Hoy el envío es un cambio de
+  estado que hace un administrador a mano (`PATCH /order/{id}/status`), sin transportista ni
+  seguimiento.
+- **Cancelar o reembolsar una orden.** `PATCH /status` solo cubre el camino de entrega.
 - **Reembolsos, pagos parciales y PayPal.** El diseño está hecho para que PayPal quepa; no se
   añade sin necesitarlo porque sería adivinar su forma.
 - **Stripe necesita credenciales del owner** (`Payments:Stripe:SecretKey` y `WebhookSecret` en

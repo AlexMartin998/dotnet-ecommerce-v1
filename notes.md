@@ -4303,3 +4303,139 @@ Production sin Redis ni broker  -> /health 200, /health/ready Healthy, 0 errores
        (`400 "SKU can only contain letters, digits and hyphens"`). Se deja como defensa en
        profundidad para cualquier otro llamador, y el test unitario lo cubre
   - -- 322 tests (eran 318): +5 de Trim y rowversion, -1 el que ahora hace el compilador
+
+
+
+
+
+
+## 45. Traer negocio de otro proyecto  <- y el bug que casi se copia con el
+
+- --- ⭐ **El diagnostico cabe en una linea: las garantias sobran, falta TIENDA**
+```
+Lo que aquel proyecto pone como OBJETIVO dificil     Aqui ya estaba, medido
+  reserva de stock en transaccion                    si, desde planning/07
+  idempotencia con clave                             si, y como GARANTIA (planning/17)
+  transiciones condicionales                         si, el webhook las usa
+  jobs de limpieza                                   si, cuatro
+
+Lo que aquel da por sentado y aqui NO existia        lo que se hizo
+  cotizar el carrito                                 POST /cart/quote
+  mover la orden paid->preparing->shipped->delivered PATCH /order/{id}/status
+  contadores para el panel                           un /stats por contexto
+```
+  - -- ⭐ la leccion de proceso: comparar contra otro proyecto **no es copiar su diseno**. De
+       aquel se trajo la *feature* y se dejaron fuera sus decisiones, igual que con el curso
+
+- --- 🔴 **El bug que casi se copia, y por eso `OrderPricing` existe ANTES que el endpoint**
+```
+Su bug nº4:  el impuesto se calcula en el CLIENTE (0.15) y en el SERVIDOR (0.12)
+             y luego se comparan los totales con ===  sobre floats
+             -> sin esa variable de entorno, TODAS las ordenes fallan
+```
+  - -- si la cotizacion hubiera calculado sus totales y `BuildAsync` los suyos, **el mismo bug
+       nace aqui dentro**: dos copias divergen en cuanto una gane un impuesto
+  - -- asi que primero nace la pieza, y despues el endpoint:
+```cs
+// Features/Ordering/Service/OrderPricing.cs  <- pura, sin dependencias
+public static OrderTotals For(IEnumerable<decimal> lineTotals)
+// la usan CartService.QuoteAsync Y OrderService.BuildAsync. No hay tercera.
+```
+  - -- ⭐ y un test que compara **cotizacion contra orden real**: si alguien anade el IVA en un
+       solo sitio, cae. Medido en vivo: cotizado 59.97 / cobrado 59.97
+  - -- **la regla**: cuando dos caminos tienen que dar el mismo numero, el numero se calcula
+       en UN sitio. No es DRY por estetica: es que la diferencia solo aparece al cobrar
+
+- --- ⭐ **Cotizar y comprar son operaciones OPUESTAS, y el puerto tenia solo una**
+```cs
+ICatalogGateway.TryTakeAsync(sku, qty)  // APARTA stock  <- correcto al comprar
+ICatalogGateway.PeekAsync(sku)          // solo LEE      <- nuevo, para cotizar
+```
+  - -- reutilizar `TryTakeAsync` para cotizar habria dejado **el catalogo a cero con los
+       carritos abandonados**. Verificado: cotizar 5 de 5 dos veces deja el stock en 5
+  - -- una cotizacion es una **foto, no una promesa**: entre cotizar y comprar el precio y el
+       stock pueden cambiar, y manda el checkout
+
+- --- ⭐ **El mismo problema, dos codigos distintos, y no es incoherencia**
+```
+POST /cart/quote   sin stock -> 200 con la linea MARCADA   (status, available, maxQuantity)
+POST /order        sin stock -> 409
+```
+  - -- la diferencia es el caso de uso, no el dato: el front tiene que **ensenar** "solo
+       quedan 2" y dejar ajustar la cantidad. Un 409 deja el carrito inservible
+  - -- **el que rechaza es el checkout**. Cotizar informa; comprar decide
+  - -- y el total **solo suma las lineas servibles**: ensenar un importe que el cliente no va
+       a poder pagar es el peor total posible
+
+- --- ⭐ **Tres estados llevaban meses MUERTOS y el enum mentia**
+```cs
+enum OrderStatus { Placed, Paid, Preparing, Shipped, Delivered, Cancelled }
+//                              ^^^^^^^^^  ^^^^^^^  ^^^^^^^^^
+//                              ningun endpoint llegaba aqui
+```
+  - -- una orden tocaba `paid` y se quedaba ahi para siempre
+  - -- ⭐ **es el mismo defecto que `ReceiptStatus.Failed`** antes de `OnExhaustedAsync`. La
+       segunda vez que aparece el mismo patron, lo que hay que revisar es el habito: **al
+       anadir un estado, escribir tambien quien lo alcanza, o no anadirlo**
+
+- --- ⭐ **Una transicion NO necesita Idempotency-Key, y explicar por que vale mas que el codigo**
+```cs
+UPDATE Orders SET Status = @destino WHERE Id = @id AND Status = @origen
+// 1 fila -> lo movio esta llamada            -> 204
+// 0 filas -> se RELEE, y solo entonces:
+//            ya estaba en el destino         -> 204  (reenvio, no error)
+//            venia de otro estado            -> 409 invalid_transition
+//            no existe                       -> 404
+```
+  - -- la idempotencia la da **la condicion dentro del UPDATE**, no el registro de comandos:
+       no hay nada que "ejecutar dos veces", solo una fila que ya esta donde se la queria
+  - -- `ExecutedCommands` es para efectos que se repetirian (cobrar, descontar stock). Meterlo
+       aqui seria pagar una tabla por una garantia que ya da SQL Server
+  - -- ⚠️ **se lee DESPUES de escribir, nunca antes**: leer primero seria read-then-write y dos
+       administradores podrian saltarse un paso
+  - -- ⚠️ **el origen lo pone el SERVIDOR**, no la peticion. Si el cliente mandara "de paid a
+       delivered", se salta el envio. El diccionario va de DESTINO a origen:
+```cs
+[OrderStatus.Preparing] = OrderStatus.Paid,   // a preparing se llega SOLO desde paid
+```
+  - -- medido: **8 administradores simultaneos** sobre la misma transicion -> **8x204**, estado
+       final `preparing`, una sola escritura. Ni un 409 ni un 500
+
+- --- **Y lo que NO se hizo, que tambien es una decision**
+  - -- **cancelar y reembolsar quedan fuera**: cancelar una orden pagada exige devolver el
+       dinero, y eso no existe. Cancelar una sin pagar **ya tiene dueno** (`AbandonedOrderCleaner`,
+       que devuelve el stock en la misma transaccion)
+  - -- **no emite ningun evento**: nadie consume `order.shipped` y publicar sin cola vuelve como
+       312 NO_ROUTE. Misma trampa que `order.placed`
+
+- --- ⭐ **Se rechaza `GET /admin/dashboard`, y el porque es puro vertical slicing**
+```
+Su diseno:   UN endpoint con ordenes + productos + usuarios
+Aqui:        /order/stats  +  /product/stats  +  /user/stats   (tres llamadas en paralelo)
+```
+  - -- un endpoint unico obligaria a **un slice a conocer a otros tres**, o a inventar un sexto
+       contexto cuyo dominio es *una pantalla*. Un contexto acotado no es una vista
+  - -- tres llamadas para algo que se refresca cada 30 s no cuestan nada
+  - -- ⚠️ `lowStock` **excluye el 0**: mezclar lo agotado con lo escaso hace que el panel pida
+       reponer lo que ya no se puede vender. Era un 🩹 marcado en el proyecto de origen
+  - -- ⚠️ un `GROUP BY` **no devuelve la clave que no tiene filas**: hay que rellenar con 0 o el
+       panel ensena un hueco, que se lee como un fallo
+
+- --- **El carrito en base de datos: NO hace falta, y conviene saber por que**
+  - -- su propio documento lo pone como fase 2 y como pregunta abierta al owner
+  - -- lo que quita el bug **no es la tabla, es cotizar en el servidor**. Un carrito en BD solo
+       anade "siguelo entre dispositivos", que es una decision de producto
+  - -- resistirse a anadir tablas "porque el otro proyecto las tiene" es parte del trabajo
+
+- --- ⚠️ **Dos cosas que apareceran despues, anotadas al encontrarlas**
+```
+OrderItems NO tiene FK a Products   -> borrar un producto vendido funciona EN SILENCIO y
+                                       el ProductId de la linea queda colgando
+IPaymentGateway esta hecho a la      -> Stripe: crear intento -> el cliente confirma -> webhook
+medida de STRIPE                       PayPal: crear -> aprobar -> CAPTURAR (servidor) -> webhook
+                                                                  ^^^^^^^^ no cabe en el puerto
+```
+  - -- la orden sobrevive al borrado porque **congela** sku, nombre y precio; lo que se pierde
+       es poder enlazar "volver a comprar"
+  - -- anadir PayPal sin tocar Stripe = `CaptureAsync` con **implementacion por defecto** en la
+       interfaz (default interface member, como en `IEntityRules`) que lance `NotSupported`

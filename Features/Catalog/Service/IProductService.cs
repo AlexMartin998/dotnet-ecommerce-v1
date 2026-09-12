@@ -51,4 +51,7 @@ public interface IProductService
   Task<CommandOutcome<ProductDto>> BuyAsync(
       BuyProductDto dto, CommandIntent intent, string? buyerUserId = null, CancellationToken ct = default);
 
+
+  /// <summary>Contadores del catálogo para el panel. Solo administración.</summary>
+  Task<ProductStatsDto> GetStatsAsync(CancellationToken ct = default);
 }

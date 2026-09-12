@@ -14,12 +14,20 @@ nunca hace push (`rules.md` §12).
 
 ### Estado medido hoy (2026-09-12)
 
-`dotnet build -warnaserror` **limpio** y **322/322 tests** en verde (~17 s) contra SQL
+`dotnet build -warnaserror` **limpio** y **359/359 tests** en verde (~17 s) contra SQL
 Server, Redis y RabbitMQ reales. Las dos direcciones de la infra responden: `192.168.3.82`
 (LAN del host, confirmada por el owner) y `172.17.0.1` (puerta del bridge, la que usan los
 tests por defecto).
 
-**Lo que se hizo hoy**: `planning/23` — **fuera AutoMapper**, el mapeo pasa a
+**Lo que se hizo hoy (2)**: `planning/24` — **paridad de negocio con una tienda real**
+(comparación contra un e-commerce Next.js con panel de administración). Tres huecos cerrados:
+`POST /cart/quote` (anónimo, **no aparta stock**, líneas sin stock marcadas dentro de un 200),
+`PATCH /order/{id}/status` (`paid → preparing → shipped → delivered`, UPDATE condicional **sin
+`Idempotency-Key`** porque no hace falta), y **un `/stats` por contexto** en vez de un
+`/admin/dashboard` único. Nace `OrderPricing`: la cotización y el checkout calculan el
+desglose con la **misma** función, que es lo que impide el bug de «el impuesto en dos sitios».
+
+**Lo que se hizo hoy (1)**: `planning/23` — **fuera AutoMapper**, el mapeo pasa a
 `Riok.Mapperly` (source generator, Apache 2.0). Nace
 `IEntityMapper<TEntity,TDto,TCreateDto,TUpdateDto>` en `Shared/Crud/`, gemelo de
 `IEntityRules<,,>`, porque un generador no puede resolver `IMapper.Map<TDto>(...)` desde un
@@ -121,15 +129,19 @@ deudas menores anotadas en `docs/06` §Paso 12.
    `AGENTS/ci/ci.yml.disabled` y nunca ha corrido. Alternativa barata mientras no haya
    remoto por SSH: meter `-warnaserror` en el `.csproj`, para que la regla de «0 warnings»
    la obligue el build y no la buena memoria de quien commitea.
-3. **`Shipping`, el sexto y último contexto previsto.** Es lo único grande que falta de
+3. **Pasos 4–6 de `planning/24`**: catálogo de tienda (`slug`, varias imágenes, tallas, tags,
+   borrado lógico), dirección de envío estructurada, y **PayPal**. ⚠️ Sobre PayPal:
+   `IPaymentGateway` está hecho a la medida de Stripe (crear intento + webhook) y PayPal
+   necesita **capturar desde el servidor**, un tercer método que hoy no existe en el puerto.
+4. **`Shipping`, el sexto y último contexto previsto.** Es lo único grande que falta de
    dominio, y de paso le daría consumidor a `order.placed`, que hoy no se emite porque nadie
    lo escucha. `Ordering` y `Payments` dejaron el molde hecho: carpeta, `Ports/` con su
    gateway, y una línea en `AddFeatures()`.
-4. **Deuda menor viva**: `planning/13` (la cookie es una decisión para SPA: un cliente móvil
+5. **Deuda menor viva**: `planning/13` (la cookie es una decisión para SPA: un cliente móvil
    no está cubierto), `planning/17` §17.4, `planning/19` §19.4 (EF loguea a Error sus fallos
    de conexión — se deja a propósito), `planning/21` §21.6 (nadie **alerta** cuando la DLQ
    crece: hay que mirar), y `DateTime.Now` → UTC, que es una migración de todo a la vez.
-5. `planning/15` (partir en proyectos) sigue **diferido a propósito**. La señal para
+6. `planning/15` (partir en proyectos) sigue **diferido a propósito**. La señal para
    retomarlo está en `docs/06`.
 
 ⚠️ **Colas huérfanas en el broker de desarrollo**: al cambiar `RetryDelaySeconds` quedan

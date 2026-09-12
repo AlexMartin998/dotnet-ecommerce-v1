@@ -110,6 +110,59 @@ public sealed class OrderService(
   }
 
 
+  public async Task AdvanceAsync(
+      int orderId, UpdateOrderStatusDto dto, CancellationToken ct = default)
+  {
+    ArgumentNullException.ThrowIfNull(dto);
+
+    if (!OrderFulfillment.TryResolve(dto.Status, out var to, out var from))
+      // 400 y no 422: el cuerpo es válido, lo que no existe es ese destino. Se enumeran los
+      // que sí, igual que con los proveedores de pago.
+      throw new BadOperationAppException(
+          $"'{dto.Status}' is not a reachable order status. " +
+          $"Valid targets: {string.Join(", ", OrderFulfillment.Targets)}.");
+
+    if (await repository.TryTransitionAsync(orderId, from, to, ct))
+    {
+      logger.LogInformation("Order {OrderId} moved to {Status}", orderId, to);
+      return;
+    }
+
+    // El UPDATE no movió nada. Solo AHORA se lee, y para distinguir tres casos distintos.
+    var current = await repository.FindStatusAsync(orderId, ct)
+        ?? throw new NotFoundAppException("Order", orderId.ToString());
+
+    // Ya estaba donde se la quería dejar: es un reenvío, no un error.
+    if (current == to) return;
+
+    throw new CustomAppException(
+        "invalid_transition",
+        $"An order in '{current.ToString().ToLowerInvariant()}' cannot move to " +
+        $"'{to.ToString().ToLowerInvariant()}'.",
+        System.Net.HttpStatusCode.Conflict);
+  }
+
+
+  public async Task<OrderStatsDto> GetStatsAsync(CancellationToken ct = default)
+  {
+    var byStatus = await repository.CountByStatusAsync(ct);
+
+    // Un estado sin filas no aparece en el GROUP BY: sin este 0 el panel mostraría un hueco.
+    int Count(OrderStatus status) => byStatus.TryGetValue(status, out var n) ? n : 0;
+
+    return new OrderStatsDto
+    {
+      Total = byStatus.Values.Sum(),
+      Placed = Count(OrderStatus.Placed),
+      Paid = Count(OrderStatus.Paid),
+      Preparing = Count(OrderStatus.Preparing),
+      Shipped = Count(OrderStatus.Shipped),
+      Delivered = Count(OrderStatus.Delivered),
+      Cancelled = Count(OrderStatus.Cancelled)
+    };
+  }
+
+
   // ---- construcción -------------------------------------------------------
 
   private async Task<Order> BuildAsync(
@@ -144,7 +197,9 @@ public sealed class OrderService(
       });
     }
 
-    var subtotal = items.Sum(i => i.LineTotal);
+    // El desglose sale de la misma pieza que usa la cotización: calcularlo aquí otra vez es
+    // cómo se acaba cobrando un total distinto del que el cliente vio en el carrito.
+    var totals = OrderPricing.For(items.Select(i => i.LineTotal));
 
     var number = $"ORD-{DateTime.Now:yyyy}-{await repository.NextNumberAsync(ct):D6}";
 
@@ -154,12 +209,12 @@ public sealed class OrderService(
       BuyerUserId = buyerUserId,
       // Nace sin pagar: quien la mueve es un cobro capturado, nunca esta llamada.
       Status = OrderStatus.Placed,
-      Subtotal = subtotal,
-      // A cero: todavía no hay reglas que los calculen, pero el desglose ya está en el modelo.
-      Discount = 0m,
-      Tax = 0m,
-      Shipping = 0m,
-      Total = subtotal,
+      Currency = OrderPricing.Currency,
+      Subtotal = totals.Subtotal,
+      Discount = totals.Discount,
+      Tax = totals.Tax,
+      Shipping = totals.Shipping,
+      Total = totals.Total,
       CustomerName = dto.CustomerName.Trim(),
       CustomerEmail = buyerEmail,
       CustomerPhone = dto.CustomerPhone?.Trim(),

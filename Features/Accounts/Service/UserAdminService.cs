@@ -23,6 +23,19 @@ public sealed class UserAdminService(
   /// <summary>Espera máxima por el bloqueo que serializa las bajas de administrador.</summary>
   private static readonly TimeSpan AdminRoleLockTimeout = TimeSpan.FromSeconds(5);
 
+  public async Task<UserStatsDto> GetStatsAsync(CancellationToken ct = default)
+  {
+    // El bloqueo es una FECHA, no una bandera: se cuenta el que sigue vigente ahora.
+    var now = DateTimeOffset.Now;
+
+    return new UserStatsDto
+    {
+      Total = await userManager.Users.CountAsync(ct),
+      Admins = await userRoles.CountUsersInRoleAsync(Roles.Admin, ct),
+      Locked = await userManager.Users.CountAsync(u => u.LockoutEnd > now, ct)
+    };
+  }
+
   public async Task<PagedResult<UserDto>> GetPagedAsync(
       PageQuery query, CancellationToken ct = default)
   {
