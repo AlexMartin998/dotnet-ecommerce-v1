@@ -65,6 +65,14 @@ Y se corrigió el punto de continuación de `memory.md`, que decía que **`Payme
 existía** y daba 274 tests: ese archivo se lee al empezar **toda** sesión, así que una
 afirmación falsa ahí contamina todas a la vez.
 
+**`notes.md` capítulo 43 — dónde viven los secretos**, con la ruta exacta
+(`~/.microsoft/usersecrets/apiecommerce-dev-2026/secrets.json`), la cadena de capas de
+configuración (`:` → `__`) y la respuesta medida a «¿y si los pongo en `./secrets/`
+gitignorado?»: el Web SDK copia **todo `**/*.json` del proyecto** a `bin/` y a `publish/`, o
+sea **dentro de la imagen** — y el `.dockerignore` solo cubre el nombre `secrets.json`, no
+`secrets/local.json`. Decisión del owner: **se queda en user-secrets**, porque estar fuera de
+la raíz del repo no es una exclusión que `git add -f` pueda vencer.
+
 ### 2026-09-07 — Pagos: quinto contexto acotado, y la orden deja de nacer pagada
 
 `planning/22`. Decisión del owner: **Stripe de verdad**, pero con la elección de proveedor

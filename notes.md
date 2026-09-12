@@ -3864,3 +3864,132 @@ SI:  llamada REAL a Stripe (clave invalida) -> 503 + Retry-After + 0 filas en Pa
 NO:  el camino feliz contra Stripe (necesita sk_test_ del owner)
 NO:  la entrega de un webhook real (necesita URL publica); la FIRMA si esta probada
 ```
+
+
+
+
+
+
+## 43. Donde viven los secretos  <- y la RUTA exacta, que es lo que nunca se apunta
+
+- --- ⭐ **En .NET no existe `${VAR}`. Viniendo de Spring, esto es lo que hay que desaprender**
+```
+Spring:  application.properties commiteado con un PLACEHOLDER
+         jwt.secret=${JWT_SECRET}     + un .env que lo rellena
+
+.NET:    appsettings.json commiteado con el valor AUSENTE
+         "SecretKey": ""              + una capa de arriba que GANA por clave
+```
+  - -- no hay interpolacion en `appsettings.json`, de ningun tipo. El mecanismo no es
+       sustituir texto, es **que gane la ultima capa que define la clave**
+  - -- la cadena que monta `WebApplication.CreateBuilder(args)`, en orden:
+```
+1. appsettings.json                <- commiteado, defaults NO sensibles
+2. appsettings.{Environment}.json  <- commiteado
+3. user-secrets                    <- SOLO si Environment == "Development"
+4. variables de entorno            <- por aqui entra el deploy
+5. args de linea de comandos
+```
+  - -- traduccion de claves para las capas 4 y 5: **`:` -> `__`** (doble guion bajo)
+```
+Jwt:SecretKey                  ->  Jwt__SecretKey
+ConnectionStrings:ConexionSql  ->  ConnectionStrings__ConexionSql
+Cors:AllowedOrigins[0]         ->  Cors__AllowedOrigins__0
+```
+
+- --- ⭐ **LA RUTA. Los secretos de este proyecto estan aqui:**
+```sh
+/home/<usuario>/.microsoft/usersecrets/apiecommerce-dev-2026/secrets.json
+#                                      ^^^^^^^^^^^^^^^^^^^^ <UserSecretsId>, ApiEcommerce.csproj:15
+# en Windows:  %APPDATA%\Microsoft\UserSecrets\apiecommerce-dev-2026\secrets.json
+
+# y para manipularlos sin abrir el fichero:
+dotnet user-secrets list
+dotnet user-secrets set    "Payments:Stripe:SecretKey" "sk_test_..."
+dotnet user-secrets remove "Payments:Stripe:SecretKey"
+dotnet user-secrets clear
+```
+  - -- las claves se escriben con **`:`**, como en el JSON. El `__` es solo para env vars
+  - -- el `UserSecretsId` **si** se commitea, y no es un secreto: es el nombre de la carpeta
+       donde cada desarrollador guarda LOS SUYOS. Dos clones no se cruzan nunca
+  - -- ⚠️ **no esta cifrado**: es JSON en claro con permisos `600`. Es "fuera de git", no boveda
+  - -- ⚠️ vive en el **HOME del dev container**: si se recrea, **se pierden**, igual que el
+       runtime 9. Reponerlos son los tres `set` de `README_init.md`
+
+- --- **Comprobar que NO van a git: tres comandos, no una promesa**
+```sh
+git rev-parse --show-toplevel     # /workspace/.../ApiEcommerce      <- raiz del repo
+realpath ~/.microsoft/usersecrets/apiecommerce-dev-2026/secrets.json
+                                  # /home/ubuntu/.microsoft/...      <- FUERA de la raiz
+git ls-files | grep secrets.json  # (vacio)
+git show HEAD:appsettings.json | grep SecretKey   #  "SecretKey": "",  <- el hueco
+```
+  - -- ⭐ no estan *ignorados*, estan **fuera del arbol**. Es mejor garantia: git se niega a
+       anadir rutas fuera del worktree, con `-f` y sin el. Un `.gitignore` es opt-out y
+       `git add -f` lo vence
+  - -- para cualquier otro fichero: `git check-ignore -v <f>` dice **que linea** lo cubre, y
+       `git ls-files --error-unmatch <f>` da error si NO esta versionado (que es lo que quieres)
+
+- --- 🔴 **La pregunta que hubo que medir: ¿y si los pongo en `./secrets/` gitignorado?**
+  - -- funciona con una linea
+       (`builder.Configuration.AddJsonFile("secrets/local.json", optional: true)`),
+       pero **no es lo mismo**. Medido:
+```sh
+mkdir secrets && echo '{"Jwt":{"SecretKey":"X"}}' > secrets/local.json
+dotnet publish -c Release -o pub && find pub -ipath "*secrets*"
+# pub/secrets/local.json        <- VIAJA A LA IMAGEN
+# pub/secrets/secrets.json
+find bin -ipath "*secrets*"
+# bin/Debug/net9.0/secrets/local.json    bin/Release/net9.0/secrets/local.json
+```
+  - -- el Web SDK incluye **`**/*.json` como content**: cualquier `.json` del proyecto se
+       copia a `bin/` y a `publish/`, y `publish/` es lo que entra en la imagen
+       (`Dockerfile:17`, `COPY --from=build /app .`) y de ahi al registro en un `push`
+  - -- el `.dockerignore` tiene `**/secrets.json`, que cubre **ese nombre** y NO cubre
+       `secrets/local.json` ni `secrets/dev.json`. Con user-secrets no hay patron que acertar
+  - -- contraste, medido igual: **`.env` NO se copia** (no matchea los globs de content)
+```sh
+printf 'Jwt__SecretKey=X\n' > .env && dotnet build && find bin -name ".env"   # (nada)
+```
+  - -- ⚠️ y una trampa de mecanismo aparte de la seguridad: `AddJsonFile` se anade **al final**
+       de la cadena, asi que gana tambien a las **variables de entorno**. Un fichero colado en
+       la imagen **pisaria lo que inyecta el compose**, sin un solo error. Si se usa, va
+       guardado con `if (builder.Environment.IsDevelopment())`
+
+- --- **En deploy no hay user-secrets, y eso es lo correcto**
+```sh
+ASPNETCORE_ENVIRONMENT=Production dotnet bin/Debug/net9.0/ApiEcommerce.dll
+# -> Unhandled exception: The ConnectionString property has not been initialized.
+#    la capa 3 NO se carga fuera de Development: en produccion no debe haber un fichero
+#    de secretos en el disco de un desarrollador
+
+# las MISMAS claves como env vars, sin tocar una linea de codigo ni de JSON:
+export ASPNETCORE_ENVIRONMENT=Production
+export ConnectionStrings__ConexionSql="Server=192.168.3.82,1434;Database=...;Password=...;TrustServerCertificate=true"
+export Jwt__SecretKey="$(openssl rand -base64 48)"
+dotnet bin/Debug/net9.0/ApiEcommerce.dll --urls http://0.0.0.0:8031
+# [INF] Now listening on: http://0.0.0.0:8031
+# [INF] Hosting environment: Production
+# GET /health -> 200      GET /health/ready -> Healthy
+```
+  - -- es exactamente lo que ya hace `docker-compose.prod.yml`:
+       `Jwt__SecretKey: "${JWT_SECRET:?define JWT_SECRET en .env}"`. Desplegar son dos
+       comandos: `cp .env.example .env` (rellenar 2 valores) y el `up`
+  - -- ⚠️ **el `.env` NO entra en el contenedor**: lo lee **Compose** para sustituir los
+       `${...}` del YAML. Son dos capas que se confunden siempre:
+       `.env` -> Compose -> `environment:` -> proceso -> provider de .NET
+  - -- ⚠️ `docker compose -f docker-compose.prod.yml config` resuelve y **imprime los secretos
+       en pantalla**: util para comprobar antes del `up`, malo compartiendo pantalla
+  - -- ⚠️ el limite real de `environment:`: `docker inspect apiecommerce | grep -A20 '"Env"'`
+       los ensena **para siempre** a cualquiera con acceso al demonio de Docker. El escalon
+       siguiente son los **Docker secrets** (`/run/secrets/`), que no salen en el inspect y
+       que .NET lee con una linea:
+       `builder.Configuration.AddKeyPerFile("/run/secrets", optional: true)` — el nombre del
+       fichero **es** la clave y su `__` se traduce a `:`. Hoy NO esta en el repo
+
+- --- **Decision (2026-09-12): se queda en user-secrets**
+  - -- si lo que se busca es seguridad, **fuera de la raiz del repo ya es la mejor variante**
+       y no hay nada que cambiar. Lo demas son grados de comodidad
+  - -- si algun dia se quiere el fichero a mano dentro del proyecto, la respuesta es
+       **`.env` + `set -a; . ./.env; set +a`**, no un `.json`: mismo mecanismo que
+       produccion, y ya esta cubierto por `.gitignore` (linea 379) **y** por `.dockerignore`
