@@ -33,6 +33,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
   public DbSet<Product> Products { get; set; }
 
+  /// <summary>Imágenes públicas de producto, en el orden en que se enseñan.</summary>
+  public DbSet<ProductImage> ProductImages { get; set; }
+
   /// <summary>Eventos de dominio pendientes de publicar (ver <see cref="OutboxMessage"/>).</summary>
   public DbSet<OutboxMessage> OutboxMessages { get; set; }
 
@@ -193,6 +196,41 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     modelBuilder.Entity<Payment>().Property(p => p.Provider).HasConversion<string>().HasMaxLength(30);
     modelBuilder.Entity<Payment>().Property(p => p.Status).HasConversion<string>().HasMaxLength(30);
 
+    // ---- catálogo ----------------------------------------------------------
+
+    // Filtro global: un producto retirado desaparece de TODA consulta, incluidas las del
+    // CRUD genérico. Sin esto habría que acordarse de excluirlo en cada repositorio.
+    modelBuilder.Entity<Product>().HasQueryFilter(p => p.DeletedAt == null);
+
+    // Índices únicos FILTRADOS: con el borrado lógico, un producto retirado seguiría
+    // bloqueando su SKU y su slug para siempre, y ninguno de los dos es reutilizable a mano.
+    modelBuilder.Entity<Product>()
+        .HasIndex(p => p.SKU)
+        .IsUnique()
+        .HasFilter("[DeletedAt] IS NULL");
+
+    modelBuilder.Entity<Product>()
+        .HasIndex(p => p.Slug)
+        .IsUnique()
+        .HasFilter("[DeletedAt] IS NULL");
+
+    // Borrar el producto se lleva sus imágenes; las órdenes no, que es de lo que protege
+    // el borrado lógico.
+    modelBuilder.Entity<Product>()
+        .HasMany(p => p.Images)
+        .WithOne(i => i.Product!)
+        .HasForeignKey(i => i.ProductId)
+        .OnDelete(DeleteBehavior.Cascade);
+
+    // El mismo filtro que el producto: sin el, consultar ProductImages por su cuenta
+    // devolveria las imagenes de productos retirados, y EF avisa de ello al arrancar.
+    modelBuilder.Entity<ProductImage>()
+        .HasQueryFilter(i => i.Product!.DeletedAt == null);
+
+    modelBuilder.Entity<ProductImage>()
+        .HasIndex(i => new { i.ProductId, i.Position })
+        .HasDatabaseName("IX_ProductImages_ProductId_Position");
+
     modelBuilder.Entity<ProcessedWebhookEvent>().HasKey(e => e.Id);
     modelBuilder.Entity<ProcessedWebhookEvent>()
         .Property(e => e.Provider).HasConversion<string>().HasMaxLength(30);
@@ -211,6 +249,16 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         .WithOne(i => i.Order!)
         .HasForeignKey(i => i.OrderId)
         .OnDelete(DeleteBehavior.Cascade);
+
+    // La línea apunta al producto DE VERDAD, con clave foránea. Antes era un int suelto:
+    // borrar un producto vendido funcionaba en silencio y la referencia quedaba colgando.
+    // Restrict y no Cascade: una orden no se borra porque el catálogo cambie. Lo que hace
+    // posible retirar un producto sin chocar con esto es el borrado lógico.
+    modelBuilder.Entity<OrderItem>()
+        .HasOne<Product>()
+        .WithMany()
+        .HasForeignKey(i => i.ProductId)
+        .OnDelete(DeleteBehavior.Restrict);
   }
 
 

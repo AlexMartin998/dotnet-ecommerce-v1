@@ -114,8 +114,10 @@ public class AuthorizationTests(ApiFactory factory)
 
     var sku = $"SKU-{Guid.NewGuid():N}"[..20];
 
+    // Nombre único: el slug se deriva de él y es único, así que dos productos llamados
+    // igual chocan con 409. Antes daba igual porque el nombre no era identificador.
     var productResponse = await admin.PostAsJsonAsync("/api/v1/product",
-        new { name = "Producto de prueba", price = 9.99m, sku, stock, categoryId });
+        new { name = VersioningAndHealthTests.Unique("Producto"), price = 9.99m, sku, stock, categoryId });
 
     productResponse.EnsureSuccessStatusCode();
 

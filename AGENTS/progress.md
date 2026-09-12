@@ -4,8 +4,8 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-12** (paridad de negocio con una tienda real: cotizar el
-carrito, mover la orden y los contadores del panel. 359/359 tests).
+Última actualización: **2026-09-12** (catálogo de tienda: slug, imágenes, etiquetas y
+borrado lógico con la FK que faltaba. 377/377 tests).
 
 ---
 
@@ -36,7 +36,7 @@ carrito, mover la orden y los contadores del panel. 359/359 tests).
 | 21 | Recuperar de la DLQ y recoger basura | ✅ | [`features/21`](features/21_recuperar-comprobantes-y-recoger-basura.feature) · [`planning/21`](planning/21_recuperar-comprobantes-y-recoger-basura.md) | — |
 | 22 | **Pagos (Stripe) y el ciclo de vida de la orden** | ✅ ⚠️ camino feliz contra Stripe **sin verificar**: necesita `sk_test_…` y URL pública | [`features/22`](features/22_pagos.feature) · [`planning/22`](planning/22_pagos.md) | `3769e99` |
 | 23 | Salir de AutoMapper (`Riok.Mapperly`) | ✅ | [`planning/23`](planning/23_mapeador-sin-licencia.md) | — |
-| 24 | **Paridad con TesloShop**: carrito, fulfillment y contadores | ✅ pasos 1–3; 4–6 abiertos | [`features/24`](features/24_carrito-y-fulfillment.feature) · [`planning/24`](planning/24_paridad-con-tesloshop.md) | — |
+| 24 | **Paridad con TesloShop**: carrito, fulfillment, contadores y catálogo | ✅ pasos 1–4; 5–6 abiertos | [`features/24`](features/24_carrito-y-fulfillment.feature) · [`planning/24`](planning/24_paridad-con-tesloshop.md) | — |
 
 **Ya no queda ningún ⚠️.** El 09 se cerró el 2026-09-05 contra un RabbitMQ real, y esa
 verificación destapó un bug que el build y el smoke test no veían (abajo).
@@ -44,6 +44,57 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 ---
 
 ## 2. Bitácora
+
+### 2026-09-12 — El catálogo se vuelve de tienda, y una migración que EF generó mal
+
+`planning/24` paso 4, en **una sola migración** y con **autorización explícita del owner**:
+la base es local y de desarrollo. Preguntar antes de esto es ahora `rules.md` §11.1, y esa
+regla nació de esta misma conversación.
+
+**Lo que entra**: `Slug` único con `GET /product/slug/{slug}`, tabla `ProductImages` (añadir
+y quitar, hasta 8), `Tags` y `Sizes` como colecciones primitivas, **borrado lógico** y la
+**FK `OrderItems → Products`** que faltaba.
+
+🔴 **La migración que generó EF estaba mal en dos sitios**, y es la mejor defensa de la regla
+«revisar la migración antes de aplicarla»:
+
+1. Dejaba `Slug` a `''` en las **162 filas** existentes y **después** creaba el índice único.
+   Habría reventado a mitad.
+2. Tiraba la columna `ImageUrl` **antes** de copiar su contenido a `ProductImages`.
+
+El arreglo es el **orden**: crear columnas → rellenar → tirar la vieja → crear los índices.
+Y antes de aplicarla se comprobó en la base que no había líneas de orden huérfanas (habrían
+hecho fallar la FK) ni nombres duplicados. Resultado: 162 productos, **162 slugs distintos**,
+0 vacíos.
+
+⚠️ **El borrado lógico trae una trampa de regalo**: los índices únicos de `SKU` y `Slug` hay
+que **filtrarlos por `DeletedAt`**, o un producto retirado los bloquea **para siempre** y no
+hay forma de liberarlos a mano, porque la fila es invisible.
+
+⚠️ **Y una consecuencia que hay que conocer: dos productos ya no pueden llamarse igual.** El
+slug sale del nombre y es único. Salió al migrar, porque el helper de tests creaba todos los
+productos como «Producto de prueba». Si es deliberado se manda un `slug` explícito, y el 409
+lo dice con esas palabras.
+
+⚠️ **Lo que NO se trajo**: `gender` y `type` son vocabulario de una tienda de ropa concreta y
+meterlos en el catálogo genérico hornea un vertical dentro de él; eso lo hacen `Category` y
+las `Tags`. Y **las tallas son informativas: el stock sigue siendo por producto**, porque
+hacerlo por variante cambia el contrato de la reserva entera.
+
+**Verificado ejecutando**, contra la base real:
+
+| Prueba | Resultado |
+|---|---|
+| Crear «Camión Ñandú SF» | slug `camion-nandu-sf` — sin acentos |
+| `GET /product/slug/…` anónimo | 200 con el producto |
+| Dos imágenes | salen en orden en `images[]` |
+| **Vender y luego retirar** | **204** — con la FK, un borrado real habría fallado |
+| Tras retirarlo | GET por id y por slug → 404; segundo DELETE → 404 |
+| La fila y su línea de orden | **siguen en la base**, con `DeletedAt` puesto |
+| Crear otro con el mismo nombre y SKU | **201** — el índice filtrado los liberó |
+| Y otro más, con el primero vivo | **409** diciendo que mande un `slug` explícito |
+
+Suite **377/377** (+12), build limpio con `-warnaserror`.
 
 ### 2026-09-12 — Lo que le falta a este backend para ser una tienda de verdad
 
@@ -1301,9 +1352,9 @@ que necesita credenciales del owner, y deuda menor** (`docs/06` §Paso 12).
    no tiene scope `workflow`. Es lo que habría cazado el CS9113 de esta sesión: `-warnaserror`
    solo lo pone la CI, y sin CI la regla de «0 warnings» depende de que alguien mire.
    Mientras no haya remoto por SSH, lo barato es meter `-warnaserror` en el `.csproj`.
-3. **Paridad con una tienda real**, pasos 4–6 de [`planning/24`](planning/24_paridad-con-tesloshop.md):
-   catálogo de tienda (`slug`, varias imágenes, tallas, tags, borrado lógico), dirección de
-   envío estructurada, y **PayPal** junto a Stripe (que además trae el reembolso).
+3. **Paridad con una tienda real**, pasos 5–6 de [`planning/24`](planning/24_paridad-con-tesloshop.md):
+   dirección de envío estructurada (hoy es un `string(500)`), y **PayPal** junto a Stripe,
+   que además trae el reembolso y con él poder cancelar una orden pagada.
 4. **`Shipping`** — el sexto y último contexto acotado previsto, y lo único grande que falta
    de dominio. De paso le daría consumidor a `order.placed`, que hoy no se emite porque
    publicar sin cola vuelve como 312 NO_ROUTE.

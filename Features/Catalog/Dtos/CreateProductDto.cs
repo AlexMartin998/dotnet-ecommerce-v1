@@ -18,9 +18,19 @@ public class CreateProductDto
   [Range(0, 9999999999999999.99, ErrorMessage = "Price must be zero or greater")]
   public decimal Price { get; set; }
 
-  [MaxLength(300, ErrorMessage = "ImageUrl can't be longer than 300 characters")]
-  [Url(ErrorMessage = "ImageUrl must be a valid absolute URL")]
-  public string? ImageUrl { get; set; }
+  /// <summary>Opcional: si no viene, se deriva del nombre.</summary>
+  [MaxLength(200, ErrorMessage = "Slug can't be longer than 200 characters")]
+  [RegularExpression(@"^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      ErrorMessage = "Slug can only contain lowercase letters, digits and hyphens")]
+  public string? Slug { get; set; }
+
+  /// <summary>Etiquetas de navegación y búsqueda.</summary>
+  [MaxLength(20, ErrorMessage = "A product can't have more than 20 tags")]
+  public List<string> Tags { get; set; } = [];
+
+  /// <summary>Tallas o presentaciones. No afectan al stock, que es por producto.</summary>
+  [MaxLength(20, ErrorMessage = "A product can't have more than 20 sizes")]
+  public List<string> Sizes { get; set; } = [];
 
   [Required(ErrorMessage = "SKU is required")]
   [MaxLength(50, ErrorMessage = "SKU can't be longer than 50 characters")]

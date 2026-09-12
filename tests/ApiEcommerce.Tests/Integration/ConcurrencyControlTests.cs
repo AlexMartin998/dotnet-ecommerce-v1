@@ -106,7 +106,8 @@ public class ConcurrencyControlTests(ApiFactory factory)
 
     var product = await admin.PostAsJsonAsync("/api/v1/product", new
     {
-      name = "Producto con version",
+      // Único: el slug se deriva del nombre y es único entre los productos vivos.
+      name = VersioningAndHealthTests.Unique("Ver"),
       price = 9.99m,
       sku = $"ETG-{Guid.NewGuid():N}"[..20],
       stock = 5,

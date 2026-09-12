@@ -26,6 +26,7 @@ public sealed class ProductRules(
   {
     await EnsureCategoryExistsAsync(dto.CategoryId, ct);
     await EnsureSkuIsFreeAsync(dto.SKU, excludeId: null, ct);
+    await EnsureSlugIsFreeAsync(dto, ct);
   }
 
   public async Task EnsureCanUpdateAsync(
@@ -88,5 +89,26 @@ public sealed class ProductRules(
   {
     if (await productRepository.SkuExistsAsync(sku, excludeId, ct))
       throw new ConflictAppException($"SKU '{sku}' is already registered.");
+  }
+
+  /// <summary>
+  /// El slug es único, y cuando se deriva del nombre dos productos que se llaman igual
+  /// chocan. El mensaje dice qué hacer, porque el cliente no eligió ese slug.
+  /// </summary>
+  /// <remarks>
+  /// La garantía sigue siendo el índice único de la base; esto solo da un 409 con un
+  /// mensaje útil en el caso normal. Se deriva con el mismo helper que el mapeador.
+  /// </remarks>
+  private async Task EnsureSlugIsFreeAsync(CreateProductDto dto, CancellationToken ct)
+  {
+    var slug = Slugs.From(dto.Slug) ?? Slugs.From(dto.Name);
+
+    if (slug is null || !await productRepository.SlugExistsAsync(slug, ct)) return;
+
+    throw new ConflictAppException(
+        dto.Slug is null
+            ? $"The slug '{slug}', derived from the product name, is already in use. " +
+              "Send an explicit 'slug' to choose a different one."
+            : $"Slug '{slug}' is already in use.");
   }
 }

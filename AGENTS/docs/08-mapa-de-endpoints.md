@@ -87,11 +87,25 @@ Base: `http://localhost:8021/api/v1/…` — todas las rutas van versionadas por
 | GET | `/{id}` | 🔓 | Un producto |
 | GET | `/category/{categoryId}` | 🔓 | Productos de una categoría (404 si la categoría no existe) |
 | GET | `/search?name=` | 🔓 | Búsqueda por nombre |
+| **GET** | `/slug/{slug}` | 🔓 | La ficha por su URL pública. Ruta aparte de `/{id:int}` porque un slug numérico caería en la del id |
 | POST | `/` | 👑 | Crea |
 | PATCH | `/{id}` | 👑 | Actualiza parcial. **Concurrencia optimista**: `If-Match` con el `ETag` → 412 si otro admin editó antes |
-| DELETE | `/{id}` | 👑 | Borra |
-| POST | `/{id}/image` | 👑 | Sube la imagen (multipart, máx. 2 MB). Va **dentro de `wwwroot/`**: es pública |
+| DELETE | `/{id}` | 👑 | **Retira** el producto (borrado lógico): desaparece de todas las consultas y la fila se queda |
+| POST | `/{id}/image` | 👑 | **Añade** una imagen (multipart, máx. 2 MB, hasta 8). Va **dentro de `wwwroot/`**: es pública |
+| DELETE | `/{id}/image/{imageId}` | 👑 | Quita una imagen y borra su fichero **después** del commit |
 | **POST** | **`/buy`** | 🔒 | **Descuenta stock por SKU. NO crea ninguna orden.** Idempotente (`Idempotency-Key`). Emite `product.purchased` |
+
+> ⚠️ **Retirar un producto NO borra la fila.** `OrderItems` tiene clave foránea a
+> `Products`, así que un borrado real fallaría; el borrado lógico (`DeletedAt` + filtro
+> global) lo esconde de todo y deja la orden intacta. Los índices únicos de `SKU` y `Slug`
+> van **filtrados por `DeletedAt`**, así que retirar un producto **libera** los dos.
+>
+> ⚠️ **El `slug` se deriva del nombre y es único entre los productos vivos**, así que dos
+> productos no pueden llamarse igual salvo que uno mande un `slug` explícito. El 409 lo dice.
+> Un PATCH **nunca** lo cambia: movería una URL que ya circula.
+>
+> ⚠️ **`sizes` es informativo: el stock es por producto, no por talla.** Pasarlo a variantes
+> cambiaría el contrato de `/cart/quote`, de `POST /order` y toda la reserva.
 
 ### 1.5 `CartController` — `/api/v1/Cart`
 

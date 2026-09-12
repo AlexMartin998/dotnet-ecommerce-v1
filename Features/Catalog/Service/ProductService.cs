@@ -99,18 +99,13 @@ public class ProductService : IProductService
   public Task UpdateAsync(int id, UpdateProductDto dto, CancellationToken ct = default)
       => _crud.UpdateAsync(id, dto, ct);
 
-  // Delete no se delega tal cual: además de la fila hay que borrar la imagen del disco.
+  // Delete no se delega: retirar un producto es marcarlo, no borrar la fila. Las líneas de
+  // orden lo referencian con clave foránea, y un comprobante de ayer tiene que seguir
+  // apuntando a algo. Las imágenes se quedan: el producto puede volver.
   public async Task DeleteAsync(int id, CancellationToken ct = default)
   {
-    var product = await _repository.GetByIdAsync(id, ct)
-        ?? throw new NotFoundAppException("Product", id);
-
-    var imagePath = product.ImageUrl;
-
-    await _crud.DeleteAsync(id, ct);
-
-    // Después del borrado en base: si la fila no se pudo borrar, el archivo debe seguir.
-    await _storage.DeleteAsync(imagePath, ct);
+    if (!await _repository.SoftDeleteAsync(id, ct))
+      throw new NotFoundAppException("Product", id);
   }
 
   // ---- operaciones propias de Product --------------------------------------
@@ -131,26 +126,58 @@ public class ProductService : IProductService
     return [.. products.Select(_mapper.ToDto)];
   }
 
-  public async Task<ProductDto> SetImageAsync(int id, FileUpload upload, CancellationToken ct = default)
+  /// <summary>Tope de imágenes por producto.</summary>
+  /// <remarks>
+  /// Sin tope, subir imágenes es escritura ilimitada en disco por parte de cualquier
+  /// administrador, y la respuesta del catálogo crece sin control.
+  /// </remarks>
+  private const int MaxImages = 8;
+
+  public async Task<ProductDto> AddImageAsync(int id, FileUpload upload, CancellationToken ct = default)
   {
     ArgumentNullException.ThrowIfNull(upload);
 
-    var product = await _repository.GetByIdAsync(id, ct)
+    var product = await _repository.GetByIdWithImagesAsync(id, ct)
         ?? throw new NotFoundAppException("Product", id);
 
-    var previous = product.ImageUrl;
+    if (product.Images.Count >= MaxImages)
+      throw new ConflictAppException($"A product can't have more than {MaxImages} images.");
 
-    // Se guarda la nueva antes de borrar la vieja: si la validación falla, el producto
-    // conserva la imagen que ya tenía.
+    // El fichero primero: si la validación de magic bytes falla, no hay fila que deshacer.
     var stored = await _storage.SaveImageAsync(upload, ct);
 
-    product.ImageUrl = stored;
-    await _repository.UpdateAsync(product, ct);
+    product.Images.Add(new ProductImage
+    {
+      Url = stored,
+      // Al final de la cola: la 0 sigue siendo la del listado hasta que alguien la quite.
+      Position = product.Images.Count == 0 ? 0 : product.Images.Max(i => i.Position) + 1
+    });
 
-    await _storage.DeleteAsync(previous, ct);
+    await _repository.UpdateAsync(product, ct);
 
     return _mapper.ToDto(await _repository.GetByIdWithCategoryAsync(id, ct) ?? product);
   }
+
+  public async Task<ProductDto> RemoveImageAsync(int id, int imageId, CancellationToken ct = default)
+  {
+    var product = await _repository.GetByIdWithImagesAsync(id, ct)
+        ?? throw new NotFoundAppException("Product", id);
+
+    var image = product.Images.FirstOrDefault(i => i.Id == imageId)
+        ?? throw new NotFoundAppException("ProductImage", imageId);
+
+    product.Images.Remove(image);
+    await _repository.UpdateAsync(product, ct);
+
+    // Después del commit: si la fila no se pudo borrar, el fichero debe seguir ahí.
+    await _storage.DeleteAsync(image.Url, ct);
+
+    return _mapper.ToDto(await _repository.GetByIdWithCategoryAsync(id, ct) ?? product);
+  }
+
+  public async Task<ProductDto> GetBySlugAsync(string slug, CancellationToken ct = default)
+      => _mapper.ToDto(await _repository.GetBySlugAsync(slug, ct)
+          ?? throw new NotFoundAppException("Product", slug));
 
   public Task<CommandOutcome<ProductDto>> BuyAsync(
       BuyProductDto dto, CommandIntent intent, string? buyerUserId = null,

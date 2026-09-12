@@ -48,7 +48,7 @@ public class CatalogMappersTests
     Assert.Equal(3, existing.CategoryId);
     Assert.Equal(10, existing.Stock);
     Assert.Equal(99.9m, existing.Price);
-    Assert.Equal("/img/foto.png", existing.ImageUrl);
+    Assert.Equal(["ropa"], existing.Tags);
   }
 
   [Fact]
@@ -135,6 +135,78 @@ public class CatalogMappersTests
     Assert.Null(_products.ToDto(Product(categoryId: 3, stock: 10, price: 99.9m)).CategoryName);
   }
 
+  // ---- slug, etiquetas e imágenes ------------------------------------------
+
+  [Fact]
+  public void CreateProduct_DerivesTheSlugFromTheNameWhenItIsNotSent()
+  {
+    var entity = _products.ToEntity(new CreateProductDto
+    {
+      Name = "  Camión Ñandú 4x4  ", SKU = "SKU-9", Price = 1m, Stock = 1, CategoryId = 3
+    });
+
+    // Sin acentos: "Camión" y "Camion" tienen que dar el mismo slug o el índice único no
+    // los ve como el mismo producto.
+    Assert.Equal("camion-nandu-4x4", entity.Slug);
+  }
+
+  [Fact]
+  public void CreateProduct_KeepsTheSlugTheClientSends()
+  {
+    var entity = _products.ToEntity(new CreateProductDto
+    {
+      Name = "Otro nombre", Slug = "el-mio", SKU = "SKU-9", Price = 1m, Stock = 1, CategoryId = 3
+    });
+
+    Assert.Equal("el-mio", entity.Slug);
+  }
+
+  [Fact]
+  public void UpdateProduct_NeverTouchesTheSlug()
+  {
+    // Cambiarlo rompería los enlaces que ya circulan.
+    var existing = Product(categoryId: 3, stock: 10, price: 99.9m);
+
+    _products.Apply(new UpdateProductDto { Name = "Nombre nuevo" }, existing);
+
+    Assert.Equal("producto", existing.Slug);
+  }
+
+  [Fact]
+  public void UpdateProduct_ReplacesTheTagsInsteadOfMergingThem()
+  {
+    // Fusionar no dejaría forma de QUITAR una etiqueta.
+    var existing = Product(categoryId: 3, stock: 10, price: 99.9m);
+
+    _products.Apply(new UpdateProductDto { Tags = ["oferta"] }, existing);
+
+    Assert.Equal(["oferta"], existing.Tags);
+  }
+
+  [Fact]
+  public void UpdateProduct_WithoutTags_LeavesThemAlone()
+  {
+    var existing = Product(categoryId: 3, stock: 10, price: 99.9m);
+
+    _products.Apply(new UpdateProductDto { Name = "x" }, existing);
+
+    Assert.Equal(["ropa"], existing.Tags);
+  }
+
+  [Fact]
+  public void ProductToDto_ReturnsTheImagesInOrder()
+  {
+    var existing = Product(categoryId: 3, stock: 10, price: 99.9m);
+    existing.Images =
+    [
+      new ProductImage { Url = "/b.png", Position = 1 },
+      new ProductImage { Url = "/a.png", Position = 0 }
+    ];
+
+    // El orden es parte del dato: la 0 es la que se enseña en el listado.
+    Assert.Equal(["/a.png", "/b.png"], _products.ToDto(existing).Images);
+  }
+
   // ---- normalización: se recorta al escribir -------------------------------
 
   [Fact]
@@ -191,7 +263,8 @@ public class CatalogMappersTests
     Name = "Producto",
     Description = "descripcion",
     SKU = "SKU-1",
-    ImageUrl = "/img/foto.png",
+    Slug = "producto",
+    Tags = ["ropa"],
     Price = price,
     Stock = stock,
     CategoryId = categoryId

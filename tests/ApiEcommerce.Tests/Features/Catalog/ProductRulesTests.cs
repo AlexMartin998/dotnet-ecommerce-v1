@@ -67,6 +67,7 @@ public class ProductRulesTests
   {
     _categories.Setup(r => r.ExistsAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(true);
     _products.Setup(r => r.SkuExistsAsync("SKU-1", null, It.IsAny<CancellationToken>())).ReturnsAsync(false);
+    _products.Setup(r => r.SlugExistsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
 
     await Sut().EnsureCanCreateAsync(Create(sku: "SKU-1", categoryId: 1));
 

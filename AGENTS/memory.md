@@ -14,10 +14,23 @@ nunca hace push (`rules.md` §12).
 
 ### Estado medido hoy (2026-09-12)
 
-`dotnet build -warnaserror` **limpio** y **359/359 tests** en verde (~17 s) contra SQL
+`dotnet build -warnaserror` **limpio** y **377/377 tests** en verde (~17 s) contra SQL
 Server, Redis y RabbitMQ reales. Las dos direcciones de la infra responden: `192.168.3.82`
 (LAN del host, confirmada por el owner) y `172.17.0.1` (puerta del bridge, la que usan los
 tests por defecto).
+
+**Lo que se hizo hoy (3)**: `planning/24` paso 4 — **el catálogo se vuelve de tienda**, en
+una migración autorizada por el owner: `Slug` único con `GET /product/slug/{slug}`, tabla
+`ProductImages`, `Tags`/`Sizes` como colecciones primitivas, **borrado lógico** y la **FK
+`OrderItems → Products`** que faltaba. 🔴 La migración que generó EF **estaba mal en dos
+sitios** (índice único sobre 162 slugs vacíos, y `DropColumn ImageUrl` antes de copiar su
+contenido): el arreglo es el **orden**. ⚠️ Los índices únicos van **filtrados por
+`DeletedAt`**, o un producto retirado bloquea su SKU para siempre. ⚠️ Y **dos productos ya no
+pueden llamarse igual**: el slug sale del nombre y es único.
+
+De aquí nace `rules.md` §11.1: **las operaciones delicadas sobre la base se preguntan antes**,
+diciendo qué deja de ser posible después. Hoy la base es local; con un despliegue real la
+respuesta sería otra.
 
 **Lo que se hizo hoy (2)**: `planning/24` — **paridad de negocio con una tienda real**
 (comparación contra un e-commerce Next.js con panel de administración). Tres huecos cerrados:
@@ -129,8 +142,8 @@ deudas menores anotadas en `docs/06` §Paso 12.
    `AGENTS/ci/ci.yml.disabled` y nunca ha corrido. Alternativa barata mientras no haya
    remoto por SSH: meter `-warnaserror` en el `.csproj`, para que la regla de «0 warnings»
    la obligue el build y no la buena memoria de quien commitea.
-3. **Pasos 4–6 de `planning/24`**: catálogo de tienda (`slug`, varias imágenes, tallas, tags,
-   borrado lógico), dirección de envío estructurada, y **PayPal**. ⚠️ Sobre PayPal:
+3. **Pasos 5–6 de `planning/24`**: dirección de envío estructurada (hoy es un `string(500)`)
+   y **PayPal**. ⚠️ Sobre PayPal:
    `IPaymentGateway` está hecho a la medida de Stripe (crear intento + webhook) y PayPal
    necesita **capturar desde el servidor**, un tercer método que hoy no existe en el puerto.
 4. **`Shipping`, el sexto y último contexto previsto.** Es lo único grande que falta de

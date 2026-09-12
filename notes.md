@@ -4439,3 +4439,116 @@ medida de STRIPE                       PayPal: crear -> aprobar -> CAPTURAR (ser
        es poder enlazar "volver a comprar"
   - -- anadir PayPal sin tocar Stripe = `CaptureAsync` con **implementacion por defecto** en la
        interfaz (default interface member, como en `IEntityRules`) que lance `NotSupported`
+
+
+
+
+
+
+## 46. El catalogo se vuelve de tienda  <- y la migracion que EF genero MAL
+
+- --- ⭐ **Antes de tocar nada: lo delicado sobre la base SE PREGUNTA** (`rules.md` §11.1)
+```
+NO se pregunta:  tabla nueva, columna NULLABLE, indice NO unico
+SI se pregunta:  borrar/renombrar columna con datos
+                 FK sobre filas que ya existen
+                 indice UNICO sobre valores repetidos
+                 NOT NULL sobre algo que admitia nulos
+                 UPDATE/DELETE de relleno dentro de una migracion
+```
+  - -- ⭐ **y no basta con pedir permiso**: hay que decir **que deja de ser posible despues**.
+       Aqui: la FK arregla un ProductId colgando, pero convierte en **409 permanente** un
+       borrado que hoy funciona. Eso es lo que el owner necesita para decidir
+  - -- ⚠️ **la respuesta depende del ENTORNO**. Base local de desarrollo -> barato, adelante.
+       Con un despliegue real la misma pregunta se responde distinto: la FK se hace en varios
+       pasos (columna nullable -> backfill -> constraint), no en una migracion
+
+- --- 🔴 **La migracion que genero EF estaba mal en DOS sitios**
+```
+Lo que EF escribio                              Por que revienta
+  AddColumn Slug ... defaultValue: ""             162 filas quedan con ''
+  ...                                             y despues
+  CreateIndex IX_Products_Slug UNIQUE             -> falla a mitad de la migracion
+
+  DropColumn ImageUrl                             se tira ANTES de copiar su contenido
+  CreateTable ProductImages                       -> las imagenes se pierden sin avisar
+```
+  - -- ⭐ **el arreglo entero es el ORDEN**:
+```
+crear columnas -> RELLENAR -> tirar la vieja -> crear los indices
+```
+  - -- y antes de aplicarla, mirar los datos de verdad. Tres consultas que costaron 30 s:
+```sql
+SELECT COUNT(*) FROM OrderItems oi                   -- lineas huerfanas: la FK fallaria
+  WHERE NOT EXISTS (SELECT 1 FROM Products p WHERE p.Id = oi.ProductId);
+SELECT COUNT(*) FROM (SELECT LOWER(Name) n FROM Products
+  GROUP BY LOWER(Name) HAVING COUNT(*) > 1) x;       -- nombres que chocarian como slug
+```
+  - -- salieron 0 y 0, asi que la FK entraba limpia. **Si hubiera salido otra cosa, el plan
+       cambiaba**, y eso es justo lo que no se sabe sin mirar
+  - -- el slug de relleno lleva el **Id pegado** (`camiseta-basica-42`): garantiza unicidad sin
+       resolver colisiones en T-SQL, que **no tiene expresiones regulares**
+
+- --- ⭐ **El borrado logico trae una trampa DE REGALO que casi nadie ve**
+```sql
+-- MAL: un producto retirado bloquea su SKU PARA SIEMPRE, y la fila es invisible
+CREATE UNIQUE INDEX IX_Products_SKU ON Products(SKU);
+
+-- BIEN: el indice solo mira a los vivos
+CREATE UNIQUE INDEX IX_Products_SKU ON Products(SKU) WHERE DeletedAt IS NULL;
+```
+```cs
+modelBuilder.Entity<Product>().HasIndex(p => p.SKU).IsUnique().HasFilter("[DeletedAt] IS NULL");
+```
+  - -- sin el filtro no hay salida: no puedes editar la fila para liberar el SKU **porque el
+       filtro global la esconde**. Verificado: retirar y volver a crear con el mismo SKU -> 201
+  - -- el **filtro global** (`HasQueryFilter`) es lo que hace que el borrado logico no sea un
+       `WHERE DeletedAt IS NULL` que alguien olvida en un repositorio:
+```cs
+modelBuilder.Entity<Product>().HasQueryFilter(p => p.DeletedAt == null);
+// y para mirarlo igualmente, en un test:  .IgnoreQueryFilters()
+```
+  - -- ⚠️ EF avisa si la entidad hija (`ProductImage`) no tiene el **mismo filtro**: sin el,
+       consultar ProductImages por su cuenta devuelve las de productos retirados
+
+- --- ⭐ **La FK que faltaba, y por que el borrado logico es su contrapartida OBLIGATORIA**
+```
+antes:  OrderItems.ProductId era un int SUELTO -> borrar un producto vendido funcionaba
+        en silencio y la linea quedaba apuntando a nada
+ahora:  FK con Restrict  ->  el borrado real FALLA
+        + borrado logico ->  retirar el producto sigue siendo posible
+```
+  - -- las dos piezas **van juntas o ninguna**: la FK sola convierte "retirar del catalogo" en
+       un 409 permanente, que es peor que el problema que arregla
+  - -- `Restrict` y no `Cascade`: una orden **no se borra** porque el catalogo cambie
+
+- --- **El slug, y la consecuencia que hay que conocer ANTES de decidirlo**
+```
+slug = derivado del nombre + UNICO  =>  DOS PRODUCTOS NO PUEDEN LLAMARSE IGUAL
+```
+  - -- salio al migrar, no al disenar: el helper de tests creaba todo como "Producto de
+       prueba" y **diez tests se cayeron a la vez** con 409
+  - -- la salida es mandar un `slug` explicito, y **el 409 lo dice con esas palabras**: el
+       cliente no eligio ese slug, asi que el error tiene que decirle que hacer
+  - -- ⚠️ el slug **NO se actualiza en un PATCH**: cambiarlo mueve una URL que ya circula
+       (enlaces compartidos, paginas ya generadas, `getStaticPaths`)
+  - -- se descomponen los acentos: "Camión" y "Camion" tienen que dar el mismo slug o el
+       indice unico no los ve como el mismo producto. Medido: `camion-nandu-sf`
+
+- --- **Colecciones primitivas: cuando NO hace falta una tabla**
+```cs
+public List<string> Tags { get; set; } = [];   // EF 8+: columna JSON, sin tabla
+public ICollection<ProductImage> Images { ... } // tabla: cada una tiene orden y se borra sola
+```
+  - -- la pregunta no es "¿son varios?" sino **"¿tienen atributos propios y se consultan por
+       si solas?"**. Las etiquetas no; las imagenes si (su `Position`)
+  - -- en el PATCH se **reemplazan enteras**; fusionar no dejaria forma de **quitar** una
+
+- --- ⚠️ **Lo que NO se trajo del proyecto de origen, y por que**
+  - -- **`gender` y `type`**: son vocabulario de una tienda de ROPA. Meterlos en un catalogo
+       generico hornea un vertical dentro de el. Eso lo hacen `Category` y las `Tags`
+  - -- **stock por talla**: las tallas son informativas y el stock sigue siendo **por
+       producto**. Hacerlo por variante cambia el contrato de `/cart/quote`, de `POST /order`
+       y de toda la reserva, que es la parte mas cuidada del repo. **La tienda de origen
+       tampoco lo hace**
+  - -- ⭐ la regla: traer una *feature* de otro proyecto no es traer su *modelo*

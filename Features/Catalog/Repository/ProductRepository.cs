@@ -18,6 +18,7 @@ public class ProductRepository(AppDbContext db)
   {
     return await Query()
         .Include(p => p.Category)
+        .Include(p => p.Images)
         .OrderByDescending(p => p.CreatedAt)
         .ToListAsync(ct);
   }
@@ -26,6 +27,7 @@ public class ProductRepository(AppDbContext db)
   {
     return await Query()
         .Include(p => p.Category)
+        .Include(p => p.Images)
         .FirstOrDefaultAsync(p => p.Id == id, ct);
   }
 
@@ -34,6 +36,7 @@ public class ProductRepository(AppDbContext db)
   {
     var ordered = Query()
         .Include(p => p.Category)
+        .Include(p => p.Images)
         .OrderByDescending(p => p.CreatedAt)
         .ThenByDescending(p => p.Id);   // desempate: sin él, dos productos creados en el
                                         // mismo tick pueden repetirse entre páginas.
@@ -54,6 +57,7 @@ public class ProductRepository(AppDbContext db)
   {
     return await Query()
         .Include(p => p.Category)
+        .Include(p => p.Images)
         .Where(p => p.CategoryId == categoryId)
         .OrderByDescending(p => p.CreatedAt)
         .ToListAsync(ct);
@@ -67,6 +71,7 @@ public class ProductRepository(AppDbContext db)
 
     return await Query()
         .Include(p => p.Category)
+        .Include(p => p.Images)
         .Where(p => EF.Functions.Like(p.Name, pattern))
         .OrderByDescending(p => p.CreatedAt)
         .ToListAsync(ct);
@@ -82,7 +87,38 @@ public class ProductRepository(AppDbContext db)
 
     return await Query()
         .Include(p => p.Category)
+        .Include(p => p.Images)
         .FirstOrDefaultAsync(p => p.SKU == normalized, ct);   // usa IX_Products_SKU
+  }
+
+  public async Task<Product?> GetByIdWithImagesAsync(int id, CancellationToken ct = default)
+      => await Query(tracking: true)
+          .Include(p => p.Images)
+          .FirstOrDefaultAsync(p => p.Id == id, ct);
+
+  public async Task<bool> SlugExistsAsync(string slug, CancellationToken ct = default)
+      => await Query().AnyAsync(p => p.Slug == slug, ct);
+
+  public async Task<Product?> GetBySlugAsync(string slug, CancellationToken ct = default)
+      => await Query()
+          .Include(p => p.Category)
+          .Include(p => p.Images)
+          .FirstOrDefaultAsync(p => p.Slug == slug, ct);
+
+  public async Task<bool> SoftDeleteAsync(int id, CancellationToken ct = default)
+  {
+    // Fuera del árbol de expresión: dentro, DateTime.Now se traduciría a GETDATE().
+    var now = DateTime.Now;
+
+    // Condicional: dos administradores borrando a la vez no pueden contarlo dos veces.
+    // El filtro global ya excluye los retirados, así que `DeletedAt == null` es implícito.
+    var affected = await Query(tracking: true)
+        .Where(p => p.Id == id)
+        .ExecuteUpdateAsync(setters => setters
+            .SetProperty(p => p.DeletedAt, now)
+            .SetProperty(p => p.UpdatedAt, now), ct);
+
+    return affected == 1;
   }
 
   public async Task<(int Total, int OutOfStock, int LowStock)> CountStockAsync(

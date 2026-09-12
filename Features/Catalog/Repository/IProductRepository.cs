@@ -55,6 +55,24 @@ public interface IProductRepository : IBaseRepository<Product>
   /// </remarks>
   Task<bool> TryDecrementStockAsync(int productId, int quantity, CancellationToken ct = default);
 
+  /// <summary>Carga el producto rastreado junto a sus imágenes, para poder añadir o quitar.</summary>
+  Task<Product?> GetByIdWithImagesAsync(int id, CancellationToken ct = default);
+
+  /// <summary>Retira el producto del catálogo sin borrar la fila.</summary>
+  /// <remarks>
+  /// Borrado lógico porque las líneas de orden apuntan al producto por clave foránea: un
+  /// borrado real las dejaría sin referencia o fallaría. Un filtro global lo esconde de
+  /// todas las consultas a partir de aquí.
+  /// </remarks>
+  /// <returns><c>true</c> si esta llamada fue la que lo retiró.</returns>
+  Task<bool> SoftDeleteAsync(int id, CancellationToken ct = default);
+
+  /// <summary>¿Hay ya un producto vivo con ese slug?</summary>
+  Task<bool> SlugExistsAsync(string slug, CancellationToken ct = default);
+
+  /// <summary>El producto vivo con ese slug, con su categoría y sus imágenes.</summary>
+  Task<Product?> GetBySlugAsync(string slug, CancellationToken ct = default);
+
   /// <summary>Total de productos, agotados y con stock bajo, en la base.</summary>
   /// <remarks>
   /// <paramref name="lowStockThreshold"/> es el tope de «bajo», y el agotado no cuenta como

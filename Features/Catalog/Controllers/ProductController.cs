@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using ApiEcommerce.Shared.Auth;
 using ApiEcommerce.Shared.Http;
 using ApiEcommerce.Shared.Idempotency;
@@ -161,7 +162,7 @@ public class ProductController : ControllerBase
     /// <c>[RequestSizeLimit]</c> corta la petición antes de leerla entera.
     /// </remarks>
     [Authorize(Roles = Roles.Admin)]
-    [HttpPost("{id:int}/image", Name = "SetProductImage")]
+    [HttpPost("{id:int}/image", Name = "AddProductImage")]
     [Consumes("multipart/form-data")]
     [RequestSizeLimit(2 * 1024 * 1024)]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -169,7 +170,8 @@ public class ProductController : ControllerBase
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<ProductDto>> SetProductImage(
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ProductDto>> AddProductImage(
         int id, IFormFile file, CancellationToken ct)
     {
         if (file is null || file.Length == 0)
@@ -178,10 +180,45 @@ public class ProductController : ControllerBase
         // IFormFile se adapta a FileUpload: el servicio no debe conocer ASP.NET Core.
         await using var content = file.OpenReadStream();
 
-        var result = await _service.SetImageAsync(
+        var result = await _service.AddImageAsync(
             id, new FileUpload(content, file.FileName, file.ContentType, file.Length), ct);
 
         return Ok(result);
+    }
+
+    /// <summary>Quita una imagen del producto. Solo administración.</summary>
+    [Authorize(Roles = Roles.Admin)]
+    [HttpDelete("{id:int}/image/{imageId:int}", Name = "RemoveProductImage")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ProductDto>> RemoveProductImage(
+        int id, int imageId, CancellationToken ct)
+        => Ok(await _service.RemoveImageAsync(id, imageId, ct));
+
+    /// <summary>El producto por su slug, que es lo que el front usa en la URL pública.</summary>
+    /// <remarks>
+    /// Ruta aparte de <c>/{id:int}</c> y no la misma con restricción: un slug numérico
+    /// («2024») caería en la ruta del id y devolvería un 404 sin relación aparente.
+    /// </remarks>
+    [AllowAnonymous]
+    [HttpGet("slug/{slug}", Name = "GetProductBySlug")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ProductDto>> GetProductBySlug(
+        [StringLength(200, MinimumLength = 1)] string slug, CancellationToken ct)
+    {
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        var product = await _service.GetBySlugAsync(slug, ct);
+
+        // Mismo ETag que la ruta por id: el front puede cachear la ficha por cualquiera.
+        if (product.RowVersion is not null)
+            Response.Headers.ETag = $"\"{product.RowVersion}\"";
+
+        return Ok(product);
     }
 
     /// <summary>Descuenta stock por SKU. Hereda el [Authorize] de la clase: cualquier usuario autenticado.</summary>

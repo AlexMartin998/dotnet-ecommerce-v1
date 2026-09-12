@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using ApiEcommerce.Features.Accounts.Models;
 using ApiEcommerce.Features.Catalog.Models;
+using ApiEcommerce.Features.Catalog.Service;
 
 namespace ApiEcommerce.Data;
 
@@ -120,17 +121,34 @@ public static class DataSeeder
     var ropa = categories[1].Id;
     var hogar = categories[2].Id;
 
+    // El slug se deriva del nombre, igual que en ProductMapper: si el seeder los inventara
+    // por su cuenta, el catalogo sembrado no se pareceria al que crea la API.
     db.Products.AddRange(
-        new Product { Name = "Portatil 14\"", Description = "8 GB RAM, 512 GB SSD", Price = 899.99m, SKU = "ELEC-LAP-001", Stock = 12, CategoryId = electronica },
-        new Product { Name = "Telefono X", Description = "128 GB, pantalla 6.1\"", Price = 649.00m, SKU = "ELEC-PHO-001", Stock = 30, CategoryId = electronica },
-        new Product { Name = "Auriculares BT", Description = "Cancelacion de ruido", Price = 129.50m, SKU = "ELEC-AUD-001", Stock = 55, CategoryId = electronica },
-        new Product { Name = "Camiseta basica", Description = "Algodon organico", Price = 19.99m, SKU = "ROPA-CAM-001", Stock = 120, CategoryId = ropa },
-        new Product { Name = "Sudadera capucha", Description = "Unisex", Price = 39.90m, SKU = "ROPA-SUD-001", Stock = 60, CategoryId = ropa },
-        new Product { Name = "Cafetera italiana", Description = "6 tazas, aluminio", Price = 24.95m, SKU = "HOGA-CAF-001", Stock = 40, CategoryId = hogar },
-        new Product { Name = "Juego de sabanas", Description = "150x200, percal", Price = 44.00m, SKU = "HOGA-SAB-001", Stock = 25, CategoryId = hogar });
+        Seeded("Portatil 14\"", "8 GB RAM, 512 GB SSD", 899.99m, "ELEC-LAP-001", 12, electronica, ["electronica", "portatiles"]),
+        Seeded("Telefono X", "128 GB, pantalla 6.1\"", 649.00m, "ELEC-PHO-001", 30, electronica, ["electronica", "telefonos"]),
+        Seeded("Auriculares BT", "Cancelacion de ruido", 129.50m, "ELEC-AUD-001", 55, electronica, ["electronica", "audio"]),
+        Seeded("Camiseta basica", "Algodon organico", 19.99m, "ROPA-CAM-001", 120, ropa, ["ropa", "unisex"], ["S", "M", "L", "XL"]),
+        Seeded("Sudadera capucha", "Unisex", 39.90m, "ROPA-SUD-001", 60, ropa, ["ropa", "unisex"], ["M", "L", "XL"]),
+        Seeded("Cafetera italiana", "6 tazas, aluminio", 24.95m, "HOGA-CAF-001", 40, hogar, ["hogar", "cocina"]),
+        Seeded("Juego de sabanas", "150x200, percal", 44.00m, "HOGA-SAB-001", 25, hogar, ["hogar", "dormitorio"]));
 
     await db.SaveChangesAsync(ct);
 
     logger.LogInformation("Seeded {Categories} categories and 7 products", categories.Count);
   }
+
+  private static Product Seeded(
+      string name, string description, decimal price, string sku, int stock, int categoryId,
+      List<string> tags, List<string>? sizes = null) => new()
+      {
+        Name = name,
+        Slug = Slugs.From(name)!,
+        Description = description,
+        Price = price,
+        SKU = sku,
+        Stock = stock,
+        CategoryId = categoryId,
+        Tags = tags,
+        Sizes = sizes ?? []
+      };
 }

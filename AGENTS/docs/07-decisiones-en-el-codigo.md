@@ -781,6 +781,28 @@ Comprobación de unicidad genérica por nombre de campo, resuelta con reflexión
 - **`OrderService.GetStatsAsync` rellena con 0 los estados sin filas:** un `GROUP BY` no devuelve la clave que no existe, y un hueco en el panel se lee como un fallo.
 - **Se cuenta en SQL, nunca trayendo filas** (`CountStockAsync` hace los tres `COUNT` condicionales en una sola agregación). Contar en memoria funciona hasta que el catálogo crece.
 
+### `Features/Catalog/Models/Product.cs` — lo que trajo el paso 4
+
+- **El borrado es lógico porque `OrderItems` ya tiene clave foránea al producto.** Antes el `ProductId` de la línea era un `int` suelto: borrar un producto vendido funcionaba en silencio y la referencia quedaba colgando. Con la FK, un borrado real **fallaría**; con `DeletedAt` + filtro global, el producto desaparece de todo y la orden sigue entera.
+- 🔴 **Los dos índices únicos van FILTRADOS por `DeletedAt`.** Sin el filtro, un producto retirado seguiría bloqueando su SKU y su slug **para siempre**, y no hay forma de reutilizarlos a mano porque la fila es invisible. Es la trampa que el borrado lógico trae de regalo y casi nadie ve hasta que pasa.
+- **`Slug` no es `required`, al contrario que `Name` y `SKU`:** no lo manda el cliente, lo **deriva** `ProductMapper.ToEntity`, y un generador de código no puede satisfacer un miembro requerido con un valor calculado. La base lo sigue exigiendo (`NOT NULL`) y el índice único lo vigila.
+- **El slug no se actualiza nunca en un PATCH.** Cambiarlo mueve una URL que ya circula: enlaces compartidos, páginas cacheadas y el `getStaticPaths` de un front pasan a dar 404.
+- **`Tags` y `Sizes` son colecciones primitivas** (EF las guarda como JSON en una columna) y no tablas: no tienen atributos propios ni se consultan por sí solas, solo por producto. `ProductImage` **sí** es tabla, porque cada imagen tiene su orden y se borra una a una.
+- **Las tallas son informativas: el stock sigue siendo por producto.** Stock por variante cambia el contrato de `/cart/quote`, de `POST /order` y de toda la reserva, que es la parte más cuidada del repo. No se improvisa como efecto colateral de añadir un campo.
+- ⚠️ **No hay `gender` ni `type`, a propósito.** Son vocabulario de una tienda de ropa concreta; meterlos en el catálogo genérico hornea un vertical dentro de él. Lo que hace ese trabajo aquí es `Category` (la FK) y las `Tags`.
+
+### `Features/Catalog/Service/Slugs.cs`
+
+- **Se descomponen los acentos y se descartan las marcas diacríticas**, o «Camión» y «Camion» darían slugs distintos y el índice único no los vería como el mismo producto.
+- **Se llama `Slugs` y no `Slug`** porque dentro de `ProductMapper` chocaría con la propiedad `Product.Slug`.
+
+### `Migrations/…_StorefrontCatalog.cs`
+
+- 🔴 **La migración que generó EF estaba mal en dos sitios, y por eso se revisa antes de aplicar** (`rules.md` §11): dejaba el `Slug` a `''` en las 162 filas existentes y **después** creaba el índice único —reventaba a mitad—, y tiraba la columna `ImageUrl` **antes** de copiar su contenido a `ProductImages`.
+- **El relleno va entre crear las columnas y crear los índices**, y ese orden es el arreglo entero.
+- **El slug de relleno lleva el `Id` pegado** (`camiseta-basica-42`): garantiza unicidad sin resolver colisiones en T-SQL, que no tiene expresiones regulares. Los productos nuevos no pasan por ahí.
+- **Se comprobó antes de aplicarla** que no había líneas de orden huérfanas (habrían hecho fallar la FK) ni nombres duplicados.
+
 ### `Features/Catalog/Models/Category.cs`
 
 - **El índice único en BD es la ÚNICA garantía real de unicidad.** `CategoryRules` comprueba el nombre antes de escribir, pero entre esa comprobación y el INSERT cabe otra petición: dos POST simultáneos con el mismo nombre pasaban los dos. La regla sigue existiendo porque da un 409 con mensaje útil en el caso normal; el índice es la red que atrapa la carrera.

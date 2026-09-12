@@ -20,15 +20,19 @@ public interface IProductService
   /// <summary>Búsqueda por coincidencia parcial de nombre. Sin resultados devuelve lista vacía, no 404.</summary>
   Task<IEnumerable<ProductDto>> SearchAsync(string name, CancellationToken ct = default);
 
-  /// <summary>
-  /// Reemplaza la imagen del producto y devuelve el producto ya actualizado.
-  /// Borra la imagen anterior si era un archivo gestionado por la API.
-  /// </summary>
+  /// <summary>Añade una imagen pública al producto, al final de la lista.</summary>
   /// <remarks>
-  /// Es una operación aparte y no un campo del PATCH: subir un binario exige
+  /// Añade y no reemplaza: un producto de catálogo se enseña con varias fotos. Es una
+  /// operación aparte y no un campo del PATCH porque subir un binario exige
   /// <c>multipart/form-data</c> y cambiaría el content-type de todos los clientes.
   /// </remarks>
-  Task<ProductDto> SetImageAsync(int id, FileUpload upload, CancellationToken ct = default);
+  Task<ProductDto> AddImageAsync(int id, FileUpload upload, CancellationToken ct = default);
+
+  /// <summary>Quita una imagen del producto y borra su fichero del disco.</summary>
+  Task<ProductDto> RemoveImageAsync(int id, int imageId, CancellationToken ct = default);
+
+  /// <summary>El producto con ese slug, que es lo que el front usa en la URL pública.</summary>
+  Task<ProductDto> GetBySlugAsync(string slug, CancellationToken ct = default);
 
   /// <summary>
   /// Descuenta stock por SKU y devuelve el producto ya actualizado.

@@ -150,19 +150,40 @@ Cada contexto publica **los suyos**, y el front compone con tres llamadas en par
 
 ---
 
-## 4. Catálogo de tienda (siguiente)
+## 4. Catálogo de tienda — ✅ **hecho** (2026-09-12)
 
-`slug` único, `product_images` (varias por producto), `sizes`, `tags`, `gender`. Es **una
-migración** y toca el slice de referencia, así que va aparte y con su propio planning.
+Una sola migración (`StorefrontCatalog`), **autorizada por el owner** tras preguntar
+(`rules.md` §11.1, que nació de esta misma conversación): la base es local y de desarrollo.
 
-⚠️ Hallazgo de la comparación: **`OrderItems` no tiene FK a `Products`** (solo a `Orders`).
-Borrar un producto vendido funciona en silencio y el `ProductId` de la línea queda colgando.
-La línea congela sku/nombre/precio, así que la orden sobrevive, pero el front no puede
-enlazar «volver a comprar». El borrado lógico entra aquí.
+- [x] **`Slug`** único entre los productos vivos, derivado del nombre si no se manda, con
+      `GET /product/slug/{slug}` anónimo. No se actualiza en un PATCH: movería una URL viva.
+- [x] **`ProductImages`**, tabla propia. `POST /{id}/image` **añade** (hasta 8) y
+      `DELETE /{id}/image/{imageId}` quita. Se va la columna `ImageUrl`.
+- [x] **`Tags` y `Sizes`**, colecciones primitivas (JSON en columna). En el PATCH se
+      reemplazan enteras; omitirlas sigue siendo «no tocar».
+- [x] **Borrado lógico** (`DeletedAt` + filtro global) y **FK `OrderItems → Products`**.
+- [x] Los dos índices únicos, **filtrados por `DeletedAt`**.
+
+### 4.1 Lo que NO se trajo, y por qué
+
+⚠️ **`gender` y `type` se quedan fuera.** Son vocabulario de una tienda de ropa concreta;
+meterlos en el catálogo genérico hornea un vertical dentro de él. Aquí eso lo hacen
+`Category` (la FK) y las `Tags`, que `CLAUDE.md` §5.2 ya nombra como vocabulario del catálogo.
+
+⚠️ **Las tallas son informativas: el stock sigue siendo por producto.** Stock por variante
+cambia el contrato de `/cart/quote`, de `POST /order` y de toda la reserva. El propio
+documento de origen lo deja como pregunta abierta, y su tienda tampoco lo hace.
+
+### 4.2 La consecuencia que hay que conocer
+
+**Dos productos ya no pueden llamarse igual**, porque el slug sale del nombre y es único. Si
+es deliberado, se manda un `slug` explícito; el 409 lo dice con esas palabras. Salió al
+migrar: el helper de tests creaba todos los productos como «Producto de prueba».
 
 ---
 
 ## 5. Dirección de envío estructurada (siguiente)
+
 
 `ShippingAddress string(500)` → objeto con `firstName, lastName, line1, line2, city, zipCode,
 country, phone`. Alguien está concatenando y nadie puede volver a partirlo. Mejor migrarlo

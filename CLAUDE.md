@@ -294,7 +294,7 @@ Rutas **versionadas por segmento**: `[Route("api/v{version:apiVersion}/[controll
 | Controller | Endpoints |
 |---|---|
 | `CategoryController` | CRUD + `/paged`. Lecturas anónimas, escrituras `admin` |
-| `ProductController` | CRUD + `/paged` + `/category/{id}` + `/search` + `/{id}/image` + `GET /stats` (`admin`) + **`POST /buy`** |
+| `ProductController` | CRUD + `/paged` + `/category/{id}` + `/search` + **`GET /slug/{slug}`** + `POST`/`DELETE /{id}/image` + `GET /stats` (`admin`) + **`POST /buy`** |
 | `AuthController` | `register`, `login`, `refresh`, `logout`, `logout-all`, `password`, `me` |
 | `UserController` | listado, detalle, roles, bloqueo, `GET /stats` — todo `admin` |
 | `CartController` | **`POST /cart/quote`** — cotiza el carrito. **Anónimo**: existe antes que la sesión |
@@ -313,6 +313,17 @@ Rutas **versionadas por segmento**: `[Route("api/v{version:apiVersion}/[controll
   (`HttpContext.ApiVersionValue()`), o el `Location` falla con un 500 sin relación.
 - Swagger genera **un documento por versión descubierta**, así que añadir una v2 no toca
   `Program.cs`.
+
+⚠️ **Retirar un producto es un borrado LÓGICO** (`DeletedAt` + filtro global). `OrderItems`
+tiene clave foránea a `Products`, así que un borrado real fallaría o dejaría la línea
+colgando. Los dos índices únicos (`SKU` y `Slug`) van **filtrados por `DeletedAt`**, o un
+producto retirado bloquearía su propio SKU para siempre.
+⚠️ **El `slug` se deriva del nombre y es único**, así que **dos productos no pueden llamarse
+igual** salvo que uno mande un `slug` explícito — y el 409 lo dice. No se actualiza nunca en
+un PATCH: cambiarlo rompería los enlaces que ya circulan.
+⚠️ **`Tags` y `Sizes` son colecciones primitivas** (JSON en columna) y en el PATCH se
+**reemplazan enteras**; omitirlas sigue siendo «no tocar». Las tallas son informativas: **el
+stock es por producto**, y hacerlo por talla cambiaría todo el contrato de la reserva.
 
 ⚠️ **Cotizar no aparta stock y no obliga a nada.** `POST /cart/quote` es una foto: entre
 cotizarlo y comprarlo el precio y el stock pueden cambiar, y manda el checkout. Una línea sin

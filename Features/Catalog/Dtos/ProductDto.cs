@@ -9,13 +9,23 @@ public class ProductDto
 
   public string Name { get; set; } = string.Empty;
 
+  /// <summary>Identificador de la URL pública: <c>/product/{slug}</c>.</summary>
+  public string Slug { get; set; } = string.Empty;
+
   public string? Description { get; set; }
 
   public decimal Price { get; set; }
 
-  public string? ImageUrl { get; set; }
+  /// <summary>Imágenes públicas, en orden. La primera es la del listado.</summary>
+  public IReadOnlyList<string> Images { get; set; } = [];
 
   public string SKU { get; set; } = string.Empty;
+
+  /// <summary>Etiquetas de navegación y búsqueda.</summary>
+  public IReadOnlyList<string> Tags { get; set; } = [];
+
+  /// <summary>Tallas o presentaciones. Informativas: el stock es por producto.</summary>
+  public IReadOnlyList<string> Sizes { get; set; } = [];
 
   public int Stock { get; set; }
 

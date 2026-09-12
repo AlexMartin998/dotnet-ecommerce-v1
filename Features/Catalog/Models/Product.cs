@@ -8,7 +8,12 @@ namespace ApiEcommerce.Features.Catalog.Models;
 
 
 /// <summary>Producto del catálogo.</summary>
+/// <remarks>
+/// Los dos índices únicos van <b>filtrados por <c>DeletedAt</c></b>: con el borrado lógico,
+/// un producto retirado seguiría bloqueando su propio SKU y su slug para siempre.
+/// </remarks>
 [Index(nameof(SKU), IsUnique = true)]
+[Index(nameof(Slug), IsUnique = true)]
 public class Product : IAuditable
 {
 
@@ -27,8 +32,6 @@ public class Product : IAuditable
   [Column(TypeName = "decimal(18,2)")]
   public decimal Price { get; set; }
 
-  [MaxLength(300)]
-  public string? ImageUrl { get; set; }
 
   [Required]
   [MaxLength(50)]
@@ -41,6 +44,43 @@ public class Product : IAuditable
   public DateTime CreatedAt { get; set; } = DateTime.Now;
   public DateTime? UpdatedAt { get; set; } = null;
 
+
+  /// <summary>Identificador para la URL pública, único entre los productos vivos.</summary>
+  /// <remarks>
+  /// El front lo usa en <c>/product/{slug}</c>, que es lo que permite generar la página
+  /// estáticamente. Se deriva del nombre si no se manda, pero no se recalcula al renombrar:
+  /// cambiarlo rompería los enlaces que ya circulan.
+  /// </remarks>
+  // Sin `required`, al contrario que Name y SKU: no lo manda el cliente, lo DERIVA
+  // ProductMapper.ToEntity, y un generador no puede satisfacer un miembro requerido con un
+  // valor calculado. La base lo sigue exigiendo (NOT NULL) y el índice único lo vigila.
+  [Required]
+  [MaxLength(200)]
+  public string Slug { get; set; } = string.Empty;
+
+  /// <summary>Etiquetas de navegación y búsqueda: <c>men</c>, <c>shirts</c>, <c>oferta</c>…</summary>
+  /// <remarks>
+  /// Colección primitiva: EF la guarda como JSON en una columna. No hay tabla aparte porque
+  /// no tienen atributos propios ni se consultan por sí solas, solo por producto.
+  /// </remarks>
+  public List<string> Tags { get; set; } = [];
+
+  /// <summary>Tallas o presentaciones disponibles. Informativas.</summary>
+  /// <remarks>
+  /// El stock sigue siendo <b>por producto</b>, no por talla: stock por variante cambia el
+  /// contrato de la compra y toda la reserva, y eso no se improvisa aquí.
+  /// </remarks>
+  public List<string> Sizes { get; set; } = [];
+
+  /// <summary>Cuándo se retiró del catálogo. <c>null</c> mientras está a la venta.</summary>
+  /// <remarks>
+  /// Borrado lógico y no físico porque las órdenes apuntan al producto por id: borrarlo de
+  /// verdad dejaría esa referencia colgando. Un filtro global lo esconde de toda consulta.
+  /// </remarks>
+  public DateTime? DeletedAt { get; set; }
+
+  /// <summary>Imágenes públicas, en el orden en que se enseñan.</summary>
+  public ICollection<ProductImage> Images { get; set; } = [];
 
   /// <summary>
   /// Token de concurrencia optimista que SQL Server mantiene solo. EF lo añade al <c>WHERE</c>

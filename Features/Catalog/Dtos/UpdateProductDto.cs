@@ -21,9 +21,13 @@ public class UpdateProductDto
   [Range(0, 9999999999999999.99, ErrorMessage = "Price must be zero or greater")]
   public decimal? Price { get; set; }
 
-  [MaxLength(300, ErrorMessage = "ImageUrl can't be longer than 300 characters")]
-  [Url(ErrorMessage = "ImageUrl must be a valid absolute URL")]
-  public string? ImageUrl { get; set; }
+  /// <summary>Las etiquetas se REEMPLAZAN enteras; omitirlas las deja como estaban.</summary>
+  [MaxLength(20, ErrorMessage = "A product can't have more than 20 tags")]
+  public List<string>? Tags { get; set; }
+
+  /// <summary>Igual que las etiquetas: se reemplazan enteras.</summary>
+  [MaxLength(20, ErrorMessage = "A product can't have more than 20 sizes")]
+  public List<string>? Sizes { get; set; }
 
   [MaxLength(50, ErrorMessage = "SKU can't be longer than 50 characters")]
   [RegularExpression(@"^[A-Za-z0-9\-]+$", ErrorMessage = "SKU can only contain letters, digits and hyphens")]

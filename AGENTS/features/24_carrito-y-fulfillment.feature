@@ -119,3 +119,67 @@ Feature: Cotizar el carrito y mover la orden por su ciclo de vida
     When pido los contadores del catalogo
     Then el agotado cuenta como "sin stock" y NO como "stock bajo"
     # Mezclarlos hace que el panel pida reponer lo que ya no se puede vender.
+
+  # --- El catalogo de una tienda (paso 4) --------------------------------------
+
+  Scenario: La URL publica sale del nombre
+    When creo un producto llamado "Camion Nandu 4x4"
+    Then su slug es "camion-nandu-4x4"
+    And "/product/slug/camion-nandu-4x4" devuelve ese producto sin autenticarse
+    # Sin acentos: "Camion" y "Camión" tienen que dar el mismo slug o el indice unico
+    # no los ve como el mismo producto.
+
+  Scenario: Dos productos no se pueden llamar igual
+    Given un producto llamado "Camiseta basica"
+    When creo otro con ese mismo nombre y sin slug propio
+    Then recibo 409
+    And el mensaje me dice que mande un slug explicito
+    # El cliente no eligio ese slug, asi que el error tiene que decirle que hacer.
+
+  Scenario: Renombrar un producto NO mueve su URL
+    Given un producto ya publicado
+    When cambio su nombre con un PATCH
+    Then su slug sigue siendo el mismo
+    # Cambiarlo rompe los enlaces que ya circulan y las paginas ya generadas.
+
+  Scenario: Un producto tiene varias imagenes, en orden
+    When subo dos imagenes al producto
+    Then las dos aparecen en "images" en el orden en que se subieron
+    And puedo quitar una sola
+
+  Scenario: Las etiquetas se reemplazan enteras
+    Given un producto etiquetado como "vieja"
+    When mando un PATCH con las etiquetas ["nueva"]
+    Then solo tiene "nueva"
+    # Fusionar no dejaria forma de QUITAR una etiqueta.
+
+  Scenario: Omitir las etiquetas no las toca
+    Given un producto etiquetado
+    When mando un PATCH que solo cambia el stock
+    Then conserva sus etiquetas
+
+  Scenario: Retirar un producto no borra su fila
+    When el administrador borra un producto
+    Then deja de aparecer en cualquier consulta
+    And su fila sigue en la base
+    # Las lineas de orden lo referencian con clave foranea: un borrado real fallaria.
+
+  Scenario: Un producto YA VENDIDO se puede retirar
+    Given un producto que aparece en una orden
+    When el administrador lo borra
+    Then recibe 204
+    And la orden sigue contando lo que se compro
+    # Es la razon de ser del borrado logico.
+
+  Scenario: Retirar un producto libera su SKU y su slug
+    Given un producto retirado
+    When creo otro con el mismo SKU y el mismo nombre
+    Then se crea sin conflicto
+    # El indice unico va FILTRADO por DeletedAt: sin ese filtro, un producto retirado
+    # bloquearia su SKU para siempre y la fila invisible no se podria editar.
+
+  Scenario: Un producto retirado no se puede comprar ni cotizar
+    Given un producto retirado
+    When intento comprarlo
+    Then recibo 409
+    And al cotizarlo sale como no encontrado
