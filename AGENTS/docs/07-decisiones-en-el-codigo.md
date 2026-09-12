@@ -149,7 +149,7 @@ un bug de documentación: se borra su sección.
 ### `Shared/Persistence/IBaseRepository.cs`
 
 - **El repositorio nunca lanza excepciones de negocio.** Id inexistente → `null`/`false`; listado vacío → colección vacía. Quien decide que «no encontrado» es un 404 es el servicio.
-- **`GetByIdAsync` rastrea a propósito:** el update del servicio hace `_mapper.Map(dto, existing)` sobre esa misma instancia.
+- **`GetByIdAsync` rastrea a propósito:** el update del servicio hace `mapper.Apply(dto, existing)` sobre esa misma instancia.
 - **`SaveChangesAsync` existe** para el caso en que el servicio añade algo al contexto que debe confirmarse en la misma transacción (hoy, la fila del outbox junto al descuento de stock).
 - **`ExistsByFieldAsync` es el recurso genérico:** si la entidad tiene método dedicado (`NameExistsAsync`), se usa el dedicado — más rápido y sin string mágico.
 - **`DeleteAsync` con id inexistente es un no-op silencioso, no un throw.**
@@ -339,9 +339,11 @@ Comprobación de unicidad genérica por nombre de campo, resuelta con reflexión
 - **El tope de `PageSize` no es decorativo:** sin él, un `?pageSize=1000000` en un endpoint anónimo es una denegación de servicio de una sola petición.
 - **`Skip` se calcula en `long` y se satura.** En `int`, `(Page - 1) * PageSize` desborda con `?page=2147483647`, da negativo y SQL Server responde «The offset specified in a OFFSET clause may not be negative»: un 500 con traza a partir de un query string.
 
-### `Shared/Mapping/MappingExtensions.cs`
+### `Shared/Crud/IEntityMapper.cs`
 
-- **Los ensamblados llegan por parámetro** en vez de resolverse con `typeof(CategoryProfile).Assembly`: aquello obligaba a `Shared/` a nombrar un tipo de `Features/`, que es la dirección de dependencia al revés. Quien puede conocer ambos lados es el composition root.
+- **Existe porque un generador de código no puede resolver `Map<TDto>(...)`.** `CrudService` es genérico, así que la traducción de cada entidad entra por el constructor, igual que sus reglas. Es el gemelo de `IEntityRules<,,>`: mecanismo genérico, lo específico inyectado.
+- **No hay genérico abierto por defecto**, a diferencia de `NoEntityRules<,,>`: no existe un mapeo «vacío» razonable, así que una entidad sin mapeador registrado debe romper el arranque. Lo hace `ValidateOnBuild`.
+- **Con él desapareció `AddObjectMapping`**, y con ella una de las dos excepciones a «`Shared/` no nombra tipos de `Features/`»: el composition root ya no necesita pasar `typeof(CategoryProfile).Assembly` para que nadie escanee ensamblados.
 
 ### `Shared/Observability/ObservabilityExtensions.cs`
 
@@ -435,7 +437,6 @@ Comprobación de unicidad genérica por nombre de campo, resuelta con reflexión
 - **Un slice es un contexto acotado, no una entidad.** `Category` y `Product` viven juntos en `Catalog`, y ahí irían `UnitOfMeasurement`, `ProductTag` o `Brand`. Un slice por entidad reproduce la dispersión que el slicing venía a quitar, con más carpetas. La pregunta es de DDD: ¿esto tiene su propio lenguaje y sus propias invariantes, o es parte del vocabulario de otro?
 - **Los tres bloques declaran la dirección de dependencias Web → Features → Shared.** En un proyecto único es convención, pero son las costuras exactas por donde se parte la solución en proyectos.
 - **Lifetimes:** todo lo que dependa de `AppDbContext` va `Scoped`; lo que no guarda estado por request y solo depende de singletons va `Singleton`, **igual en todas sus ramas de registro**.
-- **`AddObjectMapping` recibe el ensamblado desde aquí** porque el composition root es el único sitio de `Shared/` que puede nombrar tipos de `Features/`: es literalmente su trabajo.
 - **`AddFileStorage` y `AddDocumentStorage` son dos almacenes distintos, no una duplicación:** aquel sirve estáticos públicos desde `wwwroot`, este guarda documentos privados fuera de él.
 - **HSTS a un año** (el valor de fábrica son 30 días, que no sirve de mucho: la protección vale mientras el navegador recuerde la política), **sin `Preload` ni `IncludeSubDomains` a propósito**: `Preload` es una puerta de un solo sentido (entrar en la lista de los navegadores lleva meses y salir, más) e `IncludeSubDomains` rompe cualquier subdominio que aún se sirva en claro. Se activan cuando alguien lo decida a sabiendas.
 
@@ -672,7 +673,7 @@ Comprobación de unicidad genérica por nombre de campo, resuelta con reflexión
 
 ### `Features/Catalog/Service/ProductService.cs`
 
-- **Composición, no herencia:** este servicio necesita el CRUD genérico *y* consultas propias *y* el mapper; con composición cada colaborador entra por el constructor y se ve de un vistazo qué usa. Es el caso que la herencia hacía incómodo.
+- **Composición, no herencia:** este servicio necesita el CRUD genérico *y* consultas propias *y* el mapeador; con composición cada colaborador entra por el constructor y se ve de un vistazo qué usa. Es el caso que la herencia hacía incómodo.
 - **`GetAll`/`GetById`/`GetPaged` no se delegan** porque el CRUD genérico no carga la navegación `Category` y `ProductDto.CategoryName` saldría siempre nulo. Poder sustituir dos de las cinco operaciones sin tocar el componente CRUD es justo lo que compra la composición.
 - **`Delete` no se delega tal cual:** además de borrar la fila hay que borrar el archivo, o cada producto eliminado deja su imagen huérfana en disco para siempre. El borrado del archivo va DESPUÉS del de base: si la fila no se pudo borrar (409 por FK), el archivo debe seguir existiendo.
 - **`SetImage` guarda la nueva imagen antes de borrar la vieja:** si la validación falla, el producto conserva la que ya tenía.
@@ -758,17 +759,20 @@ Comprobación de unicidad genérica por nombre de campo, resuelta con reflexión
 - **El efecto (`LowStockNotifier`) se registra SIEMPRE, también sin broker:** es lógica del slice y así se puede probar sin AMQP delante, que es justo lo que faltaba para cubrir el P0 del consumidor.
 - **La dead-letter de esta cola es la HEREDADA (`{Exchange}.dlx`), no una por cola como en los slices nuevos.** No es incoherencia: la cola ya existe en los brokers con ese `x-dead-letter-exchange`, y redeclararla con otro da 406 PRECONDITION_FAILED y deja la mensajería abajo. Cambiarlo exige borrar la cola, que es una parada, y no compensa por estética.
 
-### `Features/Catalog/Mapping/ProductProfile.cs`
+### `Features/Catalog/Mapping/ProductMapper.cs`
 
-- **PATCH parcial con `s.X ?? d.X` en vez de `ForAllMembers(o => o.Condition(...))`:** la `Condition` recibe el valor ya convertido al tipo del destino, así que un `int?` nulo llegaba como 0 y el PATCH machacaba `CategoryId`/`Stock`/`Price` con ceros (`CategoryId = 0` reventaba la FK y salía un 500). La forma explícita no depende de la semántica interna de AutoMapper.
-- **Semántica del PATCH:** omitir el campo (o enviarlo null) significa «no tocar»; para vaciar `Description`/`ImageUrl` hay que enviar `""`, no null.
-- **`CategoryName` viaja plano en la lectura** porque la navegación puede venir sin cargar.
-- **`RowVersion` se convierte a base64 al leer:** es binario en la base y texto en una cabecera HTTP.
+- **El PATCH se escribe a mano y el resto se genera, y el reparto no es arbitrario.** Mapperly tiene `AllowNullPropertyAssignment = false` documentado justo para los PATCH parciales, y no se usa: el PATCH es donde este repo ya se quemó (con `ForAllMembers(o => o.Condition(...))` de AutoMapper, la `Condition` recibía el valor ya convertido al destino, así que un `int?` nulo llegaba como 0 y `CategoryId = 0` reventaba la FK con un 500). Siete líneas de `entity.X = dto.X ?? entity.X` no hay que ir a verificarlas en la documentación de nadie.
+- **Semántica del PATCH:** omitir el campo (o enviarlo null) significa «no tocar»; para vaciar `Description`/`ImageUrl` hay que enviar `""`, no null. Un `0` explícito **sí** se aplica.
+- **`CategoryName` viaja plano en la lectura** porque la navegación puede venir sin cargar. El generado es `entity.Category?.Name`: un GET que olvide el `.Include` devuelve null, no una excepción.
+- **`ToBase64` es un método privado de la clase y Mapperly lo toma por su FIRMA** (`byte[]?` → `string?`), sin configurarlo: el rowversion es binario en la base y texto en una cabecera HTTP.
 - **`RowVersion` se ignora al escribir:** lo gestiona SQL Server. El `IfMatch` que manda el cliente tampoco se mapea a la entidad: sirve solo para comparar (ver `ProductRules`).
+- **El `Trim` del SKU es inalcanzable por HTTP** y se deja a propósito: la DataAnnotation del DTO rechaza espacios antes de que el mapeador vea el valor. Es defensa en profundidad para cualquier otro llamador.
 
-### `Features/Catalog/Mapping/CategoryProfile.cs`
+### `Features/Catalog/Mapping/CategoryMapper.cs`
 
-- **Los campos de auditoría los estampa `AppDbContext`, no el mapper**, por eso se ignoran en los mapeos de escritura.
+- **Los campos de auditoría los estampa `AppDbContext`, no el mapeador**, por eso se ignoran al escribir.
+- **`[MapperIgnoreSource]` sobre `CreatedAt`/`UpdatedAt` lo pidió el compilador**, no el estilo: `CategoryDto` no expone auditoría (a diferencia de `ProductDto`), y eso son dos **RMG020** en el primer build. Con `-warnaserror`, errores. Es el aviso que AutoMapper solo daba al ejecutar `AssertConfigurationIsValid()` en un test.
+- **Se recorta al escribir**: sin normalizar, `" Bebidas"` y `"Bebidas"` conviven pese al índice único, y compararlos obliga a envolver la columna en `TRIM()`, que anula ese mismo índice.
 
 ### `Features/Catalog/Models/Category.cs`
 
@@ -781,7 +785,7 @@ Comprobación de unicidad genérica por nombre de campo, resuelta con reflexión
 - **`RowVersion`: lo que SÍ garantiza hoy** es que un PATCH de administrador que toque `Stock` choque (409) con una compra concurrente, porque `TryDecrementStockAsync` cambia el rowversion por fuera del change tracker.
 - **El *lost update* entre dos administradores está cerrado (2026-09-06) pero NO por esta columna sola:** por sí misma no puede, porque el PATCH relee la fila y EF compara contra el rowversion recién leído. Lo cierra publicar el token como `ETag` en el GET y compararlo contra el `If-Match` del cliente (`ProductRules`); la columna sigue siendo necesaria como segunda red, para la ventana entre esa comparación y el UPDATE.
 - **`RowVersion` NO es lo que impide sobrevender stock:** eso lo resuelve el UPDATE condicional atómico de `TryDecrementStockAsync`. La concurrencia optimista aplicada a un contador con mucha contención rechaza compras válidas al agotar los reintentos.
-- **La navegación es opcional en C# (`Category?`) a propósito:** la relación sigue siendo obligatoria en la base porque `CategoryId` es `int` no-nullable, pero dejarla como `required Category` impedía que AutoMapper construyera un `Product` desde `CreateProductDto` (`AGENTS/docs/05-convenciones.md` → Mapping).
+- **La navegación es opcional en C# (`Category?`) a propósito:** la relación sigue siendo obligatoria en la base porque `CategoryId` es `int` no-nullable, pero dejarla como `required Category` impedía que el mapeador construyera un `Product` desde `CreateProductDto` (`AGENTS/docs/05-convenciones.md` → Mapping).
 - Referencia que estaba enlazada en el archivo: <https://learn.microsoft.com/es-mx/ef/core/modeling/relationships>
 - `SKU` = Stock Keeping Unit, con formato tipo `PROD-001-BLK-M`.
 
@@ -848,7 +852,7 @@ Comprobación de unicidad genérica por nombre de campo, resuelta con reflexión
 - **`DuplicateUserName`/`DuplicateEmail` de Identity también son 409, no 422.** `UserManager.CreateAsync` valida la unicidad por su cuenta justo antes del `INSERT`, así que en una carrera de 6 registros unas peticiones caían por el validador (422) y otras por el índice (409): el mismo choque contestaba con dos códigos distintos según cuánto se hubiesen adelantado. El 422 se queda para lo que de verdad es una regla de negocio sobre el contenido, como la política de contraseñas.
 - **Política de contraseñas de Identity -> 422 y campo a campo**: la forma del DTO ya la filtró DataAnnotations.
 - **Se distingue "la actual no es correcta" de "la nueva no cumple la política"** al cambiar contraseña: son dos errores muy distintos para quien está delante, y devolver siempre lo mismo obliga a adivinar qué casilla corregir. No es un oráculo, porque para llegar ahí ya hay que estar autenticado como ese usuario.
-- **Proyección a mano en vez de AutoMapper** para `UserDto`: los roles no son una propiedad de `ApplicationUser` sino una consulta aparte, así que un Profile tendría que inyectar el `UserManager` para resolverlos.
+- **Proyección a mano en vez de un mapeador** para `UserDto`: los roles no son una propiedad de `ApplicationUser` sino una consulta aparte, así que un Profile tendría que inyectar el `UserManager` para resolverlos.
 - **`ToFieldErrors` agrupa los `IdentityError` por código** en el mismo formato `{ campo: [mensajes] }` que produce `ValidationProblem(ModelState)`, para que el cliente reciba siempre la misma forma de error.
 
 ### `Features/Accounts/Service/UserAdminService.cs`
@@ -1421,9 +1425,11 @@ Comprobación de unicidad genérica por nombre de campo, resuelta con reflexión
 
 - **Son la prueba de que la composición abarató el testeo**: las reglas viven fuera del CRUD, así que se instancian con un repositorio falso en una línea, sin base de datos, sin `IMapper` y sin `HttpContext`. Con los hooks `virtual` de una clase base habría que levantar el servicio entero.
 
-### `tests/ApiEcommerce.Tests/Features/Catalog/MappingProfilesTests.cs`
+### `tests/ApiEcommerce.Tests/Features/Catalog/CatalogMappersTests.cs`
 
 - **El bug que costó un 500.** Con `.ForAllMembers(o => o.Condition(...))`, la `Condition` recibe el valor YA CONVERTIDO al tipo del destino: un `int?` nulo llegaba como 0, no se saltaba y machacaba el campo. Con `CategoryId = 0` se rompía la clave foránea y el cliente recibía un 500 sin relación aparente. Por eso el PATCH parcial se expresa campo a campo.
+- **Ya no hay test de «la configuración es válida»**, y no es una pérdida de cobertura: un miembro del destino sin alimentar es un RMG020 del generador, o sea un error de build. La comprobación se movió de la suite al compilador.
+- **Se instancian los mapeadores directamente** (`new ProductMapper()`): son clases generadas sin estado ni dependencias, así que no hace falta contenedor ni configuración para probarlas.
 
 ### `tests/ApiEcommerce.Tests/Features/Catalog/CachedCategoryServiceTests.cs`
 
@@ -1452,7 +1458,7 @@ Comprobación de unicidad genérica por nombre de campo, resuelta con reflexión
 
 - **Une dos copias que habían divergido.** `AuthService` y `UserAdminService` tenían el mismo `ToDto(user, roles)` letra por letra, y dos traducciones distintas del mismo `IdentityResult`: una agrupaba los errores por campo (`{ "Password": [...] }`) y la otra los metía todos bajo la clave inventada `identity`. Para el cliente eran **dos 422 con forma distinta** según qué endpoint fallara.
 - **Se conserva la forma por campo**, que es la de `ValidationProblem(ModelState)`: lo que no se puede atribuir a un campo cae en `request`, no en una clave nueva.
-- **La proyección es a mano y no AutoMapper** porque los roles son una consulta aparte y un Profile tendría que inyectar el `UserManager`.
+- **La proyección es a mano y no con un mapeador** porque los roles son una consulta aparte y el mapeador tendría que inyectar el `UserManager`.
 
 ### `Features/Catalog/CatalogCacheKeys.cs`
 

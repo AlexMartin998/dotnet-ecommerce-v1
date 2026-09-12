@@ -1,15 +1,15 @@
 using ApiEcommerce.Exceptions;
 using ApiEcommerce.Shared.Paging;
-using AutoMapper;
 using ApiEcommerce.Shared.Persistence;
 
 namespace ApiEcommerce.Shared.Crud;
 
 
 /// <summary>
-/// Implementación única y reutilizable del CRUD de la capa de servicio: mapea DTO ↔
-/// entidad, persiste con <see cref="IBaseRepository{T}"/> y consulta las reglas de la
-/// entidad en <see cref="IEntityRules{TEntity, TCreateDto, TUpdateDto}"/>.
+/// Implementación única y reutilizable del CRUD de la capa de servicio: traduce con
+/// <see cref="IEntityMapper{TEntity, TDto, TCreateDto, TUpdateDto}"/>, persiste con
+/// <see cref="IBaseRepository{T}"/> y consulta las reglas en
+/// <see cref="IEntityRules{TEntity, TCreateDto, TUpdateDto}"/>.
 /// </summary>
 /// <remarks>
 /// Los servicios por entidad lo componen en vez de heredarlo, y por eso es <c>sealed</c>:
@@ -18,7 +18,7 @@ namespace ApiEcommerce.Shared.Crud;
 /// </remarks>
 public sealed class CrudService<TEntity, TDto, TCreateDto, TUpdateDto>(
     IBaseRepository<TEntity> repository,
-    IMapper mapper,
+    IEntityMapper<TEntity, TDto, TCreateDto, TUpdateDto> mapper,
     IEntityRules<TEntity, TCreateDto, TUpdateDto> rules)
   : ICrudService<TDto, TCreateDto, TUpdateDto>
   where TEntity : class, IEntity
@@ -26,7 +26,7 @@ public sealed class CrudService<TEntity, TDto, TCreateDto, TUpdateDto>(
 
   /// <inheritdoc />
   public async Task<IEnumerable<TDto>> GetAllAsync(CancellationToken ct = default)
-      => mapper.Map<IEnumerable<TDto>>(await repository.GetAllAsync(ct));
+      => [.. (await repository.GetAllAsync(ct)).Select(mapper.ToDto)];
 
   /// <inheritdoc />
   public async Task<PagedResult<TDto>> GetPagedAsync(PageQuery query, CancellationToken ct = default)
@@ -36,13 +36,13 @@ public sealed class CrudService<TEntity, TDto, TCreateDto, TUpdateDto>(
     var page = await repository.GetPagedAsync(query.Page, query.PageSize, ct);
 
     return new PagedResult<TDto>(
-        [.. mapper.Map<IEnumerable<TDto>>(page.Items)],
+        [.. page.Items.Select(mapper.ToDto)],
         page.Page, page.PageSize, page.TotalItems);
   }
 
   /// <inheritdoc />
   public async Task<TDto> GetByIdAsync(int id, CancellationToken ct = default)
-      => mapper.Map<TDto>(await GetOrThrowAsync(id, ct));
+      => mapper.ToDto(await GetOrThrowAsync(id, ct));
 
   /// <inheritdoc />
   public async Task<int> CreateAsync(TCreateDto dto, CancellationToken ct = default)
@@ -51,7 +51,7 @@ public sealed class CrudService<TEntity, TDto, TCreateDto, TUpdateDto>(
 
     await rules.EnsureCanCreateAsync(dto, ct);
 
-    var entity = mapper.Map<TEntity>(dto);
+    var entity = mapper.ToEntity(dto);
     await repository.AddAsync(entity, ct);
 
     return entity.Id; // sin reflexión: IEntity garantiza la propiedad
@@ -67,7 +67,7 @@ public sealed class CrudService<TEntity, TDto, TCreateDto, TUpdateDto>(
     // Las reglas corren ANTES del mapeo: todavía ven el estado previo de la entidad.
     await rules.EnsureCanUpdateAsync(id, dto, existing, ct);
 
-    mapper.Map(dto, existing); // mapea SOBRE la entidad rastreada
+    mapper.Apply(dto, existing); // sobre la entidad rastreada, no sobre una copia
     await repository.UpdateAsync(existing, ct);
   }
 

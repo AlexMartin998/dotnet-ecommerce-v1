@@ -4,7 +4,6 @@ using ApiEcommerce.Features.Catalog.Models;
 using ApiEcommerce.Shared.Crud;
 using ApiEcommerce.Shared.Paging;
 using ApiEcommerce.Shared.Persistence;
-using AutoMapper;
 using Moq;
 
 namespace ApiEcommerce.Tests.Shared.Crud;
@@ -17,7 +16,7 @@ namespace ApiEcommerce.Tests.Shared.Crud;
 public class CrudServiceTests
 {
   private readonly Mock<IBaseRepository<Category>> _repository = new();
-  private readonly Mock<IMapper> _mapper = new();
+  private readonly Mock<IEntityMapper<Category, CategoryDto, CreateCategoryDto, UpdateCategoryDto>> _mapper = new();
   private readonly Mock<IEntityRules<Category, CreateCategoryDto, UpdateCategoryDto>> _rules = new();
 
   public CrudServiceTests() => _rules.SetupGet(r => r.EntityName).Returns("Category");
@@ -67,7 +66,7 @@ public class CrudServiceTests
 
     _rules.Setup(r => r.EnsureCanCreateAsync(It.IsAny<CreateCategoryDto>(), It.IsAny<CancellationToken>()))
           .Callback(() => order.Add("rules")).Returns(Task.CompletedTask);
-    _mapper.Setup(m => m.Map<Category>(It.IsAny<CreateCategoryDto>())).Returns(entity);
+    _mapper.Setup(m => m.ToEntity(It.IsAny<CreateCategoryDto>())).Returns(entity);
     _repository.Setup(r => r.AddAsync(entity, It.IsAny<CancellationToken>()))
                .Callback(() => order.Add("repository")).ReturnsAsync(entity);
 
@@ -101,8 +100,8 @@ public class CrudServiceTests
     _repository.Setup(r => r.GetByIdAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
     _rules.Setup(r => r.EnsureCanUpdateAsync(7, It.IsAny<UpdateCategoryDto>(), existing, It.IsAny<CancellationToken>()))
           .Callback(() => order.Add("rules")).Returns(Task.CompletedTask);
-    _mapper.Setup(m => m.Map(It.IsAny<UpdateCategoryDto>(), existing))
-           .Callback(() => order.Add("map")).Returns(existing);
+    _mapper.Setup(m => m.Apply(It.IsAny<UpdateCategoryDto>(), existing))
+           .Callback(() => order.Add("map"));
     _repository.Setup(r => r.UpdateAsync(existing, It.IsAny<CancellationToken>()))
                .Callback(() => order.Add("repository")).ReturnsAsync(existing);
 
@@ -122,8 +121,8 @@ public class CrudServiceTests
 
     await Sut().UpdateAsync(7, new UpdateCategoryDto { Name = "Snacks" });
 
-    _mapper.Verify(m => m.Map(It.IsAny<UpdateCategoryDto>(), existing), Times.Once);
-    _mapper.Verify(m => m.Map<Category>(It.IsAny<UpdateCategoryDto>()), Times.Never);
+    _mapper.Verify(m => m.Apply(It.IsAny<UpdateCategoryDto>(), existing), Times.Once);
+    _mapper.Verify(m => m.ToEntity(It.IsAny<CreateCategoryDto>()), Times.Never);
   }
 
   [Fact]
@@ -145,7 +144,7 @@ public class CrudServiceTests
   public async Task GetAllAsync_WithNoRows_ReturnsAnEmptyCollectionAndNotAnError()
   {
     _repository.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
-    _mapper.Setup(m => m.Map<IEnumerable<CategoryDto>>(It.IsAny<IEnumerable<Category>>())).Returns([]);
+    _mapper.Setup(m => m.ToDto(It.IsAny<Category>())).Returns(new CategoryDto());
 
     Assert.Empty(await Sut().GetAllAsync());
   }
@@ -156,7 +155,7 @@ public class CrudServiceTests
     // El servicio mapea los items pero no recalcula los metadatos: el total lo dio la base.
     _repository.Setup(r => r.GetPagedAsync(2, 10, It.IsAny<CancellationToken>()))
                .ReturnsAsync(new PagedResult<Category>([], 2, 10, 137));
-    _mapper.Setup(m => m.Map<IEnumerable<CategoryDto>>(It.IsAny<IEnumerable<Category>>())).Returns([]);
+    _mapper.Setup(m => m.ToDto(It.IsAny<Category>())).Returns(new CategoryDto());
 
     var page = await Sut().GetPagedAsync(new PageQuery { Page = 2, PageSize = 10 });
 

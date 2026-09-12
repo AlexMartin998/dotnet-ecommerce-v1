@@ -151,10 +151,12 @@ Todo lo que se dejó abierto a propósito está hecho. Lo que se decidió y por 
 | Tres conexiones a Redis | Un solo multiplexer para la cache, el store de idempotencia y el health check |
 
 **Lo único que queda es una decisión de producto**, no técnica: la **licencia de
-AutoMapper** (⚠️ corregido el 2026-09-12: la 15.1.1 **no** exige pagar. Es dual
-RPL-1.5 + comercial, con **licencia Community gratuita por debajo de 5 M USD** de
-ingresos brutos, de autoservicio. Hay que **registrarse**, no comprar; y la última MIT
-es la **14.0.0**).
+AutoMapper** — ✅ **cerrado el 2026-09-12 por la vía de no usarlo**
+([`planning/23`](../planning/23_mapeador-sin-licencia.md)). El dato que teníamos era falso:
+la 15.1.1 no exige pagar, es dual RPL-1.5 + comercial con Community gratuita bajo 5 M USD.
+Se migró a **`Riok.Mapperly`** (Apache 2.0) por una razón técnica, no de licencia: es un
+source generator, así que un miembro sin alimentar es un **error de build** y no una
+excepción en la primera petición. La última AutoMapper MIT, por si acaso, es la **14.0.0**.
 Opciones: comprar, fijar ≤13.x (última MIT), o migrar a Mapperly. Afecta a
 `05-convenciones.md`.
 

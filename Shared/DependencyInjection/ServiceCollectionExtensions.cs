@@ -2,14 +2,12 @@ using ApiEcommerce.Data;
 using ApiEcommerce.Features.Accounts;
 using ApiEcommerce.Features.Catalog;
 using ApiEcommerce.Features.Payments;
-using ApiEcommerce.Features.Catalog.Mapping;
 using ApiEcommerce.Features.Ordering;
 using ApiEcommerce.Shared.Caching;
 using ApiEcommerce.Shared.Crud;
 using ApiEcommerce.Shared.Documents;
 using ApiEcommerce.Shared.Http;
 using ApiEcommerce.Shared.Http.Health;
-using ApiEcommerce.Shared.Mapping;
 using ApiEcommerce.Shared.Messaging;
 using ApiEcommerce.Shared.Observability;
 using ApiEcommerce.Shared.Persistence;
@@ -39,9 +37,6 @@ public static class ServiceCollectionExtensions
       => services
           .AddPersistence(configuration)        // Shared/Persistence  — EF Core + SQL Server + ITransactionRunner
           .AddGenericCrud()                     // Shared/Crud         — genéricos abiertos del CRUD compuesto
-          // El composition root es el único sitio de Shared/ que puede nombrar tipos de
-          // Features/, así que el ensamblado a escanear se pasa desde aquí.
-          .AddObjectMapping(typeof(CategoryProfile).Assembly)  // Shared/Mapping — AutoMapper
           .AddDistributedCaching(configuration) // Shared/Caching      — Redis + idempotencia
           .AddFileStorage(configuration)        // Shared/Storage      — imagenes PUBLICAS (wwwroot)
           // Otro almacén, no una duplicación: este guarda documentos privados fuera de

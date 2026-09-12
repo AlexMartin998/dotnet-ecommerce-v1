@@ -14,10 +14,19 @@ nunca hace push (`rules.md` §12).
 
 ### Estado medido hoy (2026-09-12)
 
-`dotnet build -warnaserror` **limpio** y **318/318 tests** en verde (~16 s) contra SQL
+`dotnet build -warnaserror` **limpio** y **322/322 tests** en verde (~17 s) contra SQL
 Server, Redis y RabbitMQ reales. Las dos direcciones de la infra responden: `192.168.3.82`
 (LAN del host, confirmada por el owner) y `172.17.0.1` (puerta del bridge, la que usan los
 tests por defecto).
+
+**Lo que se hizo hoy**: `planning/23` — **fuera AutoMapper**, el mapeo pasa a
+`Riok.Mapperly` (source generator, Apache 2.0). Nace
+`IEntityMapper<TEntity,TDto,TCreateDto,TUpdateDto>` en `Shared/Crud/`, gemelo de
+`IEntityRules<,,>`, porque un generador no puede resolver `IMapper.Map<TDto>(...)` desde un
+servicio genérico. Las proyecciones se generan; el **PATCH se escribe a mano** campo a campo,
+que es donde el repo ya se quemó. Un miembro del destino sin alimentar es ahora un
+**error de build**, no una excepción en la primera petición. Y desapareció `AddObjectMapping`,
+o sea una de las dos excepciones a «`Shared/` no nombra tipos de `Features/`».
 
 ⚠️ Al verificar apareció un residuo de `planning/22`: `OrderService` seguía recibiendo
 `IEventOutbox` después de que colocar una orden dejara de emitir evento → **warning CS9113**,
@@ -131,7 +140,8 @@ binding), pero se ven en la UI. Se borran a mano cuando estorben.
 | | |
 |---|---|
 | 🔴 **Token de GitHub en `.git/config`** | Un PAT en texto plano en el remoto. **Revocarlo.** Ver §6.bis |
-| **Licencia de AutoMapper** | ⚠️ **Corregido el 2026-09-12, el dato anterior era falso.** La 15.1.1 es dual RPL-1.5 + comercial, **pero hay licencia Community GRATIS** por debajo de 5 M USD de ingresos brutos (y ≤10 M de capital externo): autoservicio, sin aprobación. O sea que **no hay que pagar**; hay que **registrarse**. Alternativas sin papeleo: fijar **14.0.0** (última MIT) o migrar a **Mapperly** (Apache 2.0, source generator, sin umbral). Es lo único que queda de `planning/12` |
+| ~~**Licencia de AutoMapper**~~ | ✅ **CERRADA el 2026-09-12** (`planning/23`): se migró a `Riok.Mapperly`, Apache 2.0, sin umbral ni clave. El dato que había aquí era **falso** —la 15.1.1 no exige pagar, tiene Community gratuita bajo 5 M USD— y se migró por una razón técnica: el mapeo se comprueba al **compilar**. Cierra lo último de `planning/12` |
+| **Licencias del stack, en general** | Han mordido tres veces. Hoy: **QuestPDF** gratis bajo 1 M USD (Professional $999 **perpetuos**; nunca califican gobierno ni cotizadas); **FluentAssertions** v8+ comercial, ya esquivada; **MediatR** comercial, nunca se usó. Y ⚠️ **MassTransit v9 es comercial** (~$400/mes) y la v8 Apache 2.0 **entra en EOL a final de 2026**: es la razón de seguir con `RabbitMQ.Client` crudo. Todo en `notes.md` cap. 44 |
 | **Umbral de QuestPDF** | Community es gratis —también comercialmente— **por debajo de 1 M USD** de ingresos brutos anuales, con 90 días de transición. No es «gratis para siempre» |
 | **Subir la CI** | El workflow está commiteado pero **sin push**; falta activarlo y proteger la rama |
 | **Migrar a `net10.0`** | Hoy resuelto instalando el runtime 9 |
@@ -283,7 +293,8 @@ Features/
 Shared/          <- transversal, de ningun dominio
   Persistence/   IEntity, IBaseRepository, BaseRepository, PersistenceExtensions
   Crud/          ICrudService, CrudService, IEntityRules, NoEntityRules
-  Caching/ Db/ Idempotency/ Paging/ Mapping/ Auth/
+  Caching/ Db/ Idempotency/ Paging/ Auth/
+  Crud/          ICrudService, CrudService, IEntityRules, IEntityMapper (Mapperly por entidad)
   Storage/       imagenes PUBLICAS (dentro de wwwroot, las sirve UseStaticFiles)
   Documents/     documentos PRIVADOS (FUERA de wwwroot, los sirve un endpoint) <- NO es lo mismo
   Messaging/     MECANISMO: outbox, RabbitMq/, IDomainEvent, EventConsumer<,>,
@@ -449,9 +460,8 @@ gh auth login            # o pasar el remoto a SSH
 - **AutoMapper, no Mapster.** El curso migró a Mapster en su sección 15; aquí no, porque
   `docs/` fija AutoMapper *y* porque el curso usó `.TwoWays()` indiscriminado en DTOs de
   escritura, que es justo lo que hace que un update pise `CreatedAt`.
-  ⚠️ **Pendiente de decisión del owner**: AutoMapper 15 avisa por log al arrancar, pero
-  **NO hay que pagar** por debajo de 5 M USD de ingresos (licencia Community, autoservicio).
-  Ver la tabla de decisiones en §0.
+  ⚠️ **Ya no se usa AutoMapper** (2026-09-12, `planning/23`): el mapeo es `Riok.Mapperly`,
+  un generador. La convención sigue siendo un mapeador por entidad.
 - **Redis en vez de `[ResponseCache]`.** El del curso no invalida, no funciona con
   cabecera `Authorization` y vive en la memoria de un proceso.
 - **`RowVersion` NO es para el stock.** Se probó y se midió: rechazaba compras válidas.

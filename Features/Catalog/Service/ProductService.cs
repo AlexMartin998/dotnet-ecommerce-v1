@@ -4,9 +4,9 @@ using ApiEcommerce.Shared.Messaging;
 using ApiEcommerce.Features.Catalog.Events;
 using ApiEcommerce.Shared.Storage;
 using Microsoft.EntityFrameworkCore;
-using AutoMapper;
 using ApiEcommerce.Shared.Crud;
 using ApiEcommerce.Features.Catalog.Dtos;
+using ApiEcommerce.Features.Catalog.Mapping;
 using ApiEcommerce.Features.Catalog.Models;
 using ApiEcommerce.Features.Catalog.Repository;
 using ApiEcommerce.Shared.Idempotency;
@@ -26,7 +26,7 @@ public class ProductService : IProductService
   private readonly IFileStorage _storage;
   private readonly IEventOutbox _outbox;
   private readonly IIdempotentCommandRunner _runner;
-  private readonly IMapper _mapper;
+  private readonly IEntityMapper<Product, ProductDto, CreateProductDto, UpdateProductDto> _mapper;
 
   public ProductService(
       ICrudService<ProductDto, CreateProductDto, UpdateProductDto> crud,
@@ -35,7 +35,7 @@ public class ProductService : IProductService
       IFileStorage storage,
       IEventOutbox outbox,
       IIdempotentCommandRunner runner,
-      IMapper mapper)
+      IEntityMapper<Product, ProductDto, CreateProductDto, UpdateProductDto> mapper)
   {
     _runner = runner;
     _crud = crud;
@@ -52,7 +52,7 @@ public class ProductService : IProductService
   // ProductDto.CategoryName saldría siempre nulo.
 
   public async Task<IEnumerable<ProductDto>> GetAllAsync(CancellationToken ct = default)
-      => _mapper.Map<IEnumerable<ProductDto>>(await _repository.GetAllWithCategoryAsync(ct));
+      => [.. (await _repository.GetAllWithCategoryAsync(ct)).Select(_mapper.ToDto)];
 
   public async Task<PagedResult<ProductDto>> GetPagedAsync(PageQuery query, CancellationToken ct = default)
   {
@@ -61,7 +61,7 @@ public class ProductService : IProductService
     var page = await _repository.GetPagedWithCategoryAsync(query.Page, query.PageSize, ct);
 
     return new PagedResult<ProductDto>(
-        [.. _mapper.Map<IEnumerable<ProductDto>>(page.Items)],
+        [.. page.Items.Select(_mapper.ToDto)],
         page.Page, page.PageSize, page.TotalItems);
   }
 
@@ -70,7 +70,7 @@ public class ProductService : IProductService
     var product = await _repository.GetByIdWithCategoryAsync(id, ct)
         ?? throw new NotFoundAppException("Product", id);
 
-    return _mapper.Map<ProductDto>(product);
+    return _mapper.ToDto(product);
   }
 
   public Task<int> CreateAsync(CreateProductDto dto, CancellationToken ct = default)
@@ -102,13 +102,13 @@ public class ProductService : IProductService
       throw new NotFoundAppException("Category", categoryId);
 
     var products = await _repository.GetProductsForCategoryAsync(categoryId, ct);
-    return _mapper.Map<IEnumerable<ProductDto>>(products);
+    return [.. products.Select(_mapper.ToDto)];
   }
 
   public async Task<IEnumerable<ProductDto>> SearchAsync(string name, CancellationToken ct = default)
   {
     var products = await _repository.SearchProductAsync(name, ct);
-    return _mapper.Map<IEnumerable<ProductDto>>(products);
+    return [.. products.Select(_mapper.ToDto)];
   }
 
   public async Task<ProductDto> SetImageAsync(int id, FileUpload upload, CancellationToken ct = default)
@@ -129,7 +129,7 @@ public class ProductService : IProductService
 
     await _storage.DeleteAsync(previous, ct);
 
-    return _mapper.Map<ProductDto>(await _repository.GetByIdWithCategoryAsync(id, ct) ?? product);
+    return _mapper.ToDto(await _repository.GetByIdWithCategoryAsync(id, ct) ?? product);
   }
 
   public Task<CommandOutcome<ProductDto>> BuyAsync(
@@ -161,7 +161,7 @@ public class ProductService : IProductService
           updated.Id, updated.SKU, updated.Name, dto.Quantity, updated.Stock,
           updated.Price, buyerUserId, DateTime.Now), token);
 
-      return _mapper.Map<ProductDto>(updated);
+      return _mapper.ToDto(updated);
     }, ct);
   }
 }

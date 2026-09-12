@@ -2,6 +2,8 @@
 
 > Lo de arriba de todo a proposito: es lo que se olvida y lo que no esta en ningun otro
 > sitio junto. Cada fila tiene `archivo:linea` para ir a verlo, no para creerselo.
+> **El estado de las licencias de todo esto esta en el capitulo 44**, que es lo que hay que
+> mirar antes de anadir un paquete.
 
 ## Los tres servicios externos
 
@@ -23,14 +25,14 @@ dev container y lo que usan los tests).
 | **SQL Server** | `Microsoft.EntityFrameworkCore.SqlServer` 9.0.9 | ORM de la casa; `ExecuteUpdateAsync` da el UPDATE condicional atomico que el stock necesita | `Shared/Persistence/PersistenceExtensions.cs:25` |
 | **Redis — cache** | `Microsoft.Extensions.Caching.StackExchangeRedis` 9.0.9 | da `IDistributedCache`, que es la abstraccion del framework: cambiar a otro backend no toca el dominio | `Shared/Caching/CachingExtensions.cs:46` |
 | **Redis — crudo** | `StackExchange.Redis` 2.8.58 | ⭐ **porque `IDistributedCache` NO expone `SET NX`**, y sin eso no hay reserva de idempotencia ni denylist de `jti` | `Shared/Caching/CachingExtensions.cs:58` |
-| **RabbitMQ** | `RabbitMQ.Client` 7.2.2 | el cliente **oficial** y crudo: el outbox, el inbox y la DLQ son justo lo que un MassTransit esconderia, y aqui son lo que se viene a aprender | `Shared/Messaging/RabbitMq/RabbitMqConnection.cs:72` |
-| **PDF** | `QuestPDF` 2026.8.0 | ⭐ compone el PDF **directamente**, sin motor HTML→PDF: ni Chromium en la imagen ni un proceso navegador por comprobante | `Features/Ordering/Documents/QuestPdfReceiptRenderer.cs:36` |
+| **RabbitMQ** | `RabbitMQ.Client` 7.2.2 | el cliente **oficial** y crudo: el outbox, el inbox y la DLQ son justo lo que un MassTransit esconderia. ⚠️ Y esa eleccion salio bien por accidente: MassTransit v9 es **comercial** y la v8 muere a final de 2026 (cap. 44) | `Shared/Messaging/RabbitMq/RabbitMqConnection.cs:72` |
+| **PDF** | `QuestPDF` 2026.8.0 | ⭐ compone el PDF **directamente**, sin motor HTML→PDF: ni Chromium en la imagen ni un proceso navegador por comprobante. Gratis bajo 1 M USD (cap. 44) | `Features/Ordering/Documents/QuestPdfReceiptRenderer.cs:36` |
 | **Pasarela de pago** | `Stripe.net` 52.4.1 | por **una** funcion: `EventUtility.ConstructEvent`, la verificacion de firma del webhook. Eso no se escribe a mano | `Features/Payments/Gateways/StripePaymentGateway.cs:77` |
 | **Identidad** | `Microsoft.AspNetCore.Identity.EntityFrameworkCore` 9.0.9 | hash de password, lockout y roles ya resueltos y auditados | `Features/Accounts/AccountsExtensions.cs` |
 | **JWT** | `Authentication.JwtBearer` 9.0.9 + `System.IdentityModel.Tokens.Jwt` 8.14.0 | validacion del token como middleware, no como codigo propio | `Features/Accounts/AccountsExtensions.cs:54` |
 | **Logs** | `Serilog.AspNetCore` 9.0.0 | logging **estructurado**: el `CorrelationId` viaja como propiedad, no pegado al mensaje | `Program.cs:15` |
 | **Trazas y metricas** | `OpenTelemetry.*` 1.18.0 | estandar, no vendor: sin `OtlpEndpoint` se instrumenta y **no** se exporta | `Shared/Observability/ObservabilityExtensions.cs:46` |
-| **Mapeo DTO↔entidad** | `AutoMapper` 15.1.1 | un profile por entidad; el PATCH parcial se expresa campo a campo. ⚠️ **licencia comercial** desde la 14: decision abierta del owner | `Shared/Mapping/MappingExtensions.cs:21` |
+| **Mapeo DTO↔entidad** | `Riok.Mapperly` 4.3.1 | ⭐ **source generator**: el mapeo es C# escrito al compilar, asi que un miembro sin alimentar es un **error de build** y no un 500 en la primera peticion. Apache 2.0, sin umbral (cap. 44) | `Features/Catalog/CatalogExtensions.cs:38` |
 | **Swagger + versionado** | `Swashbuckle.AspNetCore` 9.0.4 + `Asp.Versioning.Mvc` 8.1.0 | un documento de Swagger **por version descubierta**: anadir una v2 no toca `Program.cs` | `Shared/Http/ApiDocumentationExtensions.cs:22` y `:43` |
 | **Sondas** | `AspNetCore.HealthChecks.Redis` 9.0.0 + `...HealthChecks.EntityFrameworkCore` | ⚠️ Redis va en `Degraded`, no `Unhealthy`: la caida la ven todas las replicas y el orquestador las sacaria TODAS de rotacion | `Shared/Http/Health/HealthCheckExtensions.cs:23` (SQL) y `:38` (Redis) |
 | **Tests** | `xunit` 2.9.3 + `Moq` 4.20.72 + `Mvc.Testing` 9.0.9 | ⚠️ **NO FluentAssertions**: desde la v8 exige licencia comercial. `Assert` de xunit basta | `tests/ApiEcommerce.Tests/` |
@@ -469,6 +471,11 @@ dotnet ef database update
 
 
 ## AutoMapper - `Mapster`  <- (Model Mapper in spring boot)
+
+> ⚠️ **HISTORICO (2026-09-12): este repo YA NO usa AutoMapper.** Se migro a
+> `Riok.Mapperly`, y el porque (que no es la licencia) esta en el **capitulo 44**. Lo de
+> abajo se conserva como registro de aprendizaje.
+
 - --- AutoMapper sera de PAGO, pero algo medio parecido y gratis es Mapster
   - -- Esto es basicamente el Simil de MODEL MAPPER de Spring Boot
 
@@ -4143,3 +4150,156 @@ dotnet bin/Debug/net9.0/ApiEcommerce.dll --urls http://0.0.0.0:8031
   - -- si algun dia se quiere el fichero a mano dentro del proyecto, la respuesta es
        **`.env` + `set -a; . ./.env; set +a`**, no un `.json`: mismo mecanismo que
        produccion, y ya esta cubierto por `.gitignore` (linea 379) **y** por `.dockerignore`
+
+
+
+
+
+
+## 44. Las licencias del stack  <- y el mapeo que se comprueba al compilar
+
+- --- 🔴 **El ecosistema .NET se ha vuelto de pago por debajo, y ya nos mordio TRES veces**
+```
+AutoMapper 15      dual RPL-1.5 + comercial   Community GRATIS  < 5 M USD  (ultima MIT: 14.0.0)
+MediatR            comercial (misma empresa)  nunca se uso aqui  <- esquivada sin saberlo
+FluentAssertions 8 comercial (Xceed)          ultima libre: v7   <- esquivada, usamos Assert
+QuestPDF           Community GRATIS < 1 M USD Professional $999 PERPETUOS
+MassTransit 9      comercial ~$400/MES        la v8 Apache 2.0 entra en EOL a final de 2026
+Riok.Mapperly      Apache 2.0                 sin umbral, sin clave
+RabbitMQ.Client    Apache 2.0 / MPL 2.0       oficial
+```
+  - -- ⚠️ **la licencia es de la VERSION, no del proyecto.** "AutoMapper es MIT" fue verdad
+       hasta la 14.0.0 (feb 2025) y dejo de serlo en la 15
+  - -- ⚠️ **QuestPDF: dos categorias no califican NUNCA**, por pocos ingresos que tengan:
+       gobierno / sector publico (salvo academia publica) y **empresas cotizadas**. Y si
+       dejas de calificar hay **90 dias** de transicion
+  - -- ⭐ **MassTransit es la que mas duele por lo que NO hicimos**: si se hubiera metido
+       "porque es lo estandar", hoy habria que elegir entre pagar $400/mes o quedarse en una
+       version que muere en diciembre. El cliente crudo nos dejo fuera de esa decision
+
+- --- **Y una leccion aparte: el dato que el repo tenia sobre AutoMapper era FALSO**
+  - -- cuatro sitios decian "la 15.1.1 exige licencia comercial en produccion". No es cierto:
+       hay **Community gratuita bajo 5 M USD**, autoservicio. No habia que pagar, habia que
+       **registrarse**
+  - -- ⭐ y lo grave es lo que esa nota **tapaba**: sin registrar nada, la que aplica es
+       **RPL-1.5, copyleft RECIPROCO**. O sea que resumirlo como "hay que pagar" ocultaba el
+       unico riesgo de verdad, que es para un producto cerrado
+  - -- la decision mal tomada habria sido **pagar una licencia que no hacia falta**. Un dato
+       falso en `memory.md` no es un detalle: es una factura
+
+- --- ⭐ **¿RabbitMQ.Client crudo se usa en produccion?** Si. Y la pregunta correcta es otra
+```
+MassTransit / NServiceBus / Wolverine / Rebus  ->  TODOS por encima de RabbitMQ.Client
+```
+  - -- la pregunta no es "¿esta libreria es de prod?" sino **"¿tengo las garantias que el
+       framework me habria dado?"**. Y estan: outbox transaccional, inbox, publisher
+       confirms, reintentos con TTL, una DLQ por cola, y endpoint para salir de la DLQ
+  - -- lo que un framework SI daria y aqui no hay, sin adornos:
+```
+1. SAGAS / process manager   <- el grande. Llegara con Shipping: si el envio falla hay que
+                                devolver el cobro, y ese estado tiene que vivir en algun sitio
+2. delayed delivery generica <- el truco del TTL cubre el reintento, no "manda esto en 3 dias"
+3. retry declarativo + circuit breaker
+4. harness en memoria        <- aqui se resolvio MEJOR: el efecto vive FUERA del consumidor
+5. versionado de contratos
+6. cambiar de transporte     <- estamos atados a AMQP
+```
+  - -- **la senal para cambiar** (para que no sea por corazonada): la primera saga con
+       compensacion, delayed delivery de verdad, o un segundo transporte. El candidato seria
+       **Wolverine** (MIT), no MassTransit
+  - -- ⭐ **y migrar sera barato porque ya se pago**: el mecanismo esta aislado en
+       `Shared/Messaging` y el efecto vive fuera del consumidor (`IReceiptGenerator`,
+       `IOrderPaymentHandler`). Son POCOs que no saben que es AMQP: se enchufan a un handler
+       de Wolverine **sin tocarlos**
+
+- --- ⭐ **Salir de AutoMapper: Mapperly es un SOURCE GENERATOR, y eso cambia cuando falla**
+```
+AutoMapper:  expresiones construidas en RUNTIME   -> miembro sin alimentar = excepcion en
+                                                     la primera peticion (o un test que
+                                                     hay que acordarse de escribir)
+Mapperly:    C# escrito al COMPILAR               -> miembro sin alimentar = RMG020
+                                                     = ERROR DE BUILD con -warnaserror
+```
+  - -- este repo ya pago un **500 en produccion** por un mapeo que solo falla ejecutando.
+       Mover esa comprobacion al compilador es la leccion aplicada, no una preferencia
+  - -- cero reflexion, y **el codigo generado se puede LEER**:
+```sh
+# temporal en el .csproj, solo para mirar:
+<EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+cat obj/Debug/net9.0/generated/Riok.Mapperly/*/ProductMapper.g.cs
+```
+```cs
+target.CategoryName = entity.Category?.Name;       // null-safe: un GET sin .Include NO revienta
+target.RowVersion   = ToBase64(entity.RowVersion);  // toma mi metodo privado POR FIRMA
+```
+    - la duda que quedaba (¿aplana bien una navegacion nullable?) **no se resolvio
+      ejecutando: se resolvio leyendo**. Con AutoMapper esa misma pregunta costo un 500
+
+- --- **La pieza que faltaba: un servicio generico no puede mapear con un generador**
+```cs
+// antes:  CrudService<TEntity,TDto,...> llamaba a IMapper.Map<TDto>(...)   <- runtime
+// ahora:  Shared/Crud/IEntityMapper.cs   <- gemelo de IEntityRules<,,>
+public interface IEntityMapper<TEntity, TDto, TCreateDto, TUpdateDto>
+{
+  TDto  ToDto(TEntity entity);
+  TEntity ToEntity(TCreateDto dto);
+  void  Apply(TUpdateDto dto, TEntity entity);   // PATCH parcial, sobre la entidad rastreada
+}
+```
+  - -- **sin generico abierto por defecto** (no hay `NoEntityMapper`, a diferencia de
+       `NoEntityRules`): no existe un mapeo "vacio" razonable, asi que una entidad sin
+       mapeador **tiene** que romper el arranque. Lo hace `ValidateOnBuild`
+  - -- registro **cerrado por entidad** en el `XExtensions.cs` del slice, y **Singleton**: los
+       mapeadores generados no tienen estado ni dependencias
+  - -- ⭐ con esto **desaparecio `AddObjectMapping`**, y con ella **una de las dos excepciones**
+       documentadas a "`Shared/` no nombra tipos de `Features/`": ya no hay ensamblados que
+       escanear, asi que el composition root dejo de necesitar
+       `typeof(CategoryProfile).Assembly`
+
+- --- **Que se genera y que se escribe a mano, y por que ese reparto**
+```cs
+[Mapper]
+public partial class ProductMapper : IEntityMapper<Product, ProductDto, CreateProductDto, UpdateProductDto>
+{
+  [MapProperty("Category.Name", nameof(ProductDto.CategoryName))]
+  public partial ProductDto ToDto(Product entity);            // GENERADO
+
+  public void Apply(UpdateProductDto dto, Product entity)      // A MANO, campo a campo
+  {
+    entity.CategoryId = dto.CategoryId ?? entity.CategoryId;   // <- el que reventaba la FK
+    ...
+  }
+
+  [MapperIgnoreTarget(nameof(Product.RowVersion))]             // lo gestiona SQL Server
+  [MapperIgnoreTarget(nameof(Product.CreatedAt))]              // lo estampa AppDbContext
+  private partial Product Build(CreateProductDto dto);         // GENERADO
+
+  private static string? ToBase64(byte[]? rv) => rv is null ? null : Convert.ToBase64String(rv);
+}
+```
+  - -- ⚠️ **Mapperly TIENE `AllowNullPropertyAssignment = false`**, documentado justo para los
+       PATCH parciales. **No se usa a proposito.** El PATCH es el sitio exacto donde este repo
+       se quemo, y siete lineas de `dto.X ?? entity.X` no hay que ir a verificarlas en la
+       documentacion de nadie. El generador se queda con lo que hace bien: las proyecciones
+  - -- **el compilador pidio dos cosas en el primer build**: dos `RMG020` porque
+       `Category.CreatedAt/UpdatedAt` no llegan a `CategoryDto`. Es correcto (ese DTO no
+       expone auditoria, a diferencia de `ProductDto`), asi que ahora esta **declarado** con
+       `[MapperIgnoreSource]` en vez de ser un silencio
+  - -- se fue el test `Configuration_IsValid` (el `AssertConfigurationIsValid()` de
+       AutoMapper) y **no es perdida de cobertura**: esa comprobacion se mudo de la suite al
+       compilador
+
+- --- **Verificado ejecutando, que es donde el mapeo se rompe de verdad**
+```sh
+POST  name="  Producto MIG  "   -> "Producto MIG"          # Trim al escribir
+GET                             -> categoryName:"Bebidas MIG"  rowVersion:"AAAAAAACgKI="
+PATCH {"name":"..."}            -> categoryId 6092, price 99.9, stock 10, sku INTACTOS
+PATCH {"stock":0}               -> stock 0        # un 0 explicito SI se aplica
+PATCH {"description":""}        -> ""             # y imageUrl, no enviado, sigue null
+Production sin Redis ni broker  -> /health 200, /health/ready Healthy, 0 errores
+```
+  - -- ⚠️ **hallazgo lateral**: el `Trim` del SKU es **inalcanzable por HTTP**. La
+       DataAnnotation del DTO rechaza espacios antes de que el mapeador vea el valor
+       (`400 "SKU can only contain letters, digits and hyphens"`). Se deja como defensa en
+       profundidad para cualquier otro llamador, y el test unitario lo cubre
+  - -- 322 tests (eran 318): +5 de Trim y rowversion, -1 el que ahora hace el compilador

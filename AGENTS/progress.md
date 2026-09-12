@@ -4,8 +4,8 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-12** (verificación del estado: build a 0 warnings tras sacar
-un `IEventOutbox` que `planning/22` dejó sin usar, y 318/318 tests).
+Última actualización: **2026-09-12** (fuera AutoMapper: el mapeo pasa a un source generator,
+322/322 tests y build a 0 warnings).
 
 ---
 
@@ -35,6 +35,7 @@ un `IEventOutbox` que `planning/22` dejó sin usar, y 318/318 tests).
 | 20 | **Órdenes y comprobante en PDF** | ✅ | [`features/20`](features/20_ordenes-y-comprobante.feature) · [`planning/20`](planning/20_ordenes-y-comprobante.md) | `7df6df0` |
 | 21 | Recuperar de la DLQ y recoger basura | ✅ | [`features/21`](features/21_recuperar-comprobantes-y-recoger-basura.feature) · [`planning/21`](planning/21_recuperar-comprobantes-y-recoger-basura.md) | — |
 | 22 | **Pagos (Stripe) y el ciclo de vida de la orden** | ✅ ⚠️ camino feliz contra Stripe **sin verificar**: necesita `sk_test_…` y URL pública | [`features/22`](features/22_pagos.feature) · [`planning/22`](planning/22_pagos.md) | `3769e99` |
+| 23 | Salir de AutoMapper (`Riok.Mapperly`) | ✅ | [`planning/23`](planning/23_mapeador-sin-licencia.md) | — |
 
 **Ya no queda ningún ⚠️.** El 09 se cerró el 2026-09-05 contra un RabbitMQ real, y esa
 verificación destapó un bug que el build y el smoke test no veían (abajo).
@@ -42,6 +43,68 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 ---
 
 ## 2. Bitácora
+
+### 2026-09-12 — Fuera AutoMapper: el mapeo se comprueba al compilar
+
+`planning/23`. Empezó como una revisión de licencias del stack y acabó en un cambio
+técnico, porque el dato que teníamos estaba mal.
+
+**El dato falso.** El repo decía en cuatro sitios que AutoMapper 15 «exige licencia
+comercial en producción». Verificado contra la fuente: es dual **RPL-1.5 + comercial** y
+tiene **Community gratuita por debajo de 5 M USD**. No había que pagar, había que
+registrarse — y lo que la nota tapaba era el riesgo real: sin registrar nada, aplica
+RPL-1.5, que es **copyleft recíproco**.
+
+**Por qué se migra igual, y no por la licencia.** `Riok.Mapperly` es un **source
+generator**: el mapeo es C# escrito al compilar, sin reflexión, y un miembro del destino sin
+alimentar es un **RMG020**, o sea un error de build con `-warnaserror`. Con AutoMapper eso
+era una excepción en la primera petición, o un test que había que acordarse de escribir. Y
+este repo ya pagó un **500 en producción** por exactamente esa clase de fallo.
+
+**La pieza que faltaba.** `CrudService` es genérico y llamaba a `IMapper.Map<TDto>(...)`, que
+un generador no puede resolver. Nace `IEntityMapper<TEntity,TDto,TCreateDto,TUpdateDto>`
+(`Shared/Crud/`), gemelo de `IEntityRules<,,>`: mecanismo genérico, traducción inyectada.
+Sin genérico abierto por defecto a propósito — no existe un mapeo «vacío» razonable, así que
+una entidad sin mapeador **rompe el arranque**, que es donde se quiere que rompa.
+
+**Lo que se genera y lo que no.** Las proyecciones se generan; el PATCH se escribe a mano,
+campo a campo. Mapperly tiene `AllowNullPropertyAssignment = false` documentado justo para
+eso y **no se usa**: el PATCH es donde el repo ya se quemó, y siete líneas de
+`entity.X = dto.X ?? entity.X` no hay que ir a verificarlas en la documentación de nadie.
+
+**Tres cosas que aparecieron, y las tres las dijo el compilador o el código generado**
+
+- 🟠 **Dos RMG020 en el primer build**: `Category.CreatedAt`/`UpdatedAt` no llegan a
+  `CategoryDto`. Es correcto —ese DTO no expone auditoría, a diferencia de `ProductDto`— y
+  ahora está **declarado** con `[MapperIgnoreSource]` en vez de ser un silencio.
+- ⭐ **La duda que quedaba se resolvió leyendo el `.g.cs`**, no ejecutando: el generado es
+  `target.CategoryName = entity.Category?.Name`, null-safe, así que un GET que olvide el
+  `.Include` sigue devolviendo null y no una excepción. Y `ToBase64` se engancha **por
+  firma** (`byte[]?` → `string?`) sin configurar nada.
+- **Desaparece `AddObjectMapping`**, y con ella una de las dos excepciones documentadas a
+  «`Shared/` no nombra tipos de `Features/`»: ya no hay ensamblados que escanear, así que el
+  composition root dejó de necesitar `typeof(CategoryProfile).Assembly`.
+
+⚠️ **Hallazgo lateral**: el `Trim` del SKU es **inalcanzable por HTTP**. La DataAnnotation
+del DTO rechaza espacios antes de que el mapeador vea el valor. Se deja como defensa en
+profundidad, y el test unitario lo cubre.
+
+**Verificado ejecutando**, contra SQL Server y Redis reales, no solo compilando:
+
+| Prueba | Resultado |
+|---|---|
+| POST con `"  Producto MIG  "` | `"Producto MIG"` — Trim aplicado |
+| GET del producto | `categoryName: "Bebidas MIG"`, `rowVersion: "AAAAAAACgKI="` |
+| **PATCH solo con `name`** | `categoryId` 6092, `price` 99.9, `stock` 10, `sku` **intactos** |
+| PATCH con `stock: 0` | stock 0 — un 0 explícito **sí** se aplica |
+| PATCH con `description: ""` | queda `""`; `imageUrl`, no enviado, sigue null |
+| PATCH de categoría solo con `description` | el `name` aguanta (pasa por el decorador de cache) |
+| `GET /product/paged` | 2 items de 162, con `categoryName` resuelto |
+| Arranque en `Production` sin Redis ni broker | `/health` 200, `/health/ready` Healthy, 0 errores |
+
+Suite **322/322** (+4: cinco nuevos de Trim y rowversion, menos el
+`Configuration_IsValid`, que ahora lo hace el compilador). Build limpio con `-warnaserror`.
+`notes.md` capítulo 44.
 
 ### 2026-09-12 — Verificar el estado, y el warning que decía que no era verdad
 
@@ -1176,6 +1239,9 @@ que necesita credenciales del owner, y deuda menor** (`docs/06` §Paso 12).
    publicar sin cola vuelve como 312 NO_ROUTE.
 4. **Deuda menor anotada** — `docs/06` §Paso 12. Lo más caro de ahí es `DateTime.Now` → UTC
    (entidades, DTOs y datos, todo a la vez) y que **nadie alerta cuando la DLQ crece**.
+   ⚠️ Y una que no es de código: **repasar las licencias antes de añadir un paquete**. Ya han
+   mordido tres veces (AutoMapper, FluentAssertions, MassTransit); el estado del stack está
+   en `notes.md` cap. 44.
 5. **Partir en proyectos** ([`planning/15`](planning/15_partir-en-proyectos.md)) — diferido
    a propósito: hacerlo antes de que el proyecto lo pida solo añade fricción.
 

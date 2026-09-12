@@ -26,6 +26,8 @@ Convención (`rules.md` §10): por tarea, un slug numerado `NN_<slug>`, con su c
 | 19 | Errores bajo carga | ✅ | — (salió de una prueba de carga, no de un contrato) |
 | 20 | **Órdenes y comprobante en PDF** | ✅ | `features/20_ordenes-y-comprobante.feature` |
 | 21 | Recuperar de la DLQ y recoger basura | ✅ | `features/21_recuperar-comprobantes-y-recoger-basura.feature` |
+| 22 | **Pagos (Stripe)** | ✅ | `features/22_pagos.feature` |
+| 23 | Salir de AutoMapper (`Mapperly`) | ✅ | — (refactor: no cambia ningún contrato) |
 
 Todos menos el **15** están hechos: el checklist queda como evidencia de qué se decidió y
 qué quedó abierto. El 15 (partir en proyectos) sigue **diferido a propósito**, y la señal

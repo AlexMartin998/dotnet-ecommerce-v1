@@ -1,5 +1,6 @@
 using ApiEcommerce.Features.Catalog.Dtos;
 using ApiEcommerce.Features.Catalog.Models;
+using ApiEcommerce.Features.Catalog.Mapping;
 using ApiEcommerce.Features.Catalog.Repository;
 using ApiEcommerce.Features.Catalog.Service;
 using ApiEcommerce.Features.Catalog.Messaging;
@@ -31,6 +32,11 @@ public static class CatalogExtensions
     // ---- repositorios ------------------------------------------------------
     services.AddScoped<ICategoryRepository, CategoryRepository>();
     services.AddScoped<IProductRepository, ProductRepository>();
+
+    // ---- mapeo DTO <-> entidad ---------------------------------------------
+    // Singleton: los mapeadores que genera Mapperly no tienen estado ni dependencias.
+    services.AddSingleton<IEntityMapper<Category, CategoryDto, CreateCategoryDto, UpdateCategoryDto>, CategoryMapper>();
+    services.AddSingleton<IEntityMapper<Product, ProductDto, CreateProductDto, UpdateProductDto>, ProductMapper>();
 
     // ---- reglas de negocio -------------------------------------------------
     // Registro cerrado por entidad: gana sobre el genérico abierto NoEntityRules.

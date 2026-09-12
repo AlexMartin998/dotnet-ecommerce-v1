@@ -200,13 +200,13 @@ Un slice por entidad reproduce la dispersión que el slicing venía a quitar, co
 **Añadir un slice = crear su carpeta y una línea en `AddFeatures()`.** Contextos previstos:
 `Catalog`, `Accounts`, `Ordering`, `Payments` (los cuatro existen), `Shipping`.
 
-⚠️ **`Shared/` no nombra tipos de `Features/`.** La excepción legítima es el composition
-root, que por definición conoce ambos lados (por eso el ensamblado que escanea AutoMapper se
-le pasa desde allí). Si algo de `Shared/` necesita un tipo de un slice, o el tipo está en el
-sitio equivocado, o hay que **invertir** la dependencia.
-⚠️ Hay **una segunda, y es una trampa**: `Shared/Mapping/MappingProfile.cs` conserva tres
-`using` de `Catalog` vivos porque su cuerpo es un bloque comentado de aprendizaje. **No lo
-"limpies"**: §9 prohíbe borrar esos bloques, y quitar los `using` los rompería.
+⚠️ **`Shared/` no nombra tipos de `Features/`.** Si algo de `Shared/` necesita un tipo de un
+slice, o el tipo está en el sitio equivocado, o hay que **invertir** la dependencia. La
+excepción legítima sería el composition root, que por definición conoce ambos lados; hoy no
+la ejerce (al salir de AutoMapper dejó de haber ensamblados que escanear).
+⚠️ Queda **una trampa**: `Shared/Mapping/MappingProfile.cs` conserva tres `using` de
+`Catalog` vivos porque su cuerpo es un bloque comentado de aprendizaje. **No lo "limpies"**:
+§9 prohíbe borrar esos bloques, y quitar los `using` los rompería.
 
 ⚠️ **Un slice NO habla con los tipos de otro: habla con un puerto suyo.** `Ordering` no
 conoce `IProductRepository`; conoce `ICatalogGateway`, y toda la dependencia cruzada cabe
@@ -533,12 +533,19 @@ código propio.
 - **Timestamps con `DateTime.Now`** (local, no UTC) en todo el modelo, estampados por
   `AppDbContext.SaveChangesAsync` — **nunca a mano**. La excepción son los `exp`/`nbf` del
   JWT, que la RFC 7519 exige en UTC.
-- **Mapping (AutoMapper)**: un profile por entidad. El PATCH parcial se expresa campo a
-  campo con `MapFrom((s, d) => s.X ?? d.X)`, **no** con
-  `ForAllMembers(o => o.Condition(...))` — `Condition` recibe el valor ya convertido al tipo
-  destino, así que un `int?` nulo llega como `0`, no se salta, y pisa el campo. Con
-  `CategoryId` eso rompe la FK y devuelve un 500. `CreatedAt`/`UpdatedAt` y las navegaciones
-  se `Ignore()` siempre al escribir.
+- **Mapping (`Riok.Mapperly`, source generator)**: un `[Mapper] partial class` por entidad,
+  implementando `IEntityMapper<TEntity,TDto,TCreateDto,TUpdateDto>` y registrado **cerrado**
+  en el `XExtensions.cs` de su slice. Sin registro no arranca (`ValidateOnBuild`), que es lo
+  que se quiere.
+  - Se **generan** las proyecciones (`ToDto`, y un `Build` privado para la creación);
+    `CreatedAt`/`UpdatedAt`, `Id`, `RowVersion` y las navegaciones van con
+    `[MapperIgnoreTarget]` al escribir.
+  - Se **escribe a mano** el PATCH (`Apply`), campo a campo con `dto.X ?? entity.X`.
+    ⚠️ No es pereza: un mapeo por convención que decide sobre el valor **ya convertido al
+    destino** recibe un `int?` nulo como `0`, y un `CategoryId` en `0` rompe la FK y devuelve
+    un 500. Es el bug que costó la migración anterior.
+  - Un miembro del destino sin alimentar es **RMG020**, o sea un **error de build** con
+    `-warnaserror`. Antes eso era una excepción en la primera petición.
 - ⚠️ **Los bloques comentados de implementaciones anteriores NO se borran**: son el registro
   de aprendizaje del autor. Y **cuidado al editar con scripts**: una sustitución global se
   cuela dentro de ellos y los rompe (ya pasó dos veces).
@@ -571,6 +578,7 @@ código propio.
 | **Tests: `UseSetting`, no `ConfigureAppConfiguration`** | Varias piezas leen la config **eager** para decidir qué implementación registran, y eso pasa **antes** de esos callbacks: el host arrancaba con las implementaciones nulas y los tests pasaban sin probar nada. |
 | Tests de integración en paralelo | Comparten base de datos: van todos en la misma colección, **incluidos los que levantan su propio host**. |
 | FluentAssertions | **No se usa** aunque la skill la pida: desde la v8 exige licencia comercial. `Assert` de xunit basta. |
+| **Licencias del ecosistema .NET** | Ya han mordido tres veces (AutoMapper, FluentAssertions, MassTransit). Antes de meter un paquete «estándar», **comprobar la licencia de la versión concreta**, no la del proyecto. Y antes de creerse una nota del repo sobre una licencia, verificarla: la de AutoMapper era falsa. Estado actual en `notes.md` cap. 44. |
 | `POST /api/v1/category` | Devuelve **201 sin cuerpo**: el id sale de la cabecera `Location`. No es un fallo. |
 
 ## 11. Cómo se trabaja aquí
