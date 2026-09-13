@@ -292,9 +292,9 @@ public class CartAndFulfillmentTests(ApiFactory factory)
     using var scope = factory.Services.CreateScope();
 
     return await scope.ServiceProvider.GetRequiredService<AppDbContext>()
-        .Products.AsNoTracking()
-        .Where(p => p.SKU == sku)
-        .Select(p => p.Stock)
+        .ProductVariants.AsNoTracking()
+        .Where(v => v.SKU == sku)
+        .Select(v => v.Stock)
         .FirstAsync();
   }
 

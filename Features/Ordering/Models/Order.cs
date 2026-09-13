@@ -138,6 +138,17 @@ public class OrderItem : IEntity
   [MaxLength(200)]
   public required string Name { get; set; }
 
+  /// <summary>La variante vendida, para devolver su stock si la orden se cancela.</summary>
+  /// <remarks>
+  /// <c>null</c> en las líneas anteriores a las variantes (<c>planning/27</c>). Tiene clave
+  /// foránea: una variante vendida no se borra, se desactiva.
+  /// </remarks>
+  public int? VariantId { get; set; }
+
+  /// <summary>La talla tal y como estaba al comprar. <c>null</c> si se vende sin tallas.</summary>
+  [MaxLength(20)]
+  public string? Size { get; set; }
+
   public decimal UnitPrice { get; set; }
 
   public int Quantity { get; set; }

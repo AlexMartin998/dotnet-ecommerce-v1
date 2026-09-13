@@ -43,19 +43,20 @@ public interface IProductRepository : IBaseRepository<Product>
   Task<bool> SkuExistsAsync(string sku, int? excludeId = null, CancellationToken ct = default);
 
 
-  /// <summary>
-  /// Descuenta stock de forma atómica en un único
-  /// <c>UPDATE ... SET Stock = Stock - @q WHERE Id = @id AND Stock &gt;= @q</c>.
-  /// Devuelve <c>false</c> si no había stock suficiente.
-  /// </summary>
-  /// <remarks>
-  /// Devuelve <c>bool</c> y no lanza: quien decide que eso es un 409 es el servicio.
-  /// Para un contador con contención esto es mejor que la concurrencia optimista, que
-  /// rechazaría compras válidas al agotar los reintentos.
-  /// </remarks>
-  Task<bool> TryDecrementStockAsync(int productId, int quantity, CancellationToken ct = default);
+  // // Sustituido por IProductVariantRepository.TryDecrementStockAsync (planning/27).
+  // /// <summary>
+  // /// Descuenta stock de forma atómica en un único
+  // /// <c>UPDATE ... SET Stock = Stock - @q WHERE Id = @id AND Stock &gt;= @q</c>.
+  // /// Devuelve <c>false</c> si no había stock suficiente.
+  // /// </summary>
+  // /// <remarks>
+  // /// Devuelve <c>bool</c> y no lanza: quien decide que eso es un 409 es el servicio.
+  // /// Para un contador con contención esto es mejor que la concurrencia optimista, que
+  // /// rechazaría compras válidas al agotar los reintentos.
+  // /// </remarks>
+  // Task<bool> TryDecrementStockAsync(int productId, int quantity, CancellationToken ct = default);
 
-  /// <summary>Carga el producto rastreado junto a sus imágenes, para poder añadir o quitar.</summary>
+  /// <summary>Carga el producto rastreado junto a sus imágenes y variantes, para poder añadir o quitar.</summary>
   Task<Product?> GetByIdWithImagesAsync(int id, CancellationToken ct = default);
 
   /// <summary>Retira el producto del catálogo sin borrar la fila.</summary>
@@ -81,12 +82,13 @@ public interface IProductRepository : IBaseRepository<Product>
   Task<(int Total, int OutOfStock, int LowStock)> CountStockAsync(
       int lowStockThreshold, CancellationToken ct = default);
 
-  /// <summary>Devuelve stock al catálogo. Suma incondicional.</summary>
-  /// <remarks>
-  /// Sin condición porque no la hay: devolver siempre puede. Quien decide que se puede
-  /// devolver es la transición de estado de quien llama, no esta sentencia.
-  /// </remarks>
-  Task IncrementStockAsync(int productId, int quantity, CancellationToken ct = default);
+  // // Sustituido por IProductVariantRepository.IncrementStockAsync (planning/27).
+  // /// <summary>Devuelve stock al catálogo. Suma incondicional.</summary>
+  // /// <remarks>
+  // /// Sin condición porque no la hay: devolver siempre puede. Quien decide que se puede
+  // /// devolver es la transición de estado de quien llama, no esta sentencia.
+  // /// </remarks>
+  // Task IncrementStockAsync(int productId, int quantity, CancellationToken ct = default);
 
 
   // // Sustituido por GetBySkuAsync + la regla en ProductService.BuyAsync: el `bool`

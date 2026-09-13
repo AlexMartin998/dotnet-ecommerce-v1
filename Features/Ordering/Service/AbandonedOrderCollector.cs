@@ -38,7 +38,7 @@ public sealed class AbandonedOrderCollector(
 
       // Una transacción POR ORDEN y no una para el lote: una orden que falle al devolver no
       // puede impedir que se recuperen las demás.
-      if (await CancelAsync(order.Id, order.Items.Select(i => (i.ProductId, i.Quantity)).ToList(), ct))
+      if (await CancelAsync(order.Id, order.Items.Select(i => (i.VariantId, i.Sku, i.Quantity)).ToList(), ct))
         cancelled++;
     }
 
@@ -51,7 +51,7 @@ public sealed class AbandonedOrderCollector(
   }
 
   private async Task<bool> CancelAsync(
-      int orderId, IReadOnlyList<(int ProductId, int Quantity)> lines, CancellationToken ct)
+      int orderId, IReadOnlyList<(int? VariantId, string Sku, int Quantity)> lines, CancellationToken ct)
       => await transactions.ExecuteAsync(async token =>
       {
         // La transición manda: si otro la movió entre la lectura y esto —un webhook que
@@ -59,11 +59,25 @@ public sealed class AbandonedOrderCollector(
         // recolector y lo que impide devolver el stock de una orden ya pagada.
         if (!await orders.TryCancelAsync(orderId, token)) return false;
 
-        // Mismo orden global que al comprar, por producto: sin él, cancelar y comprar a la
-        // vez pueden cruzarse en deadlock.
-        foreach (var (productId, quantity) in lines.OrderBy(line => line.ProductId))
-          await catalog.ReturnAsync(productId, quantity, token);
+        // Mismo orden global que al comprar, POR SKU (OrderService ordena las líneas así).
+        // Hasta planning/27 esto iba por ProductId, que NO es el orden de la compra: cancelar
+        // y comprar a la vez podían tomar los mismos locks en orden cruzado.
+        foreach (var (variantId, sku, quantity) in lines.OrderBy(line => line.Sku, StringComparer.OrdinalIgnoreCase))
+          await catalog.ReturnAsync(variantId, sku, quantity, token);
 
         return true;
       }, ct);
+
+  // // Hasta planning/27: devolvía por producto y en orden de ProductId.
+  // private async Task<bool> CancelAsync(
+  //     int orderId, IReadOnlyList<(int ProductId, int Quantity)> lines, CancellationToken ct)
+  //     => await transactions.ExecuteAsync(async token =>
+  //     {
+  //       if (!await orders.TryCancelAsync(orderId, token)) return false;
+  //
+  //       foreach (var (productId, quantity) in lines.OrderBy(line => line.ProductId))
+  //         await catalog.ReturnAsync(productId, quantity, token);
+  //
+  //       return true;
+  //     }, ct);
 }

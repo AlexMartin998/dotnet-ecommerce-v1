@@ -28,6 +28,9 @@ public static class CartLineStatus
 
   /// <summary>Ningún producto responde a ese SKU.</summary>
   public const string NotFound = "not_found";
+
+  /// <summary>El SKU existe pero ya no está a la venta (talla desactivada).</summary>
+  public const string Unavailable = "unavailable";
 }
 
 
@@ -40,6 +43,9 @@ public class CartLineDto
   public int? ProductId { get; set; }
 
   public string? Name { get; set; }
+
+  /// <summary>La talla de la línea. <c>null</c> si se vende sin tallas o el SKU no existe.</summary>
+  public string? Size { get; set; }
 
   public decimal UnitPrice { get; set; }
 

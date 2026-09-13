@@ -95,7 +95,10 @@ Base: `http://localhost:8021/api/v1/…` — todas las rutas van versionadas por
 | DELETE | `/{id}` | 👑 | **Retira** el producto (borrado lógico): desaparece de todas las consultas y la fila se queda |
 | POST | `/{id}/image` | 👑 | **Añade** una imagen (multipart, máx. 2 MB, hasta 8). Va **dentro de `wwwroot/`**: es pública |
 | DELETE | `/{id}/image/{imageId}` | 👑 | Quita una imagen y borra su fichero **después** del commit |
-| **POST** | **`/buy`** | 🔒 | **Descuenta stock por SKU. NO crea ninguna orden.** Idempotente (`Idempotency-Key`). Emite `product.purchased` |
+| **POST** | **`/buy`** | 🔒 | **Descuenta stock por SKU de variante. NO crea ninguna orden.** Idempotente (`Idempotency-Key`). Emite `product.purchased`. 404 SKU inexistente, 409 `sku_unavailable` / `insufficient_stock` |
+| GET | `/{id}/variants` | 👑 | Todas las tallas, **también las desactivadas** (la ficha pública solo trae las activas) |
+| POST | `/{id}/variants` | 👑 | Añade una talla `{ size, sku?, stock, position? }`. SKU por defecto `{SKU}-{TALLA}`. 409 `duplicate_size`, `variant_kind_mismatch` |
+| PATCH | `/{id}/variants/{variantId}` | 👑 | `{ stock?, position?, isActive? }`. `If-Match` con su `rowVersion` → 412. Talla y SKU no cambian |
 
 > ⚠️ **Retirar un producto NO borra la fila.** `OrderItems` tiene clave foránea a
 > `Products`, así que un borrado real fallaría; el borrado lógico (`DeletedAt` + filtro
@@ -106,8 +109,10 @@ Base: `http://localhost:8021/api/v1/…` — todas las rutas van versionadas por
 > productos no pueden llamarse igual salvo que uno mande un `slug` explícito. El 409 lo dice.
 > Un PATCH **nunca** lo cambia: movería una URL que ya circula.
 >
-> ⚠️ **`sizes` es informativo: el stock es por producto, no por talla.** Pasarlo a variantes
-> cambiaría el contrato de `/cart/quote`, de `POST /order` y toda la reserva.
+> ⚠️ **El stock es por talla** (`planning/27`). `variants[]` trae las activas con `sku`,
+> `size`, `stock` y `available`; `stock` y `sizes` del producto son **derivados**. Un producto
+> sin tallas tiene **una** variante con `size: null` y el SKU del producto: la clave de línea
+> es **siempre** `variants[].sku`. Crear: `stock` **o** `variants`, nunca los dos (400).
 
 ### 1.5 `CartController` — `/api/v1/Cart`
 
@@ -121,7 +126,8 @@ Base: `http://localhost:8021/api/v1/…` — todas las rutas van versionadas por
 > ⚠️ **Una línea sin stock vuelve marcada dentro de un 200**, no como 409 — al revés que el
 > checkout. El front tiene que poder enseñar «solo quedan 2» y dejar ajustar la cantidad; un
 > 409 deja el carrito inservible. Cada línea trae `status` (`ok` · `insufficient_stock` ·
-> `not_found`), `available` y `maxQuantity`, y **el total solo suma las líneas servibles**.
+> `not_found` · `unavailable`), `size`, `available` y `maxQuantity`, y **el total solo suma
+> las líneas servibles**.
 >
 > ⚠️ **El desglose lo calcula la misma pieza que el checkout** (`OrderPricing`). Calcularlo en
 > los dos sitios es cómo se acaba cobrando un total distinto del que el cliente vio.
@@ -165,6 +171,10 @@ Base: `http://localhost:8021/api/v1/…` — todas las rutas van versionadas por
 >
 > ⚠️ **Mover una orden no emite ningún evento todavía**, por la misma razón que colocarla:
 > nadie consume `order.shipped` y publicar sin cola vuelve como 312 NO_ROUTE.
+
+> ⚠️ **Una línea que no se puede apartar al colocar la orden es 409 con `code` y `sku`** en
+> el `ProblemDetails`: `sku_not_found`, `sku_unavailable` (talla desactivada) o
+> `insufficient_stock`. Toda la orden se deshace. Cada línea guarda `size` copiado.
 
 ### 1.7 `PaymentController` — `/api/v1/Payment` (todo 🔒)
 
@@ -262,7 +272,7 @@ sequenceDiagram
     rect rgb(235, 243, 255)
     Note over S,DB: T1 — UNA transacción
     S->>DB: ¿esta intent ya se uso? (ExecutedCommands)
-    S->>DB: UPDATE stock WHERE Stock >= cantidad
+    S->>DB: UPDATE ProductVariants SET Stock WHERE IsActive AND Stock >= cantidad
     S->>DB: INSERT Orders + OrderItems (numero por secuencia)
     S->>DB: INSERT ExecutedCommands
     Note over S,DB: NO se emite ningun evento:<br/>nadie consumiria order.placed
@@ -321,7 +331,7 @@ más se confunden son estas, y **el PDF no está en la que atiende tu petición*
      ───────────────────────────────                   ────────────────────────────────
   ┌─ T1 ── OrderService.PlaceAsync ─────┐
   │  ¿esta Idempotency-Key ya se usó?   │
-  │  UPDATE Products SET Stock = ...    │
+  │  UPDATE ProductVariants SET Stock   │
   │  INSERT Orders + OrderItems         │
   │  INSERT ExecutedCommands            │
   └─ COMMIT ────────────────────────────┘
@@ -404,8 +414,8 @@ sequenceDiagram
     Ctl->>Svc: BuyAsync(dto, intent)
     rect rgb(235, 243, 255)
     Note over Svc,DB: una transacción
-    Svc->>DB: ExecuteUpdateAsync<br/>SET Stock = Stock - q WHERE Sku=@s AND Stock >= q
-    DB-->>Svc: 0 filas afectadas -> 409 "insufficient stock"
+    Svc->>DB: ExecuteUpdateAsync (ProductVariants)<br/>SET Stock = Stock - q WHERE Id=@v AND IsActive AND Stock >= q
+    DB-->>Svc: 0 filas afectadas -> 409 insufficient_stock
     Svc->>DB: INSERT OutboxMessages(product.purchased)
     Svc->>DB: INSERT ExecutedCommands(intent)
     end

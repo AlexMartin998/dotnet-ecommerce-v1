@@ -19,6 +19,7 @@ public class ProductRepository(AppDbContext db)
     return await Query()
         .Include(p => p.Category)
         .Include(p => p.Images)
+        .Include(p => p.Variants)
         .OrderByDescending(p => p.CreatedAt)
         .ToListAsync(ct);
   }
@@ -28,6 +29,7 @@ public class ProductRepository(AppDbContext db)
     return await Query()
         .Include(p => p.Category)
         .Include(p => p.Images)
+        .Include(p => p.Variants)
         .FirstOrDefaultAsync(p => p.Id == id, ct);
   }
 
@@ -37,6 +39,7 @@ public class ProductRepository(AppDbContext db)
     var ordered = Query()
         .Include(p => p.Category)
         .Include(p => p.Images)
+        .Include(p => p.Variants)
         .OrderByDescending(p => p.CreatedAt)
         .ThenByDescending(p => p.Id);   // desempate: sin él, dos productos creados en el
                                         // mismo tick pueden repetirse entre páginas.
@@ -58,6 +61,7 @@ public class ProductRepository(AppDbContext db)
     return await Query()
         .Include(p => p.Category)
         .Include(p => p.Images)
+        .Include(p => p.Variants)
         .Where(p => p.CategoryId == categoryId)
         .OrderByDescending(p => p.CreatedAt)
         .ThenByDescending(p => p.Id)   // CreatedAt no es único: sin desempate el orden no es estable
@@ -73,6 +77,7 @@ public class ProductRepository(AppDbContext db)
     return await Query()
         .Include(p => p.Category)
         .Include(p => p.Images)
+        .Include(p => p.Variants)
         .Where(p => EF.Functions.Like(p.Name, pattern))
         .OrderByDescending(p => p.CreatedAt)
         .ToListAsync(ct);
@@ -89,12 +94,14 @@ public class ProductRepository(AppDbContext db)
     return await Query()
         .Include(p => p.Category)
         .Include(p => p.Images)
+        .Include(p => p.Variants)
         .FirstOrDefaultAsync(p => p.SKU == normalized, ct);   // usa IX_Products_SKU
   }
 
   public async Task<Product?> GetByIdWithImagesAsync(int id, CancellationToken ct = default)
       => await Query(tracking: true)
           .Include(p => p.Images)
+          .Include(p => p.Variants)
           .FirstOrDefaultAsync(p => p.Id == id, ct);
 
   public async Task<bool> SlugExistsAsync(string slug, CancellationToken ct = default)
@@ -104,6 +111,7 @@ public class ProductRepository(AppDbContext db)
       => await Query()
           .Include(p => p.Category)
           .Include(p => p.Images)
+        .Include(p => p.Variants)
           .FirstOrDefaultAsync(p => p.Slug == slug, ct);
 
   public async Task<bool> SoftDeleteAsync(int id, CancellationToken ct = default)
@@ -119,14 +127,29 @@ public class ProductRepository(AppDbContext db)
             .SetProperty(p => p.DeletedAt, now)
             .SetProperty(p => p.UpdatedAt, now), ct);
 
-    return affected == 1;
+    if (affected != 1) return false;
+
+    // La copia en las variantes, que es lo que libera sus SKU en el índice filtrado y lo que
+    // mira la compra. Quien llama abre la transacción: sin ella, un fallo aquí dejaría el
+    // producto retirado con sus tallas todavía a la venta.
+    await _db.ProductVariants
+        .IgnoreQueryFilters()
+        .Where(v => v.ProductId == id && v.DeletedAt == null)
+        .ExecuteUpdateAsync(setters => setters
+            .SetProperty(v => v.DeletedAt, now)
+            .SetProperty(v => v.UpdatedAt, now), ct);
+
+    return true;
   }
 
   public async Task<(int Total, int OutOfStock, int LowStock)> CountStockAsync(
       int lowStockThreshold, CancellationToken ct = default)
   {
-    // Una sola ida a la base: tres COUNT condicionales en la misma agregación.
+    // Una sola ida a la base: tres COUNT condicionales en la misma agregación. El stock de
+    // cada producto es la suma de sus tallas activas (planning/27), calculada en SQL.
     var counts = await Query()
+        // En long: la suma de varias tallas puede pasar de int y SQL Server daría 8115.
+        .Select(p => new { Stock = p.Variants.Where(v => v.IsActive).Sum(v => (long?)v.Stock) ?? 0L })
         .GroupBy(_ => 1)
         .Select(g => new
         {
@@ -140,39 +163,40 @@ public class ProductRepository(AppDbContext db)
     return counts is null ? (0, 0, 0) : (counts.Total, counts.OutOfStock, counts.LowStock);
   }
 
-  public async Task<bool> TryDecrementStockAsync(
-      int productId, int quantity, CancellationToken ct = default)
-  {
-    // Un solo UPDATE con la condición `Stock >= quantity` dentro de la sentencia: entre
-    // comprobar y descontar no cabe otra compra. Devuelve las filas afectadas, 0 si no
-    // se cumplió la condición.
-
-    // El instante se captura fuera del árbol de expresión: dentro, EF lo traduciría a
-    // GETDATE() y estamparía con el reloj de SQL Server en vez del reloj del proceso.
-    var now = DateTime.Now;
-
-    var affected = await _db.Products
-        .Where(p => p.Id == productId && p.Stock >= quantity)
-        .ExecuteUpdateAsync(setters => setters
-            .SetProperty(p => p.Stock, p => p.Stock - quantity)
-            // ExecuteUpdate no pasa por SaveChangesAsync, así que la auditoría automática
-            // no se dispara y UpdatedAt se estampa aquí a mano.
-            .SetProperty(p => p.UpdatedAt, _ => now), ct);
-
-    return affected == 1;
-  }
-
-  public async Task IncrementStockAsync(
-      int productId, int quantity, CancellationToken ct = default)
-  {
-    var now = DateTime.Now;
-
-    await _db.Products
-        .Where(p => p.Id == productId)
-        .ExecuteUpdateAsync(setters => setters
-            .SetProperty(p => p.Stock, p => p.Stock + quantity)
-            .SetProperty(p => p.UpdatedAt, _ => now), ct);
-  }
+  // // Sustituidos por ProductVariantRepository (planning/27): el stock vive en la talla.
+  // public async Task<bool> TryDecrementStockAsync(
+  //     int productId, int quantity, CancellationToken ct = default)
+  // {
+  //   // Un solo UPDATE con la condición `Stock >= quantity` dentro de la sentencia: entre
+  //   // comprobar y descontar no cabe otra compra. Devuelve las filas afectadas, 0 si no
+  //   // se cumplió la condición.
+  //
+  //   // El instante se captura fuera del árbol de expresión: dentro, EF lo traduciría a
+  //   // GETDATE() y estamparía con el reloj de SQL Server en vez del reloj del proceso.
+  //   var now = DateTime.Now;
+  //
+  //   var affected = await _db.Products
+  //       .Where(p => p.Id == productId && p.Stock >= quantity)
+  //       .ExecuteUpdateAsync(setters => setters
+  //           .SetProperty(p => p.Stock, p => p.Stock - quantity)
+  //           // ExecuteUpdate no pasa por SaveChangesAsync, así que la auditoría automática
+  //           // no se dispara y UpdatedAt se estampa aquí a mano.
+  //           .SetProperty(p => p.UpdatedAt, _ => now), ct);
+  //
+  //   return affected == 1;
+  // }
+  //
+  // public async Task IncrementStockAsync(
+  //     int productId, int quantity, CancellationToken ct = default)
+  // {
+  //   var now = DateTime.Now;
+  //
+  //   await _db.Products
+  //       .Where(p => p.Id == productId)
+  //       .ExecuteUpdateAsync(setters => setters
+  //           .SetProperty(p => p.Stock, p => p.Stock + quantity)
+  //           .SetProperty(p => p.UpdatedAt, _ => now), ct);
+  // }
 
   public async Task<bool> SkuExistsAsync(string sku, int? excludeId = null, CancellationToken ct = default)
   {

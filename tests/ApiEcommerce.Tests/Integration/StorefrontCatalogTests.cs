@@ -312,10 +312,11 @@ public class StorefrontCatalogTests(ApiFactory factory)
       slug,
       price = 9.99m,
       sku = sku ?? $"SKU-{Guid.NewGuid():N}"[..20],
-      stock,
+      // Desde planning/27 las tallas son variantes con su stock: o `stock`, o `variants`.
+      stock = sizes is { Length: > 0 } ? (int?)null : stock,
+      variants = sizes is { Length: > 0 } ? sizes.Select(size => new { size, stock }).ToArray() : null,
       categoryId,
-      tags = tags ?? [],
-      sizes = sizes ?? []
+      tags = tags ?? []
     });
   }
 

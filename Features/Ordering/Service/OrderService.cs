@@ -181,16 +181,24 @@ public sealed class OrderService(
 
     foreach (var (sku, quantity) in lines)
     {
-      var taken = await catalog.TryTakeAsync(sku, quantity, ct)
-          // Un solo mensaje para "no existe" y "no hay bastante": distinguirlos haría el
-          // inventario consultable desde fuera.
-          ?? throw new ConflictAppException($"'{sku}' is not available in the requested quantity.");
+      // // Hasta planning/27: un solo 409 para "no existe" y "no hay bastante".
+      // var taken = await catalog.TryTakeAsync(sku, quantity, ct)
+      //     ?? throw new ConflictAppException($"'{sku}' is not available in the requested quantity.");
+
+      // Lanzar deshace lo apartado en líneas anteriores: todo va dentro de la transacción
+      // que abre el runner.
+      var result = await catalog.TryTakeAsync(sku, quantity, ct);
+
+      if (result.Item is not OrderableItem taken)
+        throw OrderingErrors.ForLine(result.Failure, sku, quantity);
 
       items.Add(new OrderItem
       {
         ProductId = taken.ProductId,
+        VariantId = taken.VariantId,
         Sku = taken.Sku,
         Name = taken.Name,
+        Size = taken.Size,
         UnitPrice = taken.UnitPrice,
         Quantity = quantity,
         LineTotal = taken.UnitPrice * quantity
@@ -246,6 +254,7 @@ public sealed class OrderService(
       ProductId = i.ProductId,
       Sku = i.Sku,
       Name = i.Name,
+      Size = i.Size,
       UnitPrice = i.UnitPrice,
       Quantity = i.Quantity,
       LineTotal = i.LineTotal

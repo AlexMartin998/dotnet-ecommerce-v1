@@ -24,10 +24,19 @@ public class ProductDto
   /// <summary>Etiquetas de navegación y búsqueda.</summary>
   public IReadOnlyList<string> Tags { get; set; } = [];
 
-  /// <summary>Tallas o presentaciones. Informativas: el stock es por producto.</summary>
+  /// <summary>Etiquetas de las tallas activas, en orden. Derivado de <see cref="Variants"/>.</summary>
+  /// <remarks>Se mantiene por compatibilidad; para vender, usar <see cref="Variants"/>.</remarks>
   public IReadOnlyList<string> Sizes { get; set; } = [];
 
+  /// <summary>Suma del stock de las variantes activas.</summary>
   public int Stock { get; set; }
+
+  /// <summary>Lo que se vende: las variantes activas, en orden. Siempre al menos una si hay algo a la venta.</summary>
+  /// <remarks>
+  /// La línea de carrito se cita por <c>variants[].sku</c>, también en un producto sin tallas:
+  /// su única variante tiene <c>size</c> null y nace con el SKU del producto.
+  /// </remarks>
+  public IReadOnlyList<ProductVariantDto> Variants { get; set; } = [];
 
   public DateTime CreatedAt { get; set; }
   public DateTime? UpdatedAt { get; set; }

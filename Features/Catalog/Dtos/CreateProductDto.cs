@@ -4,7 +4,7 @@ namespace ApiEcommerce.Features.Catalog.Dtos;
 
 
 /// <summary>Body del POST de producto.</summary>
-public class CreateProductDto
+public class CreateProductDto : IValidatableObject
 {
 
   [Required(ErrorMessage = "Name is required")]
@@ -28,19 +28,36 @@ public class CreateProductDto
   [MaxLength(20, ErrorMessage = "A product can't have more than 20 tags")]
   public List<string> Tags { get; set; } = [];
 
-  /// <summary>Tallas o presentaciones. No afectan al stock, que es por producto.</summary>
-  [MaxLength(20, ErrorMessage = "A product can't have more than 20 sizes")]
-  public List<string> Sizes { get; set; } = [];
+  // // Sustituido por Variants (planning/27): las tallas llevan su propio stock.
+  // [MaxLength(20, ErrorMessage = "A product can't have more than 20 sizes")]
+  // public List<string> Sizes { get; set; } = [];
+
+  /// <summary>Tallas con su stock. Si no viene, el producto se vende sin tallas con <see cref="Stock"/>.</summary>
+  /// <remarks>No se manda a la vez que <see cref="Stock"/>: sería decir dos stocks distintos.</remarks>
+  [MaxLength(VariantLimits.MaxVariants, ErrorMessage = "A product can't have more than 30 sizes")]
+  public List<CreateProductVariantDto>? Variants { get; set; }
 
   [Required(ErrorMessage = "SKU is required")]
   [MaxLength(50, ErrorMessage = "SKU can't be longer than 50 characters")]
   [RegularExpression(@"^[A-Za-z0-9\-]+$", ErrorMessage = "SKU can only contain letters, digits and hyphens")]
   public string SKU { get; set; } = string.Empty;
 
-  [Range(0, int.MaxValue, ErrorMessage = "Stock must be zero or greater")]
-  public int Stock { get; set; }
+  /// <summary>Stock de un producto SIN tallas. Con <see cref="Variants"/>, se omite.</summary>
+  [Range(0, VariantLimits.MaxStock, ErrorMessage = "Stock must be between 0 and 1000000")]
+  public int? Stock { get; set; }
 
   [Range(1, int.MaxValue, ErrorMessage = "CategoryId is required and must be greater than zero")]
   public int CategoryId { get; set; }
+
+  /// <summary>Lo que las DataAnnotations no ven: un elemento nulo dentro de <see cref="Variants"/>.</summary>
+  /// <remarks>
+  /// MVC valida las propiedades de cada elemento, pero se salta los nulos: <c>"variants":[null]</c>
+  /// llegaba hasta las reglas y daba 500 con un NullReferenceException.
+  /// </remarks>
+  public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+  {
+    if (Variants is not null && Variants.Any(v => v is null))
+      yield return new ValidationResult("A size can't be null.", [nameof(Variants)]);
+  }
 
 }

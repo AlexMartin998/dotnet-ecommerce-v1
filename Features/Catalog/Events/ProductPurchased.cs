@@ -19,7 +19,10 @@ public sealed record ProductPurchased(
     int RemainingStock,
     decimal UnitPrice,
     string? BuyerUserId,
-    DateTime OccurredAt) : IDomainEvent
+    DateTime OccurredAt,
+    // Al final y con valor por defecto: añadir un campo al JSON es compatible con los
+    // consumidores que ya lo leen, reordenar no. Null si se vende sin tallas.
+    string? Size = null) : IDomainEvent
 {
   /// <summary>Clave de enrutado del evento.</summary>
   public static string EventType => "product.purchased";

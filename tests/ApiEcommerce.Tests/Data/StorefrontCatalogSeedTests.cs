@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using ApiEcommerce.Data;
 using ApiEcommerce.Features.Catalog.Dtos;
+using ApiEcommerce.Features.Catalog.Service;
 
 namespace ApiEcommerce.Tests.Data;
 
@@ -47,6 +48,8 @@ public class StorefrontCatalogSeedTests
     // si no, el primer PATCH de un admin sobre un producto sembrado daría un 400 inexplicable.
     foreach (var p in Products)
     {
+      var variants = p.GetProperty("variants").EnumerateArray().ToList();
+
       var dto = new CreateProductDto
       {
         Name = p.GetProperty("name").GetString()!,
@@ -54,11 +57,23 @@ public class StorefrontCatalogSeedTests
         Price = p.GetProperty("price").GetDecimal(),
         Slug = p.GetProperty("slug").GetString(),
         SKU = p.GetProperty("sku").GetString()!,
-        Stock = p.GetProperty("stock").GetInt32(),
+        Stock = p.TryGetProperty("stock", out var stock) ? stock.GetInt32() : null,
         Tags = Strings(p, "tags"),
-        Sizes = Strings(p, "sizes"),
+        Variants = variants.Count == 0 ? null : [.. variants.Select(v => new CreateProductVariantDto
+        {
+          Size = v.GetProperty("size").GetString()!,
+          Stock = v.GetProperty("stock").GetInt32()
+        })],
         CategoryId = 1
       };
+
+      // El DTO no valida los elementos de una lista: cada talla, aparte.
+      foreach (var variant in dto.Variants ?? [])
+        Assert.True(Validator.TryValidateObject(variant, new ValidationContext(variant), null, validateAllProperties: true),
+            $"{dto.Name}: invalid size '{variant.Size}'");
+
+      // Las mismas dos formas que acepta la API: o stock, o tallas.
+      Assert.True(dto.Variants is null ^ dto.Stock is null, $"{dto.Name}: send either stock or variants");
 
       var errors = new List<ValidationResult>();
       Assert.True(Validator.TryValidateObject(dto, new ValidationContext(dto), errors, validateAllProperties: true),
@@ -72,6 +87,30 @@ public class StorefrontCatalogSeedTests
     // Son los dos índices únicos de Product: un repetido revienta el único SaveChanges.
     Assert.Equal(52, Products.Select(p => p.GetProperty("sku").GetString()).Distinct().Count());
     Assert.Equal(52, Products.Select(p => p.GetProperty("slug").GetString()).Distinct().Count());
+
+    // Y el de ProductVariants.SKU, con los SKU tal y como los deriva el seeder.
+    var variantSkus = Products.SelectMany(p =>
+    {
+      var sizes = p.GetProperty("variants").EnumerateArray().Select(v => v.GetProperty("size").GetString()!).ToList();
+      var sku = p.GetProperty("sku").GetString()!;
+      return sizes.Count == 0 ? [sku] : sizes.Select(size => VariantSkus.For(sku, size));
+    }).ToList();
+
+    Assert.Equal(variantSkus.Count, variantSkus.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+    Assert.All(variantSkus, sku => Assert.InRange(sku.Length, 1, 50));
+  }
+
+  [Fact]
+  public void TheFrontHasASoldOutSizeAndProductsWithoutSizes()
+  {
+    // Lo que el front pidió para probar sus estados (planning/27).
+    var withoutSizes = Products.Where(p => p.GetProperty("variants").GetArrayLength() == 0).ToList();
+    Assert.Equal(["Relaxed T Logo Hat", "Thermal Cuffed Beanie"],
+        withoutSizes.Select(p => p.GetProperty("name").GetString()));
+
+    var chill = Products.Single(p => p.GetProperty("slug").GetString() == "mens-chill-crew-neck-sweatshirt");
+    var xxl = chill.GetProperty("variants").EnumerateArray().Single(v => v.GetProperty("size").GetString() == "XXL");
+    Assert.Equal(0, xxl.GetProperty("stock").GetInt32());
   }
 
   [Fact]

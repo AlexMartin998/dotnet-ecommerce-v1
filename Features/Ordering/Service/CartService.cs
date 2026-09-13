@@ -54,21 +54,26 @@ public sealed class CartService(ICatalogGateway catalog) : ICartService
 
     var found = item.Value;
 
-    var status = found.Stock >= quantity
-        ? CartLineStatus.Ok
+    // Desactivada gana a la falta de stock: reponer no la haría comprable.
+    var status = !found.IsActive ? CartLineStatus.Unavailable
+        : found.Stock >= quantity ? CartLineStatus.Ok
         : CartLineStatus.InsufficientStock;
+
+    // Lo que queda a la venta: una talla desactivada no tiene nada que ofrecer.
+    var available = found.IsActive ? found.Stock : 0;
 
     return new CartLineDto
     {
       Sku = found.Sku,
       ProductId = found.ProductId,
       Name = found.Name,
+      Size = found.Size,
       UnitPrice = found.UnitPrice,
       Quantity = quantity,
       LineTotal = found.UnitPrice * quantity,
-      Available = found.Stock,
+      Available = available,
       // Lo que el front debe dejar pedir: el stock, pero nunca por encima del tope del DTO.
-      MaxQuantity = Math.Min(found.Stock, MaxPerLine),
+      MaxQuantity = Math.Min(available, MaxPerLine),
       Status = status
     };
   }

@@ -10,6 +10,7 @@ using ApiEcommerce.Features.Catalog.Mapping;
 using ApiEcommerce.Features.Catalog.Models;
 using ApiEcommerce.Features.Catalog.Repository;
 using ApiEcommerce.Shared.Idempotency;
+using ApiEcommerce.Shared.Db;
 
 namespace ApiEcommerce.Features.Catalog.Service;
 
@@ -26,6 +27,8 @@ public class ProductService : IProductService
   private readonly IFileStorage _storage;
   private readonly IEventOutbox _outbox;
   private readonly IIdempotentCommandRunner _runner;
+  private readonly IProductVariantRepository _variants;
+  private readonly ITransactionRunner _transactions;
   private readonly IEntityMapper<Product, ProductDto, CreateProductDto, UpdateProductDto> _mapper;
 
   public ProductService(
@@ -35,8 +38,12 @@ public class ProductService : IProductService
       IFileStorage storage,
       IEventOutbox outbox,
       IIdempotentCommandRunner runner,
-      IEntityMapper<Product, ProductDto, CreateProductDto, UpdateProductDto> mapper)
+      IEntityMapper<Product, ProductDto, CreateProductDto, UpdateProductDto> mapper,
+      IProductVariantRepository variants,
+      ITransactionRunner transactions)
   {
+    _variants = variants;
+    _transactions = transactions;
     _runner = runner;
     _crud = crud;
     _repository = repository;
@@ -97,14 +104,34 @@ public class ProductService : IProductService
       => _crud.CreateAsync(dto, ct);
 
   public Task UpdateAsync(int id, UpdateProductDto dto, CancellationToken ct = default)
-      => _crud.UpdateAsync(id, dto, ct);
+  {
+    ArgumentNullException.ThrowIfNull(dto);
+
+    if (string.IsNullOrWhiteSpace(dto.SKU))
+      return _crud.UpdateAsync(id, dto, ct);
+
+    // Renombrar el SKU de un producto sin tallas renombra el de su variante, que es el que
+    // manda el carrito: separarlos dejaba una ficha con un SKU que no se podía comprar. En
+    // un producto con tallas no hay variante sin talla y la sentencia no toca nada.
+    return _transactions.ExecuteAsync(async token =>
+    {
+      await _crud.UpdateAsync(id, dto, token);
+      await _variants.SyncUnsizedSkuAsync(id, dto.SKU, token);
+      return true;
+    }, ct);
+  }
 
   // Delete no se delega: retirar un producto es marcarlo, no borrar la fila. Las líneas de
   // orden lo referencian con clave foránea, y un comprobante de ayer tiene que seguir
   // apuntando a algo. Las imágenes se quedan: el producto puede volver.
   public async Task DeleteAsync(int id, CancellationToken ct = default)
   {
-    if (!await _repository.SoftDeleteAsync(id, ct))
+    // Transacción: retirar el producto y liberar los SKU de sus variantes son dos UPDATE, y
+    // a medias quedaría un producto invisible cuyo SKU no se puede reutilizar.
+    var deleted = await _transactions.ExecuteAsync(
+        token => _repository.SoftDeleteAsync(id, token), ct);
+
+    if (!deleted)
       throw new NotFoundAppException("Product", id);
   }
 
@@ -199,24 +226,51 @@ public class ProductService : IProductService
     // envoltura la pone el runner; la lambda ha de ser replayable, o sea releer lo que use.
     return _runner.RunAsync(intent, dto, async token =>
     {
-      var product = await _repository.GetBySkuAsync(dto.SKU, token)
+      // El SKU es el de la talla (planning/27); un producto sin tallas tiene la suya con el
+      // SKU del producto, así que esta ruta sigue valiendo para él.
+      var variant = await _variants.GetBySkuAsync(dto.SKU, token)
           ?? throw new NotFoundAppException("Product", dto.SKU);
+
+      if (!variant.IsActive)
+        throw CatalogErrors.SkuUnavailable(variant.SKU);
 
       // Comprobación y descuento van en la misma sentencia SQL: comprobar el stock aquí
       // y descontar después sería read-then-write y vendería dos veces la última unidad.
-      if (!await _repository.TryDecrementStockAsync(product.Id, dto.Quantity, token))
-        throw new ConflictAppException(
-            $"Insufficient stock for SKU '{product.SKU}': requested {dto.Quantity}.");
+      if (!await _variants.TryDecrementStockAsync(variant.Id, dto.Quantity, token))
+        throw CatalogErrors.InsufficientStock(variant.SKU, dto.Quantity);
 
       // Relectura: ExecuteUpdate no toca el change tracker y la instancia que ya
       // teníamos sigue con el stock anterior.
-      var updated = await _repository.GetByIdWithCategoryAsync(product.Id, token) ?? product;
+      var updated = await _repository.GetByIdWithCategoryAsync(variant.ProductId, token)
+          ?? throw new NotFoundAppException("Product", dto.SKU);
+
+      var remaining = updated.Variants.FirstOrDefault(v => v.Id == variant.Id)?.Stock ?? 0;
 
       // El evento se escribe aquí y lo publica después OutboxPublisher: publicar a
       // RabbitMQ en esta línea ataría la compra a que el broker esté vivo.
       await _outbox.EnqueueAsync(new ProductPurchased(
-          updated.Id, updated.SKU, updated.Name, dto.Quantity, updated.Stock,
-          updated.Price, buyerUserId, DateTime.Now), token);
+          updated.Id, variant.SKU, updated.Name, dto.Quantity, remaining,
+          updated.Price, buyerUserId, DateTime.Now, variant.Size), token);
+
+      // // Hasta planning/27 el stock era del producto.
+      // var product = await _repository.GetBySkuAsync(dto.SKU, token)
+      //     ?? throw new NotFoundAppException("Product", dto.SKU);
+      //
+      // // Comprobación y descuento van en la misma sentencia SQL: comprobar el stock aquí
+      // // y descontar después sería read-then-write y vendería dos veces la última unidad.
+      // if (!await _repository.TryDecrementStockAsync(product.Id, dto.Quantity, token))
+      //   throw new ConflictAppException(
+      //       $"Insufficient stock for SKU '{product.SKU}': requested {dto.Quantity}.");
+      //
+      // // Relectura: ExecuteUpdate no toca el change tracker y la instancia que ya
+      // // teníamos sigue con el stock anterior.
+      // var updated = await _repository.GetByIdWithCategoryAsync(product.Id, token) ?? product;
+      //
+      // // El evento se escribe aquí y lo publica después OutboxPublisher: publicar a
+      // // RabbitMQ en esta línea ataría la compra a que el broker esté vivo.
+      // await _outbox.EnqueueAsync(new ProductPurchased(
+      //     updated.Id, updated.SKU, updated.Name, dto.Quantity, updated.Stock,
+      //     updated.Price, buyerUserId, DateTime.Now), token);
 
       return _mapper.ToDto(updated);
     }, ct);

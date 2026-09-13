@@ -4643,3 +4643,55 @@ DBCC CHECKIDENT ('Products', RESEED, 0) WITH NO_INFOMSGS;       -- el siguiente 
 ALTER SEQUENCE OrderNumbers RESTART WITH 1;                     -- ORD-2026-000001 otra vez
 ```
   - -- Redis es compartido: borrar por `SCAN MATCH apiecommerce:*`, **nunca** `FLUSHDB`
+
+## 49. Tallas como variantes  <- y el SKU que volvio a quedar bloqueado
+
+- --- ⭐ **Una talla con stock propio es una VARIANTE con SKU propio**
+  - -- la clave de carrito sigue siendo `sku` -> `QuoteCartDto`/`PlaceOrderDto` no cambian de forma
+  - -- ⭐ **todo producto tiene al menos una**: sin tallas, una con `Size = null` y el SKU del
+       producto. Si no, hay DOS caminos de stock (producto y variante) y cada regla de §7.1 se
+       escribe dos veces
+  - -- el stock del producto se **deriva** al leer; guardarlo como suma son dos UPDATE por compra
+```cs
+.Where(v => v.Id == id && v.IsActive && v.Stock >= q)   // IsActive DENTRO: desactivar a mitad no vende
+.ExecuteUpdateAsync(s => s.SetProperty(v => v.Stock, v => v.Stock - q));
+```
+
+- --- 🔴 **El bug que destapo la suite: retirar un producto dejo de liberar su SKU**
+  - -- `Product.SKU` tiene indice unico filtrado por `DeletedAt`; la variante sin talla repite
+       ese SKU en OTRA tabla, con su propio indice... sin filtro
+  - -- ⚠️ el filtro de un indice **no puede mirar otra tabla** -> la variante lleva una COPIA
+```cs
+modelBuilder.Entity<ProductVariant>().HasIndex(v => v.SKU).IsUnique().HasFilter("[DeletedAt] IS NULL");
+```
+  - -- y retirar son dos UPDATE -> van en `ITransactionRunner`, o queda un producto invisible
+       con el SKU ocupado
+
+- --- **Un error con `code` no basta si el front necesita el DATO**
+  - -- `AppException.Extensions` -> se copian al `ProblemDetails` junto a `code`
+  - -- sacar el `sku` del mensaje es parsear texto, y el texto no es contrato
+
+- --- ⚠️ **Orden de locks: comprar y cancelar tienen que ir en el MISMO orden**
+  - -- la compra aparta por SKU; el recolector devolvia por `ProductId` -> cruce posible
+  - -- ahora los dos por SKU. No lo vio ningun test: lo vio leer el comentario que decia «mismo orden»
+
+- --- **Tests: el orden de las lineas decide QUE se prueba**
+  - -- para probar el rollback, la linea valida tiene que apartarse ANTES que la que falla
+  - -- con `-S` y `-M` la valida iba despues (S > M) y el test pasaba sin probar nada -> `-L`
+
+- --- 🔴 **La revision por agente encontro 5 bugs que ni build ni 414 tests veian**
+  - -- el peor: una regla que mira a las HERMANAS (no mezclar sin talla con tallas) es
+       comprobar-y-escribir. Dos admins a la vez -> 23 de 25 intentos rotos
+```sql
+EXEC @r = sp_getapplock @Resource = 'catalog:product-variants:42', @LockMode = 'Exclusive',
+                        @LockOwner = 'Transaction', @LockTimeout = 10000;   -- dentro de la transaccion
+```
+  - -- applock y NO `UPDATE Products`: tocar la fila cambia su RowVersion -> 412 a quien edita el producto
+  - -- ⭐ el test de la carrera se verifico QUITANDO el lock: falla. Un test de concurrencia que
+       nunca has visto fallar no prueba nada
+  - -- `[RegularExpression]` acepta `""`, y MVC no valida los `null` DENTRO de una lista
+       (`"variants":[null]` -> 500). `IValidatableObject` para eso
+  - -- `int.MaxValue` en dos tallas -> la suma desborda: `Sum()` de LINQ es checked (500) y el
+       `SUM` de SQL da 8115
+  - -- un filtro global mete un JOIN en el `UPDATE`: la compra bloqueaba `Products` y el retiro
+       lo hacia al reves -> deadlocks tapados por `EnableRetryOnFailure`. Se ven en el log, no en la respuesta

@@ -17,7 +17,9 @@ public class ProductRulesTests
   private readonly Mock<IProductRepository> _products = new(MockBehavior.Strict);
   private readonly Mock<ICategoryRepository> _categories = new(MockBehavior.Strict);
 
-  private ProductRules Sut() => new(_products.Object, _categories.Object);
+  private readonly Mock<IProductVariantRepository> _variants = new();
+
+  private ProductRules Sut() => new(_products.Object, _categories.Object, _variants.Object);
 
   // ---- crear --------------------------------------------------------------
 
@@ -124,5 +126,5 @@ public class ProductRulesTests
       new() { Name = "Producto", SKU = sku, CategoryId = categoryId, Price = 10m, Stock = 5 };
 
   private static Product Existing(int id) =>
-      new() { Id = id, Name = "Producto", SKU = "SKU-1", CategoryId = 1, Price = 10m, Stock = 5 };
+      new() { Id = id, Name = "Producto", SKU = "SKU-1", CategoryId = 1, Price = 10m };
 }

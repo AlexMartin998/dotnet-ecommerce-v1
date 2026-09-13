@@ -17,7 +17,7 @@ public class CartServiceTests
 
   private void Sells(string sku, decimal price, int stock, int productId = 1)
       => _catalog.Setup(c => c.PeekAsync(sku, It.IsAny<CancellationToken>()))
-                 .ReturnsAsync(new QuotableItem(productId, sku, $"Producto {sku}", price, stock));
+                 .ReturnsAsync(new QuotableItem(productId, sku, $"Producto {sku}", null, price, stock, IsActive: true));
 
   private static QuoteCartDto Cart(params (string Sku, int Quantity)[] lines) => new()
   {

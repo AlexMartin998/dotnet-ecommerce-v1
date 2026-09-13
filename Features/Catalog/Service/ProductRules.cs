@@ -17,7 +17,8 @@ namespace ApiEcommerce.Features.Catalog.Service;
 /// </remarks>
 public sealed class ProductRules(
     IProductRepository productRepository,
-    ICategoryRepository categoryRepository)
+    ICategoryRepository categoryRepository,
+    IProductVariantRepository variantRepository)
   : IEntityRules<Product, CreateProductDto, UpdateProductDto>
 {
   public string EntityName => "Product";
@@ -27,56 +28,30 @@ public sealed class ProductRules(
     await EnsureCategoryExistsAsync(dto.CategoryId, ct);
     await EnsureSkuIsFreeAsync(dto.SKU, excludeId: null, ct);
     await EnsureSlugIsFreeAsync(dto, ct);
+    await EnsureVariantsAreValidAsync(dto, ct);
   }
 
   public async Task EnsureCanUpdateAsync(
       int id, UpdateProductDto dto, Product existing, CancellationToken ct = default)
   {
-    EnsureVersionMatches(dto.IfMatch, existing);
+    EntityTags.EnsureMatches(dto.IfMatch, existing.RowVersion);
 
     // PATCH: solo se valida lo que el cliente envía.
     if (dto.CategoryId is int categoryId)
       await EnsureCategoryExistsAsync(categoryId, ct);
 
     if (!string.IsNullOrWhiteSpace(dto.SKU))
+    {
       await EnsureSkuIsFreeAsync(dto.SKU, excludeId: id, ct);
+
+      // También contra las variantes de OTROS productos: en uno sin tallas este SKU pasa a
+      // ser el de su variante (ProductService lo sincroniza), y la clave de carrito es única.
+      if (await variantRepository.SkuExistsAsync(dto.SKU, excludeProductId: id, ct))
+        throw new ConflictAppException($"SKU '{dto.SKU.Trim()}' is already registered.");
+    }
   }
 
   // ---- helpers privados ---------------------------------------------------
-
-  /// <summary>
-  /// Compara el <c>If-Match</c> del cliente con la versión en base y cierra el
-  /// lost update entre dos administradores.
-  /// </summary>
-  /// <remarks>
-  /// Es opcional: sin <c>If-Match</c> el PATCH funciona como siempre. La ventana entre
-  /// esta comprobación y el UPDATE la cubre el <c>[Timestamp]</c> de la entidad.
-  /// </remarks>
-  private static void EnsureVersionMatches(IReadOnlyList<string>? clientVersions, Product existing)
-  {
-    if (clientVersions is null || clientVersions.Count == 0) return;
-
-    var expected = new List<byte[]>(clientVersions.Count);
-
-    foreach (var version in clientVersions)
-    {
-      try
-      {
-        expected.Add(Convert.FromBase64String(version));
-      }
-      catch (FormatException)
-      {
-        // 400 y no 412: no es que la precondición falle, es que ni siquiera es un token.
-        throw new BadOperationAppException("The If-Match header is not a valid entity tag.");
-      }
-    }
-
-    // El RFC 9110 dice que basta con que UNA case.
-    if (existing.RowVersion is not null && expected.Any(e => e.SequenceEqual(existing.RowVersion)))
-      return;
-
-    throw new PreconditionFailedAppException();
-  }
 
   private async Task EnsureCategoryExistsAsync(int categoryId, CancellationToken ct)
   {
@@ -110,5 +85,55 @@ public sealed class ProductRules(
             ? $"The slug '{slug}', derived from the product name, is already in use. " +
               "Send an explicit 'slug' to choose a different one."
             : $"Slug '{slug}' is already in use.");
+  }
+
+  /// <summary>
+  /// Las tallas del alta: o <c>Stock</c> o <c>Variants</c>, tallas sin repetir y SKU libres.
+  /// </summary>
+  /// <remarks>
+  /// Se calculan los SKU igual que <c>ProductMapper</c>, con <see cref="VariantSkus"/>: si la
+  /// regla y el mapeador los derivaran por separado, la comprobación miraría otro SKU.
+  /// </remarks>
+  private async Task EnsureVariantsAreValidAsync(CreateProductDto dto, CancellationToken ct)
+  {
+    if (dto.Variants is not { Count: > 0 } variants)
+    {
+      // Sin tallas, la única variante nace con el SKU del producto, y ese SKU también tiene
+      // que estar libre en la tabla de variantes (un producto retirado conserva los suyos).
+      await EnsureVariantSkuIsFreeAsync(dto.SKU.Trim(), ct);
+      return;
+    }
+
+    // 400: son dos stocks distintos para lo mismo, y no hay forma buena de elegir uno.
+    if (dto.Stock is not null)
+      throw new BadOperationAppException(
+          "Send either 'stock' for a product without sizes or 'variants', not both.");
+
+    var sizes = variants.Select(v => v.Size.Trim()).ToList();
+
+    if (sizes.Distinct(StringComparer.OrdinalIgnoreCase).Count() != sizes.Count)
+      throw new BadOperationAppException("A size can't appear twice in 'variants'.");
+
+    var skus = variants
+        .Select(v => string.IsNullOrWhiteSpace(v.SKU) ? VariantSkus.For(dto.SKU, v.Size) : v.SKU.Trim())
+        .ToList();
+
+    if (skus.Distinct(StringComparer.OrdinalIgnoreCase).Count() != skus.Count)
+      throw new BadOperationAppException("Two variants can't share the same SKU.");
+
+    foreach (var sku in skus)
+    {
+      if (sku.Length > 50)
+        throw new BadOperationAppException(
+            $"The variant SKU '{sku}' is longer than 50 characters. Send an explicit 'sku' for it.");
+
+      await EnsureVariantSkuIsFreeAsync(sku, ct);
+    }
+  }
+
+  private async Task EnsureVariantSkuIsFreeAsync(string sku, CancellationToken ct)
+  {
+    if (await variantRepository.SkuExistsAsync(sku, ct: ct))
+      throw new ConflictAppException($"SKU '{sku}' is already registered.");
   }
 }

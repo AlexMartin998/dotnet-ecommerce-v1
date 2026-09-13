@@ -36,6 +36,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
   /// <summary>Imágenes públicas de producto, en el orden en que se enseñan.</summary>
   public DbSet<ProductImage> ProductImages { get; set; }
 
+  public DbSet<ProductVariant> ProductVariants { get; set; }
+
   /// <summary>Eventos de dominio pendientes de publicar (ver <see cref="OutboxMessage"/>).</summary>
   public DbSet<OutboxMessage> OutboxMessages { get; set; }
 
@@ -242,7 +244,31 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         .HasIndex(i => new { i.ProductId, i.Position })
         .HasDatabaseName("IX_ProductImages_ProductId_Position");
 
-    modelBuilder.Entity<ProcessedWebhookEvent>().HasKey(e => e.Id);
+    // Variantes: mismo trato que las imágenes, salvo que estas sí se venden.
+    modelBuilder.Entity<Product>()
+        .HasMany(p => p.Variants)
+        .WithOne(v => v.Product!)
+        .HasForeignKey(v => v.ProductId)
+        .OnDelete(DeleteBehavior.Cascade);
+
+    modelBuilder.Entity<ProductVariant>()
+        .HasQueryFilter(v => v.Product!.DeletedAt == null);
+
+    // Filtrado como Product.SKU, pero por la COPIA del borrado lógico que lleva la propia
+    // variante: el filtro de un índice no puede mirar la tabla del producto. Sin él, retirar
+    // un producto bloqueaba para siempre su SKU a través de su variante sin talla.
+    modelBuilder.Entity<ProductVariant>()
+        .HasIndex(v => v.SKU)
+        .IsUnique()
+        .HasFilter("[DeletedAt] IS NULL");
+
+    // Una talla por producto. EF lo filtra por `Size IS NOT NULL`, así que la variante sin
+    // talla no choca consigo misma; que haya solo una la vigila ProductVariantRules.
+    modelBuilder.Entity<ProductVariant>()
+        .HasIndex(v => new { v.ProductId, v.Size })
+        .IsUnique();
+
+        modelBuilder.Entity<ProcessedWebhookEvent>().HasKey(e => e.Id);
     modelBuilder.Entity<ProcessedWebhookEvent>()
         .Property(e => e.Provider).HasConversion<string>().HasMaxLength(30);
 
@@ -269,6 +295,13 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         .HasOne<Product>()
         .WithMany()
         .HasForeignKey(i => i.ProductId)
+        .OnDelete(DeleteBehavior.Restrict);
+
+    // Igual con la variante, y por la misma razón: por eso una talla se desactiva y no se borra.
+    modelBuilder.Entity<OrderItem>()
+        .HasOne<ProductVariant>()
+        .WithMany()
+        .HasForeignKey(i => i.VariantId)
         .OnDelete(DeleteBehavior.Restrict);
   }
 

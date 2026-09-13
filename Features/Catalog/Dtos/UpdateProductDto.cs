@@ -25,16 +25,17 @@ public class UpdateProductDto
   [MaxLength(20, ErrorMessage = "A product can't have more than 20 tags")]
   public List<string>? Tags { get; set; }
 
-  /// <summary>Igual que las etiquetas: se reemplazan enteras.</summary>
-  [MaxLength(20, ErrorMessage = "A product can't have more than 20 sizes")]
-  public List<string>? Sizes { get; set; }
+  // // Fuera en planning/27: las tallas son variantes y se editan en /product/{id}/variants.
+  // [MaxLength(20, ErrorMessage = "A product can't have more than 20 sizes")]
+  // public List<string>? Sizes { get; set; }
 
   [MaxLength(50, ErrorMessage = "SKU can't be longer than 50 characters")]
   [RegularExpression(@"^[A-Za-z0-9\-]+$", ErrorMessage = "SKU can only contain letters, digits and hyphens")]
   public string? SKU { get; set; }
 
-  [Range(0, int.MaxValue, ErrorMessage = "Stock must be zero or greater")]
-  public int? Stock { get; set; }
+  // // Fuera en planning/27: el stock es de la variante, también en un producto sin tallas.
+  // [Range(0, int.MaxValue, ErrorMessage = "Stock must be zero or greater")]
+  // public int? Stock { get; set; }
 
   [Range(1, int.MaxValue, ErrorMessage = "CategoryId must be greater than zero")]
   public int? CategoryId { get; set; }

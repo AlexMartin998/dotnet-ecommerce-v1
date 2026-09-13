@@ -4,8 +4,8 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-13** (catálogo de demo de Teslo Shop y base local limpia
-menos usuarios. 390/390 tests).
+Última actualización: **2026-09-13** (tallas como variantes con stock por talla.
+420/420 tests).
 
 ---
 
@@ -76,6 +76,31 @@ volumen. Queda como decisión del owner.
 Suite **385/385** (+8), build limpio con `-warnaserror`. De paso: `GetProductsForCategoryAsync`
 ordenaba sin desempate por PK (CLAUDE.md §9).
 
+
+### 2026-09-13 — Tallas como variantes, con stock por talla
+
+`planning/27`, pedido por el front. `ProductVariant` en `Catalog` (talla, SKU único, stock,
+posición, activa); **todo producto tiene al menos una**, y uno sin tallas tiene la suya sin
+talla con el SKU del producto. La clave de línea sigue siendo `sku`, así que cotización y
+orden no cambian de forma. `OrderItem` copia `Size` y guarda `VariantId` (FK). Admin en
+`/product/{id}/variants`. Errores de línea con `code` y extensión `sku`
+(`sku_not_found` · `sku_unavailable` · `insufficient_stock`), vía `AppException.Extensions`.
+
+Autorizado por el owner (§11.1): borrar `Products.Stock`/`Sizes`, FK en `VariantId` y
+**resembrar** en vez de rellenar (0 órdenes). 🔴 La suite destapó que la variante sin talla
+**volvía a bloquear el SKU de un producto retirado**: `ProductVariant.DeletedAt` es una copia
+para poder filtrar su índice único. De paso, el recolector devolvía stock en orden de
+producto y la compra lo aparta en orden de SKU: ahora los dos por SKU.
+
+**Revisión por agente, ejecutando: 5 bugs reales** (`planning/27` §6). El peor, una carrera
+entre reactivar la variante sin talla y añadir una talla que dejaba las dos formas activas
+(23/25) → `sp_getapplock` por producto, con test que falla sin el lock. Los otros: 500 con
+`variants:[null]`, SKU vacío, overflow del stock total, y el SKU del producto separándose del de
+su variante. Y deadlocks por reintento al retirar mientras se compra → la compra ya no hace JOIN.
+
+Verificado ejecutando: build limpio, **420/420**, 10 órdenes simultáneas por la última unidad
+de una talla → 1 éxito, rollback de una línea ya apartada, migración aplicada y resembrado
+(`194 variants`), OpenAPI regenerado.
 
 ### 2026-09-13 — Catálogo de demo de Teslo Shop, y la base local limpia
 

@@ -20,7 +20,16 @@ nunca hace push (`rules.md` §12).
 antes de los índices únicos). **385/385 tests**. El contrato nuevo se le pasó al front
 (sesión `ecom_angular`).
 
-**Lo último**: `planning/26` — **catálogo de demo de Teslo Shop** (4 categorías, 52 prendas,
+**Lo último**: `planning/27` — **tallas como variantes** (`ProductVariant`, stock por talla),
+pedido por el front. ⚠️ **Todo producto tiene al menos una variante**; la clave de carrito es
+`variants[].sku`. ⚠️ `ProductVariant.DeletedAt` es una **copia** del del producto, para el índice
+único filtrado de su SKU. ⚠️ `Products.Stock`/`Sizes` **ya no existen**. ⚠️ Las escrituras de
+admin sobre variantes van con **`sp_getapplock` por producto** (la regla mira a las hermanas).
+**420/420 tests**.
+**En cola del front** (`ecom_angular`): categorías destacadas (máx. 3), paginación por
+categoría y búsqueda, orden estable de imágenes.
+
+**Antes**: `planning/26` — **catálogo de demo de Teslo Shop** (4 categorías, 52 prendas,
 104 imágenes) y la **base local limpia menos usuarios**, con autorización del owner solo esa
 vez. La próxima orden vuelve a ser `ORD-2026-000001`. ⚠️ Las imágenes de Teslo eran WebP
 con extensión `.jpg` (83/104) y `LocalFileStorage` las rechaza: renombradas. ⚠️ Los tests

@@ -106,8 +106,8 @@ public static class DataSeeder
   private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
   /// <summary>
-  /// Siembra el catálogo de Teslo Shop (<c>planning/26</c>): 4 categorías, 52 productos y sus
-  /// imágenes. No hace nada si ya hay alguna categoría.
+  /// Siembra el catálogo de Teslo Shop (<c>planning/26</c>): 4 categorías, 52 productos con
+  /// stock por talla (<c>planning/27</c>) y sus imágenes. No hace nada si ya hay alguna categoría.
   /// </summary>
   /// <remarks>
   /// Las imágenes entran por <see cref="IFileStorage"/>, el mismo camino que una subida del
@@ -146,10 +146,19 @@ public static class DataSeeder
         Description = item.Description,
         Price = item.Price,
         SKU = item.Sku,
-        Stock = item.Stock,
         Category = categories[item.Category],
         Tags = item.Tags,
-        Sizes = item.Sizes
+        // Las mismas dos formas que el alta por la API (ProductMapper): una variante por
+        // talla con SKU {sku}-{talla}, o una sola sin talla con el SKU del producto.
+        Variants = item.Variants is { Count: > 0 }
+            ? [.. item.Variants.Select((v, index) => new ProductVariant
+              {
+                Size = v.Size,
+                SKU = VariantSkus.For(item.Sku, v.Size),
+                Stock = v.Stock,
+                Position = index
+              })]
+            : [new ProductVariant { SKU = item.Sku, Stock = item.Stock ?? 0, Position = 0 }]
       };
 
       if (withImages)
@@ -173,8 +182,9 @@ public static class DataSeeder
     db.Products.AddRange(products);
     await db.SaveChangesAsync(ct);
 
-    logger.LogInformation("Seeded {Categories} categories, {Products} products and {Images} images",
-        categories.Count, products.Count, products.Sum(p => p.Images.Count));
+    logger.LogInformation(
+        "Seeded {Categories} categories, {Products} products, {Variants} variants and {Images} images",
+        categories.Count, products.Count, products.Sum(p => p.Variants.Count), products.Sum(p => p.Images.Count));
   }
 
   private static async Task<SeedCatalog> ReadCatalogAsync(CancellationToken ct)
@@ -204,9 +214,12 @@ public static class DataSeeder
 
   private sealed record SeedCategory(string Name, string? Description);
 
+  // `Stock` solo en los productos sin tallas; los demás lo llevan por talla en `Variants`.
   private sealed record SeedProduct(
-      string Name, string Slug, string Sku, string? Description, decimal Price, int Stock,
-      string Category, List<string> Tags, List<string> Sizes, List<string> Images);
+      string Name, string Slug, string Sku, string? Description, decimal Price, int? Stock,
+      string Category, List<string> Tags, List<SeedVariant> Variants, List<string> Images);
+
+  private sealed record SeedVariant(string Size, int Stock);
 
   // Catálogo de demostración anterior (hasta planning/26): siete productos inventados, sin
   // imágenes, que no dejaban ver el front como una tienda. Se conserva como registro.

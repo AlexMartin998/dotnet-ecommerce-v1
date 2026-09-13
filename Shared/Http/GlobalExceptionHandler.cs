@@ -78,6 +78,12 @@ public sealed class GlobalExceptionHandler(
       }
     };
 
+    // Lo que el dominio añade al código (el `sku` de una línea sin stock). No pisa `code`
+    // ni `correlationId`: esos dos son del handler.
+    if (exception is AppException { Extensions.Count: > 0 } withExtensions)
+      foreach (var (key, value) in withExtensions.Extensions)
+        problem.Extensions.TryAdd(key, value);
+
     // 422: mismo formato `errors` que produce ValidationProblem(ModelState)
     if (exception is ValidationAppException validation)
       problem.Extensions["errors"] = validation.Errors;

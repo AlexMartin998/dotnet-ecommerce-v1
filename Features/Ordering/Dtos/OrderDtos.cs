@@ -7,6 +7,7 @@ namespace ApiEcommerce.Features.Ordering.Dtos;
 /// <summary>Una línea del carrito.</summary>
 public class OrderLineDto
 {
+  /// <summary>El SKU de la variante: <c>product.variants[].sku</c>, también sin tallas.</summary>
   [Required]
   [MaxLength(50)]
   public string Sku { get; set; } = string.Empty;
@@ -77,6 +78,10 @@ public class OrderItemDto
   public int ProductId { get; set; }
   public string Sku { get; set; } = string.Empty;
   public string Name { get; set; } = string.Empty;
+
+  /// <summary>La talla comprada, copiada en la línea. <c>null</c> sin tallas o en órdenes anteriores.</summary>
+  public string? Size { get; set; }
+
   public decimal UnitPrice { get; set; }
   public int Quantity { get; set; }
   public decimal LineTotal { get; set; }

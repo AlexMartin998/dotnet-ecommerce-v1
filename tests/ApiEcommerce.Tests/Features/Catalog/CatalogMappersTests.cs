@@ -32,7 +32,7 @@ public class CatalogMappersTests
 
     Assert.Equal("Nombre nuevo", existing.Name);
     Assert.Equal(3, existing.CategoryId);      // <- el que reventaba
-    Assert.Equal(10, existing.Stock);
+    Assert.Equal(10, Assert.Single(existing.Variants).Stock);
     Assert.Equal(99.9m, existing.Price);
     Assert.Equal("SKU-1", existing.SKU);
   }
@@ -46,7 +46,7 @@ public class CatalogMappersTests
 
     Assert.Equal("Producto", existing.Name);
     Assert.Equal(3, existing.CategoryId);
-    Assert.Equal(10, existing.Stock);
+    Assert.Equal(10, Assert.Single(existing.Variants).Stock);
     Assert.Equal(99.9m, existing.Price);
     Assert.Equal(["ropa"], existing.Tags);
   }
@@ -54,12 +54,13 @@ public class CatalogMappersTests
   [Fact]
   public void UpdateProduct_CanSetAZeroOnPurpose()
   {
-    // "No viene" es null y no 0: un agotamiento de stock legítimo tiene que aplicarse.
+    // "No viene" es null y no 0: un precio 0 legítimo (un regalo) tiene que aplicarse. Antes
+    // se probaba con el stock, que desde planning/27 se edita en la variante.
     var existing = Product(categoryId: 3, stock: 10, price: 99.9m);
 
-    _products.Apply(new UpdateProductDto { Stock = 0 }, existing);
+    _products.Apply(new UpdateProductDto { Price = 0m }, existing);
 
-    Assert.Equal(0, existing.Stock);
+    Assert.Equal(0m, existing.Price);
   }
 
   [Fact]
@@ -266,7 +267,20 @@ public class CatalogMappersTests
     Slug = "producto",
     Tags = ["ropa"],
     Price = price,
-    Stock = stock,
-    CategoryId = categoryId
+    CategoryId = categoryId,
+    Variants = [new ProductVariant { Id = 1, SKU = "SKU-1", Stock = stock }]
   };
+}
+
+
+/// <summary>El SKU por defecto de una talla, que la regla y el mapeador derivan igual.</summary>
+public class VariantSkusTests
+{
+  [Theory]
+  [InlineData("TSH-01", "M", "TSH-01-M")]
+  [InlineData("TSH-01", "xl", "TSH-01-XL")]
+  [InlineData("TSH-01", "One size", "TSH-01-ONE-SIZE")]
+  [InlineData("TSH-01", " 1/2 ", "TSH-01-1-2")]
+  public void For_JoinsTheProductSkuWithTheNormalizedSize(string productSku, string size, string expected)
+      => Assert.Equal(expected, ApiEcommerce.Features.Catalog.Service.VariantSkus.For(productSku, size));
 }

@@ -295,6 +295,7 @@ Rutas **versionadas por segmento**: `[Route("api/v{version:apiVersion}/[controll
 |---|---|
 | `CategoryController` | CRUD + `/paged` + **`GET /slug/{slug}`**. Lecturas anónimas, escrituras `admin` |
 | `ProductController` | CRUD + `/paged` + `/category/{id}` + `/category/slug/{slug}` + `/search` + **`GET /slug/{slug}`** + `POST`/`DELETE /{id}/image` + `GET /stats` (`admin`) + **`POST /buy`** |
+| `ProductVariantController` | `GET`/`POST /product/{id}/variants`, `PATCH /{variantId}` — tallas con stock, todo `admin` |
 | `AuthController` | `register`, `login`, `refresh`, `logout`, `logout-all`, `password`, `me` |
 | `UserController` | listado, detalle, roles, bloqueo, `GET /stats` — todo `admin` |
 | `CartController` | **`POST /cart/quote`** — cotiza el carrito. **Anónimo**: existe antes que la sesión |
@@ -326,9 +327,16 @@ producto retirado bloquearía su propio SKU para siempre.
 ⚠️ **El `slug` se deriva del nombre y es único**, así que **dos productos no pueden llamarse
 igual** salvo que uno mande un `slug` explícito — y el 409 lo dice. No se actualiza nunca en
 un PATCH: cambiarlo rompería los enlaces que ya circulan.
-⚠️ **`Tags` y `Sizes` son colecciones primitivas** (JSON en columna) y en el PATCH se
-**reemplazan enteras**; omitirlas sigue siendo «no tocar». Las tallas son informativas: **el
-stock es por producto**, y hacerlo por talla cambiaría todo el contrato de la reserva.
+⚠️ **`Tags` es una colección primitiva** (JSON en columna) y en el PATCH se **reemplaza
+entera**; omitirla sigue siendo «no tocar».
+⚠️ **El stock es por TALLA, no por producto** (`ProductVariant`). **Todo producto tiene al
+menos una variante**: uno sin tallas tiene una sola, sin talla, con el SKU del producto. Así
+hay **un único** camino para apartar y devolver stock. La clave de línea de carrito es
+`variants[].sku`; `ProductDto.stock` y `sizes` se **derivan** de las variantes activas. Una
+talla **no se borra, se desactiva** (FK desde `OrderItems`), y ni su talla ni su SKU cambian.
+⚠️ **`ProductVariant.DeletedAt` es una copia** del del producto: el índice único de su `SKU`
+tiene que ir filtrado por el borrado lógico y un filtro de índice no puede mirar otra tabla.
+Retirar un producto estampa las dos cosas **en una transacción**.
 
 ⚠️ **Cotizar no aparta stock y no obliga a nada.** `POST /cart/quote` es una foto: entre
 cotizarlo y comprarlo el precio y el stock pueden cambiar, y manda el checkout. Una línea sin

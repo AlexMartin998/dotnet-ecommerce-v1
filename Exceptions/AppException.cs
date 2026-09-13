@@ -19,4 +19,11 @@ public abstract class AppException : Exception
   /// <summary>Identificador estable del error, para que el cliente pueda ramificar.</summary>
   public string Code { get; }
 
+  /// <summary>Datos del error que el cliente necesita además del código (p. ej. qué <c>sku</c>).</summary>
+  /// <remarks>
+  /// Viajan como extensiones del <c>ProblemDetails</c>, al lado de <c>code</c>. Sin esto el
+  /// cliente tendría que sacar el dato del mensaje, que es texto y no contrato.
+  /// </remarks>
+  public IDictionary<string, object?> Extensions { get; } = new Dictionary<string, object?>();
+
 }

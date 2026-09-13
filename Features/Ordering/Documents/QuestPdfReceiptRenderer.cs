@@ -140,7 +140,9 @@ public sealed class QuestPdfReceiptRenderer : IReceiptRenderer
 
         foreach (var item in order.Items)
         {
-          table.Cell().Element(BodyCell).Text(item.Name);
+          // La talla va con el nombre y no en columna propia: la mayoría de líneas no la
+          // llevan, y una columna vacía le quita ancho al nombre.
+          table.Cell().Element(BodyCell).Text(item.Size is null ? item.Name : $"{item.Name} · {item.Size}");
           table.Cell().Element(BodyCell).Text(item.Sku).FontColor(Colors.Grey.Darken1);
           table.Cell().Element(BodyCell).AlignRight().Text(item.Quantity.ToString(Culture));
           table.Cell().Element(BodyCell).AlignRight().Text(Money(item.UnitPrice));

@@ -37,8 +37,10 @@ public class Product : IAuditable
   [MaxLength(50)]
   public required string SKU { get; set; } // Stock Keeping Unit - PROD-001-BLK-M
 
-  [Range(0, int.MaxValue)]
-  public int Stock { get; set; }
+  // // Sustituido por ProductVariant.Stock (planning/27): el stock es por talla, y el del
+  // // producto se calcula sumando sus variantes activas.
+  // [Range(0, int.MaxValue)]
+  // public int Stock { get; set; }
 
   // Estampados por AppDbContext.SaveChangesAsync (ver IAuditable). No asignar a mano.
   public DateTime CreatedAt { get; set; } = DateTime.Now;
@@ -65,12 +67,9 @@ public class Product : IAuditable
   /// </remarks>
   public List<string> Tags { get; set; } = [];
 
-  /// <summary>Tallas o presentaciones disponibles. Informativas.</summary>
-  /// <remarks>
-  /// El stock sigue siendo <b>por producto</b>, no por talla: stock por variante cambia el
-  /// contrato de la compra y toda la reserva, y eso no se improvisa aquí.
-  /// </remarks>
-  public List<string> Sizes { get; set; } = [];
+  // // Sustituido por Variants (planning/27): una lista de texto no puede llevar stock por
+  // // talla ni llegar a la línea de la orden.
+  // public List<string> Sizes { get; set; } = [];
 
   /// <summary>Cuándo se retiró del catálogo. <c>null</c> mientras está a la venta.</summary>
   /// <remarks>
@@ -81,6 +80,9 @@ public class Product : IAuditable
 
   /// <summary>Imágenes públicas, en el orden en que se enseñan.</summary>
   public ICollection<ProductImage> Images { get; set; } = [];
+
+  /// <summary>Tallas a la venta, cada una con su SKU y su stock. Al menos una.</summary>
+  public ICollection<ProductVariant> Variants { get; set; } = [];
 
   /// <summary>
   /// Token de concurrencia optimista que SQL Server mantiene solo. EF lo añade al <c>WHERE</c>

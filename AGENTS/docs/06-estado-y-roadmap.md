@@ -22,6 +22,7 @@ paginación y seeding.
 | `ProductService` + `ProductRules` | ✅ | escrituras delegadas, lecturas propias; SKU único + FK válida + compra |
 | `CategoryController` | ✅ | sin `try/catch` de negocio |
 | `ProductController` | ✅ | CRUD + `category/{id}` + `search` + `buy` |
+| Tallas como variantes | ✅ | `ProductVariant` con SKU y stock propios, `ProductVariantController` (admin), talla copiada en la línea (`planning/27`) |
 | `HealthController` | ✅ | `GET /health` (liveness), `[ApiVersionNeutral]` |
 | Jerarquía `AppException` | ✅ | + `Unauthorized` (401), `Forbidden` (403), `Validation` (422) |
 | Handler global de errores | ✅ | `GlobalExceptionHandler` + `ProblemDetails` (RFC 7807) |
@@ -42,7 +43,7 @@ paginación y seeding.
 | Rate limiting | ✅ | límite global por IP + política `auth` |
 | Logging estructurado | ✅ | Serilog + `UseSerilogRequestLogging` (sección `Serilog`, no `Logging`) |
 | Health checks | ✅ | `/health` liveness (controller) y `/health/ready` (SQL Server + Redis) |
-| Concurrencia: stock | ✅ | `TryDecrementStockAsync` con `ExecuteUpdateAsync` (UPDATE condicional atómico) |
+| Concurrencia: stock | ✅ | `TryDecrementStockAsync` con `ExecuteUpdateAsync` (UPDATE condicional atómico), sobre `ProductVariants` desde `planning/27` |
 | Concurrencia: unicidad | ✅ | índice único en `Category.Name`, `Product.SKU`, `Order.Number` y `AspNetUsers.NormalizedEmail`; `DbUpdateException` → 409 |
 | Concurrencia: último administrador | ✅ | `sp_getapplock` exclusivo en la transacción de la baja: recontar y quitar el rol dejan de ser dos viajes |
 | Concurrencia optimista | ✅ | `Product.RowVersion` para el PATCH; `DbUpdateConcurrencyException` → 409 |

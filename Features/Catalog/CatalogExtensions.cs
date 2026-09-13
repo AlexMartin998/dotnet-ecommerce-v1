@@ -32,6 +32,7 @@ public static class CatalogExtensions
     // ---- repositorios ------------------------------------------------------
     services.AddScoped<ICategoryRepository, CategoryRepository>();
     services.AddScoped<IProductRepository, ProductRepository>();
+    services.AddScoped<IProductVariantRepository, ProductVariantRepository>();
 
     // ---- mapeo DTO <-> entidad ---------------------------------------------
     // Singleton: los mapeadores que genera Mapperly no tienen estado ni dependencias.
@@ -55,6 +56,7 @@ public static class CatalogExtensions
 
     // ---- servicios ---------------------------------------------------------
     services.AddScoped<IProductService, ProductService>();
+    services.AddScoped<IProductVariantService, ProductVariantService>();
 
     // Category se registra decorado: quien pide ICategoryService recibe el que cachea. El
     // tipo concreto se registra aparte o el decorador no podría resolver su interior.
