@@ -4605,3 +4605,41 @@ REPLACE(REPLACE(REPLACE(Name, ' ', '<>'), '><', ''), '<>', '-')   -- "a   b" -> 
   - -- ⚠️ solo vale porque el DTO de categoria solo admite letras, digitos y espacios. **Se
        comprobo contra la base ANTES** (158 nombres, 0 raros, 0 colisiones) y **despues**
        (los 158 slugs iguales a los de `Slugs.From`)
+
+## 48. Catalogo de demo traido de Teslo Shop  <- y las imagenes que mentian su formato
+
+- --- ⭐ **Modelar el seed ajeno, no copiarlo**
+  - -- `type` -> **categoria**, `gender` -> **etiqueta** (no hay columna de genero, y para eso estan las tags)
+  - -- el codigo de la imagen (`1740176-00-A`) es la referencia real de la prenda -> **SKU**
+  - -- slug del origen con guiones: `Slugs.From("Men’s …")` daria `men-s-…` por el apostrofo
+  - -- el JSON va **embebido**; las imagenes, a la salida de build pero **no al publish**
+```xml
+<EmbeddedResource Include="Data/Seed/storefront-catalog.json" LogicalName="ApiEcommerce.Data.Seed.storefront-catalog.json" />
+<None Include="Data/Seed/images/**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
+```
+
+- --- 🔴 **Lo que hacia mal el original: 83 de 104 `.jpg` eran WebP**
+```
+52 49 46 46 .. .. .. .. 57 45 42 50   = "RIFF....WEBP"   dentro de un .jpg
+```
+  - -- el navegador mira la firma y las pinta igual, asi que en Next nadie se entero
+  - -- `LocalFileStorage` compara firma y extension -> el arranque murio en la primera imagen
+  - -- ⭐ por eso el seeder sube por `IFileStorage` y no copia a `wwwroot`: copiadas a mano
+       habrian entrado sin mirar
+  - -- sin `file` en el contenedor: `head -c 12 x.jpg | od -An -tx1`
+
+- --- **Un solo `SaveChanges` para todo el catalogo**
+  - -- si falla a mitad no quedan categorias sueltas, que harian que `AnyAsync` no reintentara nunca
+  - -- el precio: imagenes huerfanas en disco. En un seeder de dev, se acepta
+  - -- ⚠️ un dato malo en el JSON tumba el ARRANQUE: se prueba el fichero contra `CreateProductDto`
+
+- --- ⚠️ **Los tests siembran con `Seed:Enabled=true`**
+  - -- con imagenes, cada corrida dejaba 104 ficheros en `wwwroot` -> `Seed:IncludeDemoData=false`
+
+- --- **Limpiar la base menos usuarios** (autorizado una vez, §11.1)
+```sql
+DELETE FROM OrderItems; ... DELETE FROM Categories;            -- hijos antes que padres, en una transaccion
+DBCC CHECKIDENT ('Products', RESEED, 0) WITH NO_INFOMSGS;       -- el siguiente Id es 1
+ALTER SEQUENCE OrderNumbers RESTART WITH 1;                     -- ORD-2026-000001 otra vez
+```
+  - -- Redis es compartido: borrar por `SCAN MATCH apiecommerce:*`, **nunca** `FLUSHDB`

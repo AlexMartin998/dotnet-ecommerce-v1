@@ -71,4 +71,15 @@
     <None Remove="tests/**" />
   </ItemGroup>
 
+  <!-- Catálogo de demostración (DataSeeder). El JSON va EMBEBIDO: el catálogo se siembra
+       en cualquier despliegue. Las imágenes (7 MB) se copian a la salida de build pero NO a
+       la de publish: la imagen de producción no carga con fotos de demo, y sin ellas el
+       seeder siembra los productos sin imagen. -->
+  <ItemGroup>
+    <Content Remove="Data/Seed/**" />
+    <None Remove="Data/Seed/**" />
+    <EmbeddedResource Include="Data/Seed/storefront-catalog.json" LogicalName="ApiEcommerce.Data.Seed.storefront-catalog.json" />
+    <None Include="Data/Seed/images/**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+
 </Project>

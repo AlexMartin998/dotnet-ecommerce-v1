@@ -14,11 +14,18 @@ nunca hace push (`rules.md` §12).
 
 ### Estado medido hoy (2026-09-13)
 
-**Lo último**: `planning/25` — **identificadores públicos**. Órdenes y pagos se citan por
+**Antes**: `planning/25` — **identificadores públicos**. Órdenes y pagos se citan por
 `publicId` (UUID v7) y la PK ya no sale en sus DTOs; categorías con `slug`. Migración
 `PublicIdentifiers` **aplicada** a la base de desarrollo (EF la generó mal otra vez: relleno
 antes de los índices únicos). **385/385 tests**. El contrato nuevo se le pasó al front
 (sesión `ecom_angular`).
+
+**Lo último**: `planning/26` — **catálogo de demo de Teslo Shop** (4 categorías, 52 prendas,
+104 imágenes) y la **base local limpia menos usuarios**, con autorización del owner solo esa
+vez. La próxima orden vuelve a ser `ORD-2026-000001`. ⚠️ Las imágenes de Teslo eran WebP
+con extensión `.jpg` (83/104) y `LocalFileStorage` las rechaza: renombradas. ⚠️ Los tests
+arrancan con `Seed:IncludeDemoData=false`; si un test necesitara catálogo, que lo cree él.
+**390/390 tests**.
 
 **La IP LAN del host volvió a `192.168.3.82`** (confirmada por el owner con
 `ipconfig getifaddr en0`; la `.76` ya no responde). Actualizados `appsettings.Development.json`

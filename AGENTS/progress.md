@@ -4,8 +4,8 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-13** (la IP LAN del host vuelve a `192.168.3.82`.
-385/385 tests).
+Última actualización: **2026-09-13** (catálogo de demo de Teslo Shop y base local limpia
+menos usuarios. 390/390 tests).
 
 ---
 
@@ -76,6 +76,26 @@ volumen. Queda como decisión del owner.
 Suite **385/385** (+8), build limpio con `-warnaserror`. De paso: `GetProductsForCategoryAsync`
 ordenaba sin desempate por PK (CLAUDE.md §9).
 
+
+### 2026-09-13 — Catálogo de demo de Teslo Shop, y la base local limpia
+
+`planning/26`. El seed de la tienda Next.js entra como `Data/Seed/storefront-catalog.json`
+(embebido) + 104 imágenes: `type` → categoría (`Shirts`/`Pants`/`Hoodies`/`Hats`), `gender` →
+etiqueta, código de la imagen → SKU, slug del origen con guiones. Las imágenes suben por
+`IFileStorage` en un único `SaveChanges`; no van al publish. Los tests apagan la demo.
+
+🔴 **83 de las 104 imágenes eran WebP con extensión `.jpg`**: `LocalFileStorage` las rechazó
+por firma y el primer arranque murió. Renombradas a `.webp` y vigilado por test.
+
+Limpieza **autorizada por el owner, una sola vez** (§11.1): órdenes, pagos, catálogo, outbox,
+inbox y `ExecutedCommands` vaciados (83.310 filas), identidades y secuencias
+`OrderNumbers`/`PaymentReferences` reiniciadas, 2 imágenes y 93 comprobantes borrados.
+**Usuarios, roles y `RefreshTokens` intactos** (20 usuarios).
+
+Verificado ejecutando: build `-warnaserror` limpio, **390/390**, API arrancada → `Seeded 4
+categories, 52 products and 104 images`, `GET /product/slug/mens-chill-crew-neck-sweatshirt`
+200 con 2 imágenes servidas como `image/webp`, `/health/ready` Healthy, y segundo arranque
+`Catalog already seeded, skipping` sin ficheros nuevos. `dotnet publish` sin las imágenes.
 
 ### 2026-09-13 — La IP del host vuelve: `192.168.3.76` → `192.168.3.82`
 

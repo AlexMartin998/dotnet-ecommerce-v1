@@ -103,6 +103,9 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
           ["Seed:AdminUsername"] = AdminUsername,
           ["Seed:AdminEmail"] = "admin@apiecommerce.test",
           ["Seed:AdminPassword"] = AdminPassword,
+          // Sin catálogo de demo: ningún test lo usa, y sus 104 imágenes irían a wwwroot en
+          // cada corrida. Su contenido lo vigila StorefrontCatalogSeedTests.
+          ["Seed:IncludeDemoData"] = "false",
 
           // Sin esto la suite se limita a sí misma: todas sus peticiones comparten IP y a
           // las 100 empiezan los 429. La política se prueba aparte, bajando el límite.
