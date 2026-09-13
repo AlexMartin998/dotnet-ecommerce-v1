@@ -4,8 +4,8 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-13** (identificadores públicos: `publicId` en órdenes y
-pagos, slug en categorías. 385/385 tests).
+Última actualización: **2026-09-13** (la IP LAN del host vuelve a `192.168.3.82`.
+385/385 tests).
 
 ---
 
@@ -76,6 +76,15 @@ volumen. Queda como decisión del owner.
 Suite **385/385** (+8), build limpio con `-warnaserror`. De paso: `GetProductsForCategoryAsync`
 ordenaba sin desempate por PK (CLAUDE.md §9).
 
+
+### 2026-09-13 — La IP del host vuelve: `192.168.3.76` → `192.168.3.82`
+
+Solo configuración, igual que el cambio anterior del mismo día: `appsettings.Development.json`
+(Redis y RabbitMQ) y `ConnectionStrings:ConexionSql` en user-secrets. El owner la confirmó
+con `ipconfig getifaddr en0`; la `.76` ya no responde y la `.82` sí en los tres puertos.
+Verificado ejecutando: build `-warnaserror` limpio, API arrancada → `/health/ready` `Healthy`
+y las tres colas declaradas, y suite **385/385** con
+`TEST_SQL_HOST=192.168.3.82 TEST_REDIS=192.168.3.82:6999`.
 
 ### 2026-09-13 — La IP del host cambió: `192.168.3.82` → `192.168.3.76`
 
