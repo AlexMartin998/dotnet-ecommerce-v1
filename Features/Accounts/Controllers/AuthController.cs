@@ -15,8 +15,9 @@ namespace ApiEcommerce.Features.Accounts.Controllers;
 [ApiVersion("1.0")]
 [Route("api/v{version:apiVersion}/[controller]")] // api/v1/auth
 [Produces("application/json")]
-// Por IP, complementando al lockout de Identity, que solo cuenta fallos por usuario.
-[EnableRateLimiting(RateLimitPolicies.Auth)]
+// Sin política de clase: la estricta (`auth`, por IP) va solo donde hay credenciales que
+// adivinar. Puesta en la clase alcanzaba también a /refresh y /me, que el front llama en cada
+// recarga, y le devolvía 429 (planning/29).
 public class AuthController : ControllerBase
 {
     private readonly IAuthService _service;
@@ -37,6 +38,7 @@ public class AuthController : ControllerBase
     /// administradores se crean sembrando o promoviendo desde un endpoint protegido.
     /// </remarks>
     [AllowAnonymous]
+    [EnableRateLimiting(RateLimitPolicies.Auth)]
     [HttpPost("register", Name = "Register")]
     [ProducesResponseType(StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -61,6 +63,7 @@ public class AuthController : ControllerBase
 
     /// <summary>Valida credenciales y devuelve el access token.</summary>
     [AllowAnonymous]
+    [EnableRateLimiting(RateLimitPolicies.Auth)]
     [HttpPost("login", Name = "Login")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -86,6 +89,7 @@ public class AuthController : ControllerBase
     /// impide que un XSS se lo lleve.
     /// </remarks>
     [AllowAnonymous]
+    [EnableRateLimiting(RateLimitPolicies.Refresh)]
     [HttpPost("refresh", Name = "RefreshToken")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -131,6 +135,7 @@ public class AuthController : ControllerBase
     /// eche a los demás. Se abre una nueva para este dispositivo, para no expulsarse solo.
     /// </remarks>
     [Authorize]
+    [EnableRateLimiting(RateLimitPolicies.Auth)]
     [HttpPost("password", Name = "ChangePassword")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]

@@ -31,4 +31,15 @@ public sealed class RateLimitOptions
   /// <summary>Duración de la ventana de <c>/auth</c>, en segundos.</summary>
   [Range(1, 3600)]
   public int AuthWindowSeconds { get; init; } = 60;
+
+  /// <summary>Refrescos por IP en la ventana.</summary>
+  /// <remarks>
+  /// Aparte de <see cref="AuthPermitLimit"/>: refresh lo dispara la app en cada recarga, no una
+  /// persona tecleando, y con el límite de login el front recibía 429 al recargar.
+  /// </remarks>
+  [Range(1, 1_000_000)]
+  public int RefreshPermitLimit { get; init; } = 30;
+
+  [Range(1, 3600)]
+  public int RefreshWindowSeconds { get; init; } = 60;
 }

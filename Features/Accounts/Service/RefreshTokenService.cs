@@ -57,9 +57,15 @@ public sealed class RefreshTokenService(
       // Fuera de la ventana es robo: no se sabe qué copia es la del dueño, cae la sesión entera.
       var revoked = await repository.RevokeFamilyAsync(stored.FamilyId, ct);
 
-      logger.LogWarning(
-          "Refresh token REUSE detected for user {UserId}; revoked {Count} token(s) of family {FamilyId}",
-          stored.UserId, revoked, stored.FamilyId);
+      // Con 0 no quedaba nada vivo: es la cookie de una sesión ya cerrada (logout, cambio de
+      // contraseña), no un robo. Avisar de reuso ahí llenaba el log de falsas alarmas.
+      if (revoked > 0)
+        logger.LogWarning(
+            "Refresh token REUSE detected for user {UserId}; revoked {Count} token(s) of family {FamilyId}",
+            stored.UserId, revoked, stored.FamilyId);
+      else
+        logger.LogInformation(
+            "Refresh attempted with a token of the already closed family {FamilyId}", stored.FamilyId);
 
       throw new UnauthorizedAppException("Invalid refresh token.");
     }
@@ -100,13 +106,9 @@ public sealed class RefreshTokenService(
     {
       Token = accessToken,
       ExpiresAt = expiresAt,
-      User = new UserDto
-      {
-        Id = user.Id,
-        Username = user.UserName ?? string.Empty,
-        Email = user.Email ?? string.Empty,
-        Roles = [.. roles]
-      }
+      // La misma proyección que el login. Antes se construía aquí a mano sin `name` ni
+      // `createdAt`, y el front, que restaura la sesión con este endpoint, los perdía.
+      User = IdentityMapping.ToDto(user, roles)
     };
 
     return (auth, issued);

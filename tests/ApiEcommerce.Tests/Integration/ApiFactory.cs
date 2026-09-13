@@ -49,8 +49,12 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
   public const string AdminUsername = "admin";
   public const string AdminPassword = "Admin123!";
 
-  private static string ConnectionString =>
-      $"Server={SqlHost},{SqlPort};Database=ApiEcommerceNET8_Tests;User ID=sa;Password={SqlPassword};" +
+  /// <summary>La base de esta fábrica. Una subclase que necesite otra configuración de la BASE
+  /// (no de la app) usa la suya, para no cambiársela al resto de la suite.</summary>
+  protected virtual string DatabaseName => "ApiEcommerceNET8_Tests";
+
+  private string ConnectionString =>
+      $"Server={SqlHost},{SqlPort};Database={DatabaseName};User ID=sa;Password={SqlPassword};" +
       // Sin MultipleActiveResultSets: MARS desactiva los savepoints de EF Core y haría
       // que los tests corriesen en un modo transaccional distinto del real.
       "TrustServerCertificate=true";
@@ -80,7 +84,7 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     foreach (var (key, value) in settings) builder.UseSetting(key, value);
   }
 
-  private static Dictionary<string, string?> Settings =>
+  private Dictionary<string, string?> Settings =>
         new()
         {
           ["ConnectionStrings:ConexionSql"] = ConnectionString,
@@ -111,6 +115,7 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
           // las 100 empiezan los 429. La política se prueba aparte, bajando el límite.
           ["RateLimit:GlobalPermitLimit"] = "1000000",
           ["RateLimit:AuthPermitLimit"] = "1000000",
+          ["RateLimit:RefreshPermitLimit"] = "1000000",
 
           // Comprobantes fuera del repo, y proveedor explícito para probar el camino real.
           ["Documents:Provider"] = "filesystem",
@@ -140,9 +145,26 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     await using var db = new AppDbContext(options);
     await db.Database.EnsureDeletedAsync();
 
+    // Y la cache de la corrida anterior con ella. La base renace con los ids desde 1, pero Redis
+    // guarda `category:{id}` 60 s: dos corridas seguidas leían la categoría VIEJA con ese id (otro
+    // slug) y un test daba 404 sin relación aparente (planning/29).
+    await ClearRedisAsync();
+
     // Arranque forzado aquí: un fallo de migración o seeding no debe leerse como un fallo
     // del primer test.
     using var _ = CreateClient();
+  }
+
+  private static async Task ClearRedisAsync()
+  {
+    await using var redis = await StackExchange.Redis.ConnectionMultiplexer.ConnectAsync(RedisEndpoint + ",allowAdmin=false");
+
+    foreach (var endpoint in redis.GetEndPoints())
+    {
+      // Solo el prefijo de los tests: el Redis es compartido con desarrollo y con otros proyectos.
+      var keys = redis.GetServer(endpoint).Keys(pattern: "apiecommerce-tests:*").ToArray();
+      if (keys.Length > 0) await redis.GetDatabase().KeyDeleteAsync(keys);
+    }
   }
 
   public new Task DisposeAsync()

@@ -18,12 +18,14 @@ namespace ApiEcommerce.Tests.Features.Accounts;
 /// </summary>
 public class AuthServiceTests
 {
-  private readonly Mock<UserManager<ApplicationUser>> _users = MockUserManager();
+  private readonly Mock<IPasswordHasher<ApplicationUser>> _hasher = new();
+  private readonly Mock<UserManager<ApplicationUser>> _users;
   private readonly Mock<SignInManager<ApplicationUser>> _signIn;
   private readonly Mock<IJwtTokenService> _tokens = new();
 
   public AuthServiceTests()
   {
+    _users = MockUserManager(_hasher);
     _signIn = MockSignInManager(_users);
     _tokens.Setup(t => t.CreateToken(It.IsAny<ApplicationUser>(), It.IsAny<IEnumerable<string>>()))
            .Returns(("jwt-de-prueba", DateTime.Now.AddHours(1)));
@@ -135,6 +137,10 @@ public class AuthServiceTests
         () => Sut().LoginAsync(new LoginUserDto { Username = "fantasma", Password = "x" }));
 
     Assert.Equal("Invalid username or password.", ex.Message);
+
+    // Y gasta lo mismo que una contraseña mala: verifica un hash aunque no haya usuario, o el
+    // tiempo de respuesta diría qué usernames existen (planning/29).
+    _hasher.Verify(h => h.VerifyHashedPassword(It.IsAny<ApplicationUser>(), It.IsAny<string>(), "x"), Times.Once);
   }
 
   [Fact]
@@ -232,8 +238,8 @@ public class AuthServiceTests
   /// Moq lo puede simular porque sus métodos son <c>virtual</c>, pero hay que pasarle los
   /// argumentos posicionales del constructor.
   /// </remarks>
-  private static Mock<UserManager<ApplicationUser>> MockUserManager()
-      => new(Mock.Of<IUserStore<ApplicationUser>>(), null!, null!, null!, null!, null!, null!, null!, null!);
+  private static Mock<UserManager<ApplicationUser>> MockUserManager(Mock<IPasswordHasher<ApplicationUser>> hasher)
+      => new(Mock.Of<IUserStore<ApplicationUser>>(), null!, hasher.Object, null!, null!, null!, null!, null!, null!);
 
   private static Mock<SignInManager<ApplicationUser>> MockSignInManager(Mock<UserManager<ApplicationUser>> users)
       => new(users.Object,

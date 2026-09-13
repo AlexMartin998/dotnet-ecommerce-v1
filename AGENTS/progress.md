@@ -4,8 +4,8 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-13** (categorías destacadas, listados paginados por
-categoría y búsqueda. 432/432 tests).
+Última actualización: **2026-09-13** (auth: login sin oráculo de tiempo, refresh con el usuario
+completo, rate limit por endpoint; y una carrera sospechada que no existía. 437/437 tests).
 
 ---
 
@@ -76,6 +76,28 @@ volumen. Queda como decisión del owner.
 Suite **385/385** (+8), build limpio con `-warnaserror`. De paso: `GetProductsForCategoryAsync`
 ordenaba sin desempate por PK (CLAUDE.md §9).
 
+
+### 2026-09-13 — Auth: oráculo de tiempo, refresh completo, rate limit, y la carrera que no era
+
+`planning/29`, tras revisar el slice de auth de `EcommerceApi` para `api_clean`.
+
+- **Oráculo de tiempo en login**: un usuario inexistente respondía en ~2 ms y uno real con la
+  contraseña mal en ~30 ms. Ahora se verifica un hash ficticio. El test falla sin el arreglo.
+- **Refresh devolvía `user` sin `name` ni `createdAt`**; el front restaura la sesión con él.
+- **Rate limit**: `auth` solo en register/login/password; `refresh` con límite propio. Antes el
+  límite de login alcanzaba a `/refresh` y `/me` y el front recibía 429 al recargar.
+- **Log de reuso**: ya no avisa de robo con la cookie de una sesión cerrada.
+
+🔴 **La carrera refresh/logout que se dio como importante NO existe en SQL Server.** Se implementó
+un `sp_getapplock` por usuario; los tests por HTTP pasaban sin él; se forzó la ventana (400 ms
+entre consumir y confirmar) y en RCSI: el UPDATE del logout espera el commit y revoca la fila
+nueva. Lock retirado; queda un test de guardia que sí falla si la revocación pasa a leer y luego
+escribir. Corregido ante `api_clean`.
+
+De paso, un flaky de la infraestructura de tests: la cache de Redis sobrevivía al borrado de la
+base entre corridas (404 por un `category:{id}` viejo). `ApiFactory` la limpia al empezar.
+
+Verificado: build limpio, **437/437 dos veces seguidas**, y cada test nuevo falla sin su arreglo.
 
 ### 2026-09-13 — Destacadas del header y paginación para infinite scroll
 

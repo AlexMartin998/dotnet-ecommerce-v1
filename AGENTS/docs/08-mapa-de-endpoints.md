@@ -46,13 +46,17 @@ Base: `http://localhost:8021/api/v1/…` — todas las rutas van versionadas por
 
 ### 1.1 `AuthController` — `/api/v1/Auth`
 
+> ⚠️ **Límites**: `auth` (10/min por IP) solo en `register`, `login` y `password`. `refresh` tiene el
+> suyo (30/min por IP) porque el front lo llama en cada recarga. `me`, `logout` y `logout-all`
+> quedan bajo el global (`planning/29`).
+
 | Método | Ruta | Auth | Qué hace | Respuestas |
 |---|---|---|---|---|
 | POST | `/register` | 🔓 | Crea el usuario con rol `user`, devuelve access token + cookie `rt` | 201, 409 (nombre/email tomado), 422 |
 | POST | `/login` | 🔓 | Valida credenciales, emite access token (15 min) + refresh en cookie HttpOnly | 200, 401, **403** (lockout: 5 fallos = 5 min) |
 | POST | `/refresh` | 🔓 | Rota el refresh token de la cookie y emite uno nuevo. Detecta reuso → mata la familia entera | 200, 401 |
 | POST | `/logout` | 🔓 | Revoca la sesión de esa cookie. Anónimo **a propósito**: al cerrar sesión lo normal es que el access token ya haya caducado | 204 |
-| POST | `/password` | 🔒 | Cambia la contraseña **y corta todas las sesiones** | 204, 400, 422 |
+| POST | `/password` | 🔒 | Cambia la contraseña **y corta todas las sesiones** | 204, 400, **401** (la actual no es correcta), 422 |
 | POST | `/logout-all` | 🔒 | Revoca todas las sesiones del usuario en todos los dispositivos | 204 |
 | GET | `/me` | 🔒 | Perfil del usuario del token | 200, 401 |
 

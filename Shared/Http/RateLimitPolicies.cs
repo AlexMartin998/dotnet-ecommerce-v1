@@ -18,6 +18,10 @@ public static class RateLimitPolicies
   /// <summary>Política estricta para login y registro.</summary>
   public const string Auth = "auth";
 
+  /// <summary>Política de <c>/auth/refresh</c>: por IP, más holgada que <see cref="Auth"/>.</summary>
+  public const string Refresh = "refresh";
+
+
   /// <summary>Registra el limitador global por IP y la política <see cref="Auth"/>.</summary>
   public static IServiceCollection AddRateLimiting(
       this IServiceCollection services, IConfiguration configuration)
@@ -60,18 +64,30 @@ public static class RateLimitPolicies
               QueueLimit = 0
             });
       });
+
+
+      // Refresh lo dispara la app en cada recarga, no una persona probando contraseñas: con el
+      // límite de login el front recibía 429 al recargar. Por IP y no por cookie: la cookie
+      // ROTA en cada refresh, así que cada petición caería en una partición nueva y el límite
+      // no limitaría nada (se diseñó así y se descartó al escribir su test, planning/29).
+      options.AddPolicy(Refresh, context =>
+      {
+        var limits = Limits(context);
+
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: ClientKey(context),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+              PermitLimit = limits.RefreshPermitLimit,
+              Window = TimeSpan.FromSeconds(limits.RefreshWindowSeconds),
+              QueueLimit = 0
+            });
+      });
     });
 
     return services;
   }
 
-  /// <summary>Límites resueltos del contenedor, no capturados al registrar la política.</summary>
-  /// <remarks>
-  /// ⚠️ Esto NO da recarga en caliente: <c>IOptions&lt;T&gt;</c> es un singleton que se
-  /// resuelve una vez. Cambiar los límites exige reiniciar; para recargarlos haría falta
-  /// <c>IOptionsMonitor&lt;T&gt;</c>, y con él un valor inválido recargado rompería cada
-  /// petición en vez de fallar al arrancar.
-  /// </remarks>
   private static RateLimitOptions Limits(HttpContext context)
       => context.RequestServices.GetRequiredService<IOptions<RateLimitOptions>>().Value;
 

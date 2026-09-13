@@ -20,7 +20,13 @@ nunca hace push (`rules.md` §12).
 antes de los índices únicos). **385/385 tests**. El contrato nuevo se le pasó al front
 (sesión `ecom_angular`).
 
-**Lo último**: `planning/27` — **tallas como variantes** (`ProductVariant`, stock por talla),
+**Lo último**: `planning/29` — **auth**: hash ficticio en login (oráculo de tiempo), refresh con
+el usuario completo, `auth` solo en register/login/password y `refresh` con límite propio.
+⚠️ **La carrera refresh/logout NO existe en SQL Server** (medido con la ventana forzada y RCSI):
+no metas un lock ahí; la guardia es `SessionLockTests`. ⚠️ `ApiFactory` limpia `apiecommerce-tests:*`
+en Redis al empezar, y una fábrica con otra config de base usa `DatabaseName` propio. **437/437**.
+
+**Antes**: `planning/27` — **tallas como variantes** (`ProductVariant`, stock por talla),
 pedido por el front. ⚠️ **Todo producto tiene al menos una variante**; la clave de carrito es
 `variants[].sku`. ⚠️ `ProductVariant.DeletedAt` es una **copia** del del producto, para el índice
 único filtrado de su SKU. ⚠️ `Products.Stock`/`Sizes` **ya no existen**. ⚠️ Las escrituras de

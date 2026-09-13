@@ -27,6 +27,10 @@ public sealed class RefreshTokenRepository(AppDbContext db) : IRefreshTokenRepos
 
   public void Add(RefreshToken token) => db.RefreshTokens.Add(token);
 
+  // Un solo UPDATE condicional, y así debe quedarse. Si un refresh está insertando el sucesor a
+  // la vez, SQL Server bloquea esta sentencia hasta su commit y revoca también la fila nueva,
+  // con bloqueos y con READ_COMMITTED_SNAPSHOT (medido en SessionLockTests, planning/29). Leer
+  // antes los ids y actualizar después la dejaría viva: ese es el test que falla.
   public Task<int> RevokeFamilyAsync(Guid familyId, CancellationToken ct = default)
   {
     var now = DateTime.Now;

@@ -41,7 +41,7 @@ paginación y seeding.
 | Paginación | ✅ | `PagedResult<T>`, `GetPagedAsync`, `/paged` en Category y Product |
 | Subida de imágenes | ✅ | `IFileStorage`, allowlist + magic bytes, ruta relativa |
 | Seeding | ✅ | `DataSeeder` con `RoleManager`/`UserManager`, guardado por `Seed:Enabled`; catálogo de demo de Teslo Shop (4 categorías, 52 productos, 104 imágenes vía `IFileStorage`) desde `Data/Seed/`, apagado en los tests (`planning/26`) |
-| Rate limiting | ✅ | límite global por IP + política `auth` |
+| Rate limiting | ✅ | límite global por IP + política `auth` (register/login/password) + `refresh` propia (`planning/29`) |
 | Logging estructurado | ✅ | Serilog + `UseSerilogRequestLogging` (sección `Serilog`, no `Logging`) |
 | Health checks | ✅ | `/health` liveness (controller) y `/health/ready` (SQL Server + Redis) |
 | Concurrencia: stock | ✅ | `TryDecrementStockAsync` con `ExecuteUpdateAsync` (UPDATE condicional atómico), sobre `ProductVariants` desde `planning/27` |

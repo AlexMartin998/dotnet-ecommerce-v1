@@ -616,6 +616,8 @@ código propio.
 | Lockout de Identity | 5 logins fallidos bloquean la cuenta 5 min. Probar con un usuario nuevo. |
 | **Tests: `UseSetting`, no `ConfigureAppConfiguration`** | Varias piezas leen la config **eager** para decidir qué implementación registran, y eso pasa **antes** de esos callbacks: el host arrancaba con las implementaciones nulas y los tests pasaban sin probar nada. |
 | Tests de integración en paralelo | Comparten base de datos: van todos en la misma colección, **incluidos los que levantan su propio host**. |
+| Una fábrica de tests con otra config | Su arranque **borra la base compartida** a mitad de suite. Si no necesita esa base, `DatabaseName` propio. Y la cache de Redis sobrevive al borrado: `ApiFactory` limpia `apiecommerce-tests:*` al empezar, o sale un `category:{id}` de la corrida anterior. |
+| Test de carrera que no falla sin el arreglo | No prueba nada. Por HTTP la ventana de milisegundos no se acierta: **fuérzala** (un decorador que espere) y comprueba que falla quitando el arreglo. Así se descubrió que la carrera refresh/logout no existía (`planning/29`). |
 | FluentAssertions | **No se usa** aunque la skill la pida: desde la v8 exige licencia comercial. `Assert` de xunit basta. |
 | **Licencias del ecosistema .NET** | Ya han mordido tres veces (AutoMapper, FluentAssertions, MassTransit). Antes de meter un paquete «estándar», **comprobar la licencia de la versión concreta**, no la del proyecto. Y antes de creerse una nota del repo sobre una licencia, verificarla: la de AutoMapper era falsa. Estado actual en `notes.md` cap. 44. |
 | `POST /api/v1/category` | Devuelve **201 sin cuerpo**: el id sale de la cabecera `Location`. No es un fallo. |

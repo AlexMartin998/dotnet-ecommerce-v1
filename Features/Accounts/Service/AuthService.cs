@@ -75,6 +75,10 @@ public sealed class AuthService(
     // Mismo mensaje que para contraseña incorrecta: distinguirlos permite enumerar usuarios.
     if (user is null)
     {
+      // Y el mismo TIEMPO: sin esto el inexistente respondía en ~1 ms y el real tras PBKDF2,
+      // y el cronómetro decía qué usernames existen aunque el mensaje fuera idéntico.
+      userManager.PasswordHasher.VerifyHashedPassword(DummyUser, DummyHash(), dto.Password);
+
       logger.LogWarning("Failed login attempt for unknown username {Username}", username);
       throw new UnauthorizedAppException("Invalid username or password.");
     }
@@ -132,6 +136,20 @@ public sealed class AuthService(
   }
 
   // ---- helpers privados ---------------------------------------------------
+
+  private static readonly ApplicationUser DummyUser = new();
+
+  private static string? _dummyHash;
+
+  /// <summary>Un hash hecho con el hasher real, para gastar lo mismo que una verificación de verdad.</summary>
+  /// <remarks>
+  /// Con el hasher configurado y no una cadena fija: si mañana suben las iteraciones, el hash
+  /// ficticio las sube con él. Se calcula una vez; la carrera de dos primeros logins solo cuesta
+  /// un hash de más.
+  /// </remarks>
+  private string DummyHash()
+      => _dummyHash ??= userManager.PasswordHasher.HashPassword(DummyUser, Guid.NewGuid().ToString("N"));
+
 
   private async Task<AuthResponseDto> BuildAuthResponseAsync(ApplicationUser user)
   {

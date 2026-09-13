@@ -4721,3 +4721,44 @@ modelBuilder.Entity<Category>().HasIndex(c => c.FeaturedPosition).IsUnique()
   - -- un alta durante el scroll desplaza y REPITE un elemento (una baja lo salta) -> el front deduplica por id
   - -- `AsSplitQuery()` con dos colecciones incluidas: imagenes x variantes = 12 filas por prenda
   - -- ⚠️ exige orden total, o cada consulta separada ordena distinto
+
+## 51. Auth: el cronometro, y la carrera que no existia  <- medir antes de arreglar
+
+- --- ⭐ **El mismo mensaje no basta: el TIEMPO tambien responde**
+```
+usuario inexistente  -> 401 en ~2 ms   (ni siquiera hashea)
+contrasena mala      -> 401 en ~30 ms  (PBKDF2)
+```
+  - -- con 8 peticiones se sabe que usernames existen
+```cs
+if (user is null)
+{
+    userManager.PasswordHasher.VerifyHashedPassword(DummyUser, DummyHash(), dto.Password); // gasta lo mismo
+    throw new UnauthorizedAppException("Invalid username or password.");
+}
+```
+  - -- el hash ficticio se hace con el hasher REAL: si suben las iteraciones, sube con el
+
+- --- 🔴 **Di como «importante» una carrera que no existia**
+  - -- sospecha: refresh inserta el token nuevo, logout hace `UPDATE ... WHERE FamilyId` a la vez
+       y no ve la fila -> la sesion sobrevive
+  - -- meti un `sp_getapplock`, y los tests por HTTP pasaban... **tambien QUITANDO el lock**
+  - -- con RCSI (el default de Azure SQL), igual. Forzando la ventana con un decorador que espera
+       400 ms entre consumir y confirmar:
+```
+logout=204@488ms refresh=200@488ms rcsi=True live=0     <- el logout ESPERO al commit
+```
+  - -- el UPDATE de SQL Server bloquea en las filas que toca y reevalua con lo ultimo confirmado,
+       tambien en RCSI -> la fila nueva cae en su recorrido. **Lock retirado**
+  - -- lo que SI la romperia: leer los ids y actualizar despues. El test de guardia falla con eso
+  - -- ⭐ leccion: **un test de concurrencia que nunca has visto fallar no prueba nada**, y un
+       arreglo sin reproduccion es opinion
+
+- --- **Rate limit por endpoint, no por controller**
+  - -- `[EnableRateLimiting("auth")]` en la clase alcanzaba a `/refresh` y `/me` -> 429 al recargar
+  - -- particionar refresh por cookie **no limita**: la cookie ROTA en cada refresh, cada
+       peticion es una particion nueva. Por IP
+
+- --- **Flaky de infraestructura: la cache sobrevive a la base**
+  - -- `EnsureDeletedAsync` al empezar, pero Redis guarda `category:{id}` 60 s
+  - -- dos corridas seguidas -> el id 1 de ahora sirve la categoria 1 de antes -> 404
