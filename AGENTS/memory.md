@@ -7,17 +7,18 @@
 
 ---
 
-## 0. 🔖 Punto de continuación — **última sesión: 2026-09-12**
+## 0. 🔖 Punto de continuación — **última sesión: 2026-09-13**
 
 **Todo lo commiteado está en `dev`, árbol limpio, SIN push.** El agente commitea pero
 nunca hace push (`rules.md` §12).
 
-### Estado medido hoy (2026-09-12)
+### Estado medido hoy (2026-09-13)
 
-`dotnet build -warnaserror` **limpio** y **377/377 tests** en verde (~17 s) contra SQL
-Server, Redis y RabbitMQ reales. Las dos direcciones de la infra responden: `192.168.3.82`
-(LAN del host, confirmada por el owner) y `172.17.0.1` (puerta del bridge, la que usan los
-tests por defecto).
+**La IP LAN del host cambió a `192.168.3.76`** (la `.82` ya no responde). Actualizados
+`appsettings.Development.json` (Redis, RabbitMQ) y la cadena de conexión en user-secrets.
+`dotnet build -warnaserror` **limpio**, API arrancada con `/health/ready` → `Healthy` y las
+tres colas declaradas, y **377/377 tests** en verde (~22 s) contra `192.168.3.76`.
+`172.17.0.1` (puerta del bridge, la de los tests por defecto) sigue respondiendo.
 
 **Lo que se hizo hoy (3)**: `planning/24` paso 4 — **el catálogo se vuelve de tienda**, en
 una migración autorizada por el owner: `Slug` único con `GET /product/slug/{slug}`, tabla
@@ -170,7 +171,7 @@ binding), pero se ven en la UI. Se borran a mano cuando estorben.
 | **Umbral de QuestPDF** | Community es gratis —también comercialmente— **por debajo de 1 M USD** de ingresos brutos anuales, con 90 días de transición. No es «gratis para siempre» |
 | **Subir la CI** | El workflow está commiteado pero **sin push**; falta activarlo y proteger la rama |
 | **Migrar a `net10.0`** | Hoy resuelto instalando el runtime 9 |
-| **IP del host en `appsettings.Development.json`** | Quedó `192.168.3.82` (la LAN del autor), que **cambia con DHCP**, en un fichero commiteado. `172.17.0.1` —la puerta del bridge— es estable desde el dev container. Decidir cuál se deja |
+| **IP del host en `appsettings.Development.json`** | Quedó `192.168.3.76` (antes `.82`: **ya cambió una vez por DHCP**) (la LAN del autor), que **cambia con DHCP**, en un fichero commiteado. `172.17.0.1` —la puerta del bridge— es estable desde el dev container. Decidir cuál se deja |
 
 ---
 
@@ -247,12 +248,12 @@ con otros proyectos, en la red `backend`:
 
 | Servicio | Host desde la app | Estado |
 |---|---|---|
-| `sqlserver_ecommerce` | `192.168.3.82,1434` · BD `ApiEcommerceNET8` | ✅ arriba |
-| `redis_generic` | `192.168.3.82:6999` | ✅ arriba · `maxmemory 0` / `noeviction` |
-| `rabbitmq_generic` | `192.168.3.82:5672` | ✅ arriba (desde 2026-09-05; UI en `:15672`, guest/guest) |
+| `sqlserver_ecommerce` | `192.168.3.76,1434` · BD `ApiEcommerceNET8` | ✅ arriba |
+| `redis_generic` | `192.168.3.76:6999` | ✅ arriba · `maxmemory 0` / `noeviction` |
+| `rabbitmq_generic` | `192.168.3.76:5672` | ✅ arriba (desde 2026-09-05; UI en `:15672`, guest/guest) |
 
-⚠️ **Dos direcciones valen para lo mismo**: `192.168.3.82` es la IP LAN del host
-(2026-09-06; cambia con DHCP) y `172.17.0.1` es la puerta del bridge de Docker, estable
+⚠️ **Dos direcciones valen para lo mismo**: `192.168.3.76` es la IP LAN del host
+(2026-09-13; antes `.82`, cambia con DHCP) y `172.17.0.1` es la puerta del bridge de Docker, estable
 desde dentro del dev container. Las dos responden. Los **tests** siguen usando
 `172.17.0.1` por defecto (`TEST_SQL_HOST` / `TEST_REDIS` lo sobreescriben).
 ⚠️ Ese Redis es **compartido con otros proyectos**: si alguien le pone `allkeys-lru`, la

@@ -4,8 +4,8 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-12** (catálogo de tienda: slug, imágenes, etiquetas y
-borrado lógico con la FK que faltaba. 377/377 tests).
+Última actualización: **2026-09-13** (la IP LAN del host pasa a `192.168.3.76`.
+377/377 tests).
 
 ---
 
@@ -44,6 +44,14 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 ---
 
 ## 2. Bitácora
+
+### 2026-09-13 — La IP del host cambió: `192.168.3.82` → `192.168.3.76`
+
+Solo configuración: `appsettings.Development.json` (Redis y RabbitMQ) y
+`ConnectionStrings:ConexionSql` en user-secrets (fuera del repo). La `.82` ya no responde.
+Verificado ejecutando: build `-warnaserror` limpio, API arrancada → `/health/ready` `Healthy`
+y topología de RabbitMQ declarada, y suite **377/377** con
+`TEST_SQL_HOST=192.168.3.76 TEST_REDIS=192.168.3.76:6999`.
 
 ### 2026-09-12 — El catálogo se vuelve de tienda, y una migración que EF generó mal
 
