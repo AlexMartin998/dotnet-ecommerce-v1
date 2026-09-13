@@ -4,6 +4,7 @@ using ApiEcommerce.Features.Catalog.Dtos;
 using ApiEcommerce.Features.Catalog.Models;
 using ApiEcommerce.Features.Catalog.Repository;
 using ApiEcommerce.Exceptions;
+using ApiEcommerce.Shared.Db;
 
 namespace ApiEcommerce.Features.Catalog.Service;
 
@@ -17,12 +18,15 @@ public class CategoryService : ICategoryService
   private readonly ICrudService<CategoryDto, CreateCategoryDto, UpdateCategoryDto> _crud;
   private readonly ICategoryRepository _repository;
   private readonly IEntityMapper<Category, CategoryDto, CreateCategoryDto, UpdateCategoryDto> _mapper;
+  private readonly ITransactionRunner _transactions;
 
   public CategoryService(
       ICrudService<CategoryDto, CreateCategoryDto, UpdateCategoryDto> crud,
       ICategoryRepository repository,
-      IEntityMapper<Category, CategoryDto, CreateCategoryDto, UpdateCategoryDto> mapper)
+      IEntityMapper<Category, CategoryDto, CreateCategoryDto, UpdateCategoryDto> mapper,
+      ITransactionRunner transactions)
   {
+    _transactions = transactions;
     _crud = crud;
     _repository = repository;
     _mapper = mapper;
@@ -53,6 +57,37 @@ public class CategoryService : ICategoryService
   public async Task<CategoryDto> GetBySlugAsync(string slug, CancellationToken ct = default)
       => _mapper.ToDto(await _repository.GetBySlugAsync(slug, ct)
           ?? throw new NotFoundAppException("Category", slug));
+
+  public async Task<IReadOnlyList<CategoryDto>> GetFeaturedAsync(CancellationToken ct = default)
+      => [.. (await _repository.GetFeaturedAsync(ct)).Select(_mapper.ToDto)];
+
+  public async Task<IReadOnlyList<CategoryDto>> SetFeaturedAsync(
+      IReadOnlyList<int> orderedIds, CancellationToken ct = default)
+  {
+    ArgumentNullException.ThrowIfNull(orderedIds);
+
+    // El mensaje bonito. La garantía es el CHECK de la base: aunque esto faltara, una cuarta
+    // no cabe.
+    if (orderedIds.Count > MaxFeatured)
+      throw CatalogErrors.FeaturedLimitReached(MaxFeatured);
+
+    if (orderedIds.Distinct().Count() != orderedIds.Count)
+      throw new BadOperationAppException("A category can't be featured twice.");
+
+    if (await _repository.CountExistingAsync(orderedIds, ct) != orderedIds.Count)
+      throw new BadOperationAppException("Some of the categories to feature do not exist.");
+
+    await _transactions.ExecuteAsync(async token =>
+    {
+      await _repository.ReplaceFeaturedAsync(orderedIds, token);
+      return true;
+    }, ct);
+
+    return await GetFeaturedAsync(ct);
+  }
+
+  /// <summary>Tope de destacadas. Tiene que casar con el CHECK de <c>AppDbContext</c>.</summary>
+  public const int MaxFeatured = 3;
 }
 
 

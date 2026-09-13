@@ -26,8 +26,10 @@ pedido por el front. ⚠️ **Todo producto tiene al menos una variante**; la cl
 único filtrado de su SKU. ⚠️ `Products.Stock`/`Sizes` **ya no existen**. ⚠️ Las escrituras de
 admin sobre variantes van con **`sp_getapplock` por producto** (la regla mira a las hermanas).
 **420/420 tests**.
-**En cola del front** (`ecom_angular`): categorías destacadas (máx. 3), paginación por
-categoría y búsqueda, orden estable de imágenes.
+Después, `planning/28`: **destacadas** (`FeaturedPosition`, CHECK 1..3 + único filtrado,
+`PUT /category/featured` con applock) y `/paged` por categoría y búsqueda. **432/432 tests**.
+⚠️ Destacadas = categorías (tipo de prenda). Si el owner quiere un header Men/Women/Kids, es un
+filtro por **etiqueta** en los listados, no un cambio de modelo: decisión suya, no hecha.
 
 **Antes**: `planning/26` — **catálogo de demo de Teslo Shop** (4 categorías, 52 prendas,
 104 imágenes) y la **base local limpia menos usuarios**, con autorización del owner solo esa

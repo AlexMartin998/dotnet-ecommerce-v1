@@ -159,6 +159,40 @@ public class ProductController : ControllerBase
         return Ok(await _service.GetForCategorySlugAsync(categorySlug, ct));
     }
 
+    /// <summary>Una página de los productos de una categoría, por su slug. Para infinite scroll.</summary>
+    /// <remarks>
+    /// Offset y no cursor, como <c>/paged</c>. Orden total <c>createdAt</c> desc + <c>id</c> desc.
+    /// Si se crea un producto durante el scroll, la página siguiente puede REPETIR uno: el
+    /// cliente deduplica por <c>id</c> (<c>planning/28</c>).
+    /// </remarks>
+    [AllowAnonymous]
+    [HttpGet("category/slug/{categorySlug}/paged", Name = "GetProductsForCategorySlugPaged")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PagedResult<ProductDto>>> GetProductsForCategorySlugPaged(
+        [StringLength(60, MinimumLength = 1)] string categorySlug, [FromQuery] PageQuery query, CancellationToken ct)
+    {
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        return Ok(await _service.GetPagedForCategorySlugAsync(categorySlug, query, ct));
+    }
+
+    /// <summary>Una página de la búsqueda por nombre. Sin <c>name</c>, página vacía.</summary>
+    [AllowAnonymous]
+    [HttpGet("search/paged", Name = "SearchProductsPaged")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<PagedResult<ProductDto>>> SearchProductsPaged(
+        [FromQuery][StringLength(100)] string? name, [FromQuery] PageQuery query, CancellationToken ct)
+    {
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        return Ok(await _service.SearchPagedAsync(name ?? string.Empty, query, ct));
+    }
+
     /// <summary>Búsqueda por nombre. Sin resultados devuelve 200 con lista vacía, no 404.</summary>
     [AllowAnonymous]
     [HttpGet("search", Name = "SearchProducts")]

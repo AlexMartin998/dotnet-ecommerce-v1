@@ -159,6 +159,8 @@ public partial class ProductMapper
 
   // Las imágenes salen ordenadas: la 0 es la del listado, y el orden es parte del dato.
   private static IReadOnlyList<string> ToUrls(ICollection<ProductImage> images)
-      => [.. images.OrderBy(i => i.Position).Select(i => i.Url)];
+      // Desempate por Id: dos imágenes con la misma posición no pueden cambiar de orden entre
+      // peticiones, y el front enseña la segunda al pasar el ratón.
+      => [.. images.OrderBy(i => i.Position).ThenBy(i => i.Id).Select(i => i.Url)];
 
 }

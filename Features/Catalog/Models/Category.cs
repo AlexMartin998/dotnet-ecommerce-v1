@@ -34,6 +34,14 @@ public class Category : IAuditable
   [MaxLength(200)]
   public string? Description { get; set; }
 
+  /// <summary>Posición en el header (1..3), o <c>null</c> si no es destacada.</summary>
+  /// <remarks>
+  /// Una columna y no un booleano más un orden: con dos, «orden sin destacar» sería un estado
+  /// posible. El máximo de tres lo garantiza la base (CHECK + índice único filtrado), no el
+  /// servicio: ver <c>planning/28</c>.
+  /// </remarks>
+  public int? FeaturedPosition { get; set; }
+
   // Estampados por AppDbContext.SaveChangesAsync (ver IAuditable). No asignar a mano.
   [Required]
   public DateTime CreatedAt { get; set; } = DateTime.Now;

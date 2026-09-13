@@ -4,8 +4,8 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-13** (tallas como variantes con stock por talla.
-420/420 tests).
+Última actualización: **2026-09-13** (categorías destacadas, listados paginados por
+categoría y búsqueda. 432/432 tests).
 
 ---
 
@@ -76,6 +76,20 @@ volumen. Queda como decisión del owner.
 Suite **385/385** (+8), build limpio con `-warnaserror`. De paso: `GetProductsForCategoryAsync`
 ordenaba sin desempate por PK (CLAUDE.md §9).
 
+
+### 2026-09-13 — Destacadas del header y paginación para infinite scroll
+
+`planning/28`, segundo encargo del front. **Destacadas = las categorías que ya hay**, no
+Hombre/Mujer/Niños: una categoría es el tipo de prenda y el género ya es una etiqueta; hacerlas
+jerarquía obligaba a N:M. `Category.FeaturedPosition` (una columna: null o 1..3) con **CHECK +
+índice único filtrado**, así que la base impide la cuarta. `PUT /category/featured` reemplaza la
+lista en una transacción con `sp_getapplock` (sin él, 10 PUT simultáneos daban 409: probado
+quitándolo). Paginación por offset con el mismo `PagedResult`: `/category/slug/{slug}/paged` y
+`/search/paged`, `AsSplitQuery`. La búsqueda sin paginar no desempataba por `Id`: arreglado. Las
+imágenes desempatan por `Id`.
+
+Verificado ejecutando: build limpio, **432/432**, CHECK probado saltándose el servicio,
+migración aplicada, destacadas fijadas por la API en la base local, OpenAPI regenerado.
 
 ### 2026-09-13 — Tallas como variantes, con stock por talla
 

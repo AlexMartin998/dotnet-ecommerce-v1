@@ -244,6 +244,18 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         .HasIndex(i => new { i.ProductId, i.Position })
         .HasDatabaseName("IX_ProductImages_ProductId_Position");
 
+    // Destacadas: como mucho tres, y lo dice la BASE. El CHECK acota la posición a 1..3 y el
+    // índice único impide repetirla, así que no caben cuatro ni con dos administradores a la
+    // vez. Filtrado: las no destacadas (null) no chocan entre sí.
+    modelBuilder.Entity<Category>()
+        .ToTable(t => t.HasCheckConstraint(
+            "CK_Categories_FeaturedPosition", "[FeaturedPosition] BETWEEN 1 AND 3"));
+
+    modelBuilder.Entity<Category>()
+        .HasIndex(c => c.FeaturedPosition)
+        .IsUnique()
+        .HasFilter("[FeaturedPosition] IS NOT NULL");
+
     // Variantes: mismo trato que las imágenes, salvo que estas sí se venden.
     modelBuilder.Entity<Product>()
         .HasMany(p => p.Variants)

@@ -14,5 +14,7 @@ public static class CatalogCacheKeys
 {
   public const string CategoryAll = "category:all";
 
+  public const string CategoryFeatured = "category:featured";
+
   public static string Category(int id) => $"category:{id}";
 }

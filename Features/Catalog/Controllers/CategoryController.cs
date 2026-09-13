@@ -67,6 +67,28 @@ public class CategoryController : ControllerBase
         return Ok(category);
     }
 
+    /// <summary>Las destacadas del header, por posición. Como mucho tres; vacío si no hay.</summary>
+    [AllowAnonymous]
+    [HttpGet("featured", Name = "GetFeaturedCategories")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<ActionResult<IReadOnlyList<CategoryDto>>> GetFeaturedCategories(CancellationToken ct)
+        => Ok(await _service.GetFeaturedAsync(ct));
+
+    /// <summary>Reemplaza las destacadas por las del body, en su orden. Solo administración.</summary>
+    /// <remarks>
+    /// <c>PUT</c> y no <c>PATCH</c>: reemplaza el recurso «lista de destacadas» entero. Es
+    /// idempotente de por sí, así que no lleva <c>Idempotency-Key</c>.
+    /// </remarks>
+    [Authorize(Roles = Roles.Admin)]
+    [HttpPut("featured", Name = "SetFeaturedCategories")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<IReadOnlyList<CategoryDto>>> SetFeaturedCategories(
+        [FromBody] SetFeaturedCategoriesDto dto, CancellationToken ct)
+        => Ok(await _service.SetFeaturedAsync(dto.CategoryIds, ct));
+
     /// <summary>La categoría por su slug, que es lo que el front usa en la URL pública.</summary>
     [AllowAnonymous]
     [HttpGet("slug/{slug}", Name = "GetCategoryBySlug")]

@@ -80,7 +80,53 @@ public class ProductRepository(AppDbContext db)
         .Include(p => p.Variants)
         .Where(p => EF.Functions.Like(p.Name, pattern))
         .OrderByDescending(p => p.CreatedAt)
+        .ThenByDescending(p => p.Id)   // faltaba: sin desempate el orden cambia entre peticiones
         .ToListAsync(ct);
+  }
+
+  public Task<PagedResult<Product>> GetPagedForCategoryAsync(
+      int categoryId, int page, int pageSize, CancellationToken ct = default)
+      => PageAsync(Query().Where(p => p.CategoryId == categoryId), page, pageSize, ct);
+
+  public async Task<PagedResult<Product>> SearchPagedAsync(
+      string name, int page, int pageSize, CancellationToken ct = default)
+  {
+    if (string.IsNullOrWhiteSpace(name)) return PagedResult<Product>.Empty(page, pageSize);
+
+    var pattern = $"%{name.Trim()}%";
+
+    return await PageAsync(Query().Where(p => EF.Functions.Like(p.Name, pattern)), page, pageSize, ct);
+  }
+
+  /// <summary>
+  /// Pagina un filtro con el orden total del catálogo: <c>CreatedAt</c> descendente y
+  /// desempate por <c>Id</c>.
+  /// </summary>
+  /// <remarks>
+  /// Un sitio para el orden y el COUNT: los listados paginados del front (infinite scroll)
+  /// dependen de que dos páginas no se solapen, y eso solo lo da un orden total.
+  /// </remarks>
+  private static async Task<PagedResult<Product>> PageAsync(
+      IQueryable<Product> filtered, int page, int pageSize, CancellationToken ct)
+  {
+    // El COUNT sobre el filtro sin Include ni orden: no los necesita.
+    var total = await filtered.CountAsync(ct);
+
+    var items = await filtered
+        .Include(p => p.Category)
+        .Include(p => p.Images)
+        .Include(p => p.Variants)
+        .OrderByDescending(p => p.CreatedAt)
+        .ThenByDescending(p => p.Id)
+        .Skip(PageQuery.SkipFor(page, pageSize))
+        .Take(pageSize)
+        // Dos colecciones incluidas: en una sola consulta cada producto sale imágenes x variantes
+        // veces (2 x 6 = 12 filas por prenda). Separadas, una consulta por colección. EF pagina
+        // igual de bien en los dos modos; esto es por el volumen, y exige el orden total de arriba.
+        .AsSplitQuery()
+        .ToListAsync(ct);
+
+    return new PagedResult<Product>(items, page, pageSize, total);
   }
 
   // Sin rastreo: la compra descuenta con TryDecrementStockAsync y nadie modifica esta

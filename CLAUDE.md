@@ -293,8 +293,8 @@ Rutas **versionadas por segmento**: `[Route("api/v{version:apiVersion}/[controll
 
 | Controller | Endpoints |
 |---|---|
-| `CategoryController` | CRUD + `/paged` + **`GET /slug/{slug}`**. Lecturas anónimas, escrituras `admin` |
-| `ProductController` | CRUD + `/paged` + `/category/{id}` + `/category/slug/{slug}` + `/search` + **`GET /slug/{slug}`** + `POST`/`DELETE /{id}/image` + `GET /stats` (`admin`) + **`POST /buy`** |
+| `CategoryController` | CRUD + `/paged` + **`GET /slug/{slug}`** + `GET`/`PUT /featured` (máx. 3, lo garantiza un CHECK). Lecturas anónimas, escrituras `admin` |
+| `ProductController` | CRUD + `/paged` + `/category/{id}` + `/category/slug/{slug}` (+ `/paged`) + `/search` (+ `/paged`) + **`GET /slug/{slug}`** + `POST`/`DELETE /{id}/image` + `GET /stats` (`admin`) + **`POST /buy`** |
 | `ProductVariantController` | `GET`/`POST /product/{id}/variants`, `PATCH /{variantId}` — tallas con stock, todo `admin` |
 | `AuthController` | `register`, `login`, `refresh`, `logout`, `logout-all`, `password`, `me` |
 | `UserController` | listado, detalle, roles, bloqueo, `GET /stats` — todo `admin` |

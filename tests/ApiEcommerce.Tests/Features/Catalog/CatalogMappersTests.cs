@@ -258,6 +258,21 @@ public class CatalogMappersTests
     Assert.Null(_products.ToDto(Product(categoryId: 3, stock: 10, price: 99.9m)).RowVersion);
   }
 
+  [Fact]
+  public void ProductToDto_OrdersImagesByPositionThenById()
+  {
+    // El front enseña la segunda al pasar el ratón: con la misma posición no pueden bailar.
+    var product = Product(categoryId: 3, stock: 1, price: 1m);
+    product.Images =
+    [
+      new ProductImage { Id = 9, Url = "/b.jpg", Position = 1 },
+      new ProductImage { Id = 7, Url = "/c.jpg", Position = 1 },
+      new ProductImage { Id = 8, Url = "/a.jpg", Position = 0 }
+    ];
+
+    Assert.Equal(["/a.jpg", "/c.jpg", "/b.jpg"], _products.ToDto(product).Images);
+  }
+
   private static Product Product(int categoryId, int stock, decimal price) => new()
   {
     Id = 1,

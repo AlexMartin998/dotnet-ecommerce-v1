@@ -157,6 +157,28 @@ public class ProductService : IProductService
     return [.. products.Select(_mapper.ToDto)];
   }
 
+  public async Task<PagedResult<ProductDto>> GetPagedForCategorySlugAsync(
+      string categorySlug, PageQuery query, CancellationToken ct = default)
+  {
+    ArgumentNullException.ThrowIfNull(query);
+
+    var category = await _categoryRepository.GetBySlugAsync(categorySlug, ct)
+        ?? throw new NotFoundAppException("Category", categorySlug);
+
+    return ToDtos(await _repository.GetPagedForCategoryAsync(category.Id, query.Page, query.PageSize, ct));
+  }
+
+  public async Task<PagedResult<ProductDto>> SearchPagedAsync(
+      string name, PageQuery query, CancellationToken ct = default)
+  {
+    ArgumentNullException.ThrowIfNull(query);
+
+    return ToDtos(await _repository.SearchPagedAsync(name, query.Page, query.PageSize, ct));
+  }
+
+  private PagedResult<ProductDto> ToDtos(PagedResult<Product> page)
+      => new([.. page.Items.Select(_mapper.ToDto)], page.Page, page.PageSize, page.TotalItems);
+
   public async Task<IEnumerable<ProductDto>> SearchAsync(string name, CancellationToken ct = default)
   {
     var products = await _repository.SearchProductAsync(name, ct);

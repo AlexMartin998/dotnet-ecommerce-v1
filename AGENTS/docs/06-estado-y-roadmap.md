@@ -22,6 +22,7 @@ paginación y seeding.
 | `ProductService` + `ProductRules` | ✅ | escrituras delegadas, lecturas propias; SKU único + FK válida + compra |
 | `CategoryController` | ✅ | sin `try/catch` de negocio |
 | `ProductController` | ✅ | CRUD + `category/{id}` + `search` + `buy` |
+| Destacadas y listados paginados | ✅ | `Category.FeaturedPosition` (CHECK 1..3 + único filtrado), `GET/PUT /category/featured`, `/paged` por categoría y búsqueda (`planning/28`) |
 | Tallas como variantes | ✅ | `ProductVariant` con SKU y stock propios, `ProductVariantController` (admin), talla copiada en la línea (`planning/27`) |
 | `HealthController` | ✅ | `GET /health` (liveness), `[ApiVersionNeutral]` |
 | Jerarquía `AppException` | ✅ | + `Unauthorized` (401), `Forbidden` (403), `Validation` (422) |

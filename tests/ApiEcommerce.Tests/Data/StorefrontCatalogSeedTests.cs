@@ -37,6 +37,13 @@ public class StorefrontCatalogSeedTests
         .Select(c => c.GetProperty("name").GetString()).ToList();
 
     Assert.Equal(["Shirts", "Pants", "Hoodies", "Hats"], categories);
+
+    // Las tres del header (planning/28), en orden; Pants no.
+    var featured = Catalog.GetProperty("categories").EnumerateArray()
+        .Where(c => c.GetProperty("featuredPosition").ValueKind == JsonValueKind.Number)
+        .OrderBy(c => c.GetProperty("featuredPosition").GetInt32())
+        .Select(c => c.GetProperty("name").GetString());
+    Assert.Equal(["Shirts", "Hoodies", "Hats"], featured);
     Assert.Equal(52, Products.Count());
     Assert.All(Products, p => Assert.Contains(p.GetProperty("category").GetString(), categories));
   }

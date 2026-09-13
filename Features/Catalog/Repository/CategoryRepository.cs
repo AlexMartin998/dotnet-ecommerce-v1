@@ -31,6 +31,45 @@ public class CategoryRepository(AppDbContext db) : BaseRepository<Category>(db),
 
   public async Task<bool> HasProductsAsync(int categoryId, CancellationToken ct = default)
       => await _db.Products.AnyAsync(p => p.CategoryId == categoryId, ct);
+
+  public async Task<IReadOnlyList<Category>> GetFeaturedAsync(CancellationToken ct = default)
+      => await Query()
+          .Where(c => c.FeaturedPosition != null)
+          .OrderBy(c => c.FeaturedPosition)   // único entre las destacadas: orden total
+          .ToListAsync(ct);
+
+  public async Task<int> CountExistingAsync(IReadOnlyCollection<int> ids, CancellationToken ct = default)
+      => await Query().CountAsync(c => ids.Contains(c.Id), ct);
+
+  public async Task ReplaceFeaturedAsync(IReadOnlyList<int> orderedIds, CancellationToken ct = default)
+  {
+    await _db.Database.ExecuteSqlRawAsync("""
+        DECLARE @result int;
+        EXEC @result = sp_getapplock @Resource = 'catalog:featured-categories', @LockMode = 'Exclusive',
+                                     @LockOwner = 'Transaction', @LockTimeout = 10000;
+        IF @result < 0 THROW 51000, 'Could not lock the featured categories.', 1;
+        """, ct);
+
+    var now = DateTime.Now;
+
+    await _dbSet
+        .Where(c => c.FeaturedPosition != null)
+        .ExecuteUpdateAsync(setters => setters
+            .SetProperty(c => c.FeaturedPosition, (int?)null)
+            .SetProperty(c => c.UpdatedAt, now), ct);
+
+    for (var index = 0; index < orderedIds.Count; index++)
+    {
+      var id = orderedIds[index];
+      int? position = index + 1;
+
+      await _dbSet
+          .Where(c => c.Id == id)
+          .ExecuteUpdateAsync(setters => setters
+              .SetProperty(c => c.FeaturedPosition, position)
+              .SetProperty(c => c.UpdatedAt, now), ct);
+    }
+  }
 }
 
 

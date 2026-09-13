@@ -11,6 +11,10 @@ namespace ApiEcommerce.Features.Catalog;
 /// </remarks>
 public static class CatalogErrors
 {
+  /// <summary>Más destacadas de las que caben en el header. 400.</summary>
+  public static CustomAppException FeaturedLimitReached(int max) =>
+      new("featured_limit_reached", $"At most {max} categories can be featured.", HttpStatusCode.BadRequest);
+
   /// <summary>La talla ya existe en el producto. 409.</summary>
   public static CustomAppException DuplicateSize(string size) =>
       new("duplicate_size", $"The product already has the size '{size}'.", HttpStatusCode.Conflict);

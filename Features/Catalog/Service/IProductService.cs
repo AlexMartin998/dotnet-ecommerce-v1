@@ -1,3 +1,4 @@
+using ApiEcommerce.Shared.Paging;
 using ApiEcommerce.Shared.Storage;
 using ApiEcommerce.Shared.Crud;
 using ApiEcommerce.Features.Catalog.Dtos;
@@ -19,6 +20,13 @@ public interface IProductService
 
   /// <summary>Productos de la categoría con ese slug. Si no existe, lanza <c>NotFoundAppException</c>.</summary>
   Task<IEnumerable<ProductDto>> GetForCategorySlugAsync(string categorySlug, CancellationToken ct = default);
+
+  /// <summary>Una página de los productos de la categoría con ese slug. 404 si no existe.</summary>
+  Task<PagedResult<ProductDto>> GetPagedForCategorySlugAsync(
+      string categorySlug, PageQuery query, CancellationToken ct = default);
+
+  /// <summary>Una página de la búsqueda por nombre. Sin nombre o sin resultados, página vacía.</summary>
+  Task<PagedResult<ProductDto>> SearchPagedAsync(string name, PageQuery query, CancellationToken ct = default);
 
   /// <summary>Búsqueda por coincidencia parcial de nombre. Sin resultados devuelve lista vacía, no 404.</summary>
   Task<IEnumerable<ProductDto>> SearchAsync(string name, CancellationToken ct = default);

@@ -4695,3 +4695,29 @@ EXEC @r = sp_getapplock @Resource = 'catalog:product-variants:42', @LockMode = '
        `SUM` de SQL da 8115
   - -- un filtro global mete un JOIN en el `UPDATE`: la compra bloqueaba `Products` y el retiro
        lo hacia al reves -> deadlocks tapados por `EnableRetryOnFailure`. Se ven en el log, no en la respuesta
+
+## 50. Destacadas y paginacion  <- el limite lo pone la base, no el servicio
+
+- --- ⭐ **«Como maximo 3» es una regla de CARDINALIDAD: la base la puede garantizar sola**
+```cs
+modelBuilder.Entity<Category>().ToTable(t => t.HasCheckConstraint(
+    "CK_Categories_FeaturedPosition", "[FeaturedPosition] BETWEEN 1 AND 3"));
+modelBuilder.Entity<Category>().HasIndex(c => c.FeaturedPosition).IsUnique()
+    .HasFilter("[FeaturedPosition] IS NOT NULL");       // posiciones 1..3 y sin repetir => max 3
+```
+  - -- UNA columna `int?` y no `bool + orden`: con dos existe el estado «orden sin destacar»
+  - -- el `if (count > 3)` del servicio solo pone el `code` bonito
+
+- --- **Reordenar contra un indice unico: primero limpiar, luego poner**
+  - -- `[1,2] -> [2,1]` escrito posicion a posicion choca a mitad
+  - -- `PUT` de la lista entera (marcar, desmarcar y reordenar son LA MISMA operacion)
+  - -- ⚠️ sin `sp_getapplock`, dos PUT a la vez intercalan sentencias -> 409. Probado quitandolo
+
+- --- **Destacadas = tipo de prenda, no Hombre/Mujer/Ninos**
+  - -- un producto tiene UNA categoria; el genero es otra dimension -> ya es un tag
+  - -- el header Men/Women/Kids de Teslo seria un filtro por tag, no una jerarquia
+
+- --- **Offset para infinite scroll: lo que NO arregla**
+  - -- un alta durante el scroll desplaza y REPITE un elemento (una baja lo salta) -> el front deduplica por id
+  - -- `AsSplitQuery()` con dos colecciones incluidas: imagenes x variantes = 12 filas por prenda
+  - -- ⚠️ exige orden total, o cada consulta separada ordena distinto

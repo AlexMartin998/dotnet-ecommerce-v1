@@ -32,6 +32,10 @@ public sealed class CachedCategoryService(ICategoryService inner, ICacheService 
   public Task<CategoryDto> GetBySlugAsync(string slug, CancellationToken ct = default)
       => inner.GetBySlugAsync(slug, ct);
 
+  // La del header: se pide en cada página del front y cambia muy de vez en cuando.
+  public Task<IReadOnlyList<CategoryDto>> GetFeaturedAsync(CancellationToken ct = default)
+      => cache.GetOrSetAsync(CatalogCacheKeys.CategoryFeatured, inner.GetFeaturedAsync, Ttl, ct);
+
   // Las páginas no se cachean: cada combinación de page/pageSize sería una clave que
   // ninguna invalidación conoce, y eso exigiría invalidar por prefijo.
   public Task<PagedResult<CategoryDto>> GetPagedAsync(PageQuery query, CancellationToken ct = default)
@@ -48,15 +52,30 @@ public sealed class CachedCategoryService(ICategoryService inner, ICacheService 
     return id;
   }
 
+  // Las destacadas también: llevan el nombre, y una destacada borrada no puede seguir en el header.
   public async Task UpdateAsync(int id, UpdateCategoryDto dto, CancellationToken ct = default)
   {
     await inner.UpdateAsync(id, dto, ct);
-    await cache.RemoveAsync(ct, CatalogCacheKeys.CategoryAll, CatalogCacheKeys.Category(id));
+    await cache.RemoveAsync(ct, CatalogCacheKeys.CategoryAll, CatalogCacheKeys.CategoryFeatured, CatalogCacheKeys.Category(id));
   }
 
   public async Task DeleteAsync(int id, CancellationToken ct = default)
   {
     await inner.DeleteAsync(id, ct);
-    await cache.RemoveAsync(ct, CatalogCacheKeys.CategoryAll, CatalogCacheKeys.Category(id));
+    await cache.RemoveAsync(ct, CatalogCacheKeys.CategoryAll, CatalogCacheKeys.CategoryFeatured, CatalogCacheKeys.Category(id));
+  }
+
+  public async Task<IReadOnlyList<CategoryDto>> SetFeaturedAsync(
+      IReadOnlyList<int> orderedIds, CancellationToken ct = default)
+  {
+    // Las que ERAN destacadas se leen antes, sin cache: su `featuredPosition` cacheado por id
+    // queda viejo al quitarlas, igual que el de las nuevas al ponerlas.
+    var before = await inner.GetFeaturedAsync(ct);
+    var after = await inner.SetFeaturedAsync(orderedIds, ct);
+
+    var touched = before.Select(c => c.Id).Concat(orderedIds).Distinct().Select(CatalogCacheKeys.Category);
+
+    await cache.RemoveAsync(ct, [CatalogCacheKeys.CategoryAll, CatalogCacheKeys.CategoryFeatured, .. touched]);
+    return after;
   }
 }

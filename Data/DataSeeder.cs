@@ -127,7 +127,14 @@ public static class DataSeeder
 
     var categories = catalog.Categories.ToDictionary(
         c => c.Name,
-        c => new Category { Name = c.Name, Slug = Slugs.From(c.Name)!, Description = c.Description });
+        c => new Category
+        {
+          Name = c.Name,
+          Slug = Slugs.From(c.Name)!,
+          Description = c.Description,
+          // Las del header (planning/28): Shirts, Hoodies y Hats. Pants va al desplegable.
+          FeaturedPosition = c.FeaturedPosition
+        });
 
     var withImages = Directory.Exists(ImagesFolder);
 
@@ -212,7 +219,7 @@ public static class DataSeeder
   // La forma del JSON. Privada: es el formato de un fichero de semillas, no un contrato.
   private sealed record SeedCatalog(List<SeedCategory> Categories, List<SeedProduct> Products);
 
-  private sealed record SeedCategory(string Name, string? Description);
+  private sealed record SeedCategory(string Name, string? Description, int? FeaturedPosition);
 
   // `Stock` solo en los productos sin tallas; los demás lo llevan por talla en `Variants`.
   private sealed record SeedProduct(

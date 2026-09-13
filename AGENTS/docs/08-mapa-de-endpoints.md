@@ -75,9 +75,15 @@ Base: `http://localhost:8021/api/v1/…` — todas las rutas van versionadas por
 | GET | `/paged` | 🔓 | Paginado (`?page=&pageSize=`) |
 | GET | `/{id}` | 🔓 | Una categoría |
 | **GET** | `/slug/{slug}` | 🔓 | La categoría por su URL pública. El slug sale del nombre al crearla y **no cambia** al renombrarla |
+| **GET** | `/featured` | 🔓 | Las destacadas del header, por `featuredPosition` (1..3). Cacheada |
+| **PUT** | `/featured` | 👑 | `{ categoryIds: [...] }` reemplaza las destacadas **en ese orden** (vacía = ninguna). 400 `featured_limit_reached` con más de 3 |
 | POST | `/` | 👑 | Crea. **201 sin cuerpo**: el id viaja en la cabecera `Location` (no es un fallo) |
 | PATCH | `/{id}` | 👑 | Actualiza parcial. Todo campo del DTO es nullable |
 | DELETE | `/{id}` | 👑 | Borra. Invalida la cache |
+
+> ⚠️ **Máximo 3 destacadas, y lo garantiza la BASE**: `CHECK (FeaturedPosition BETWEEN 1 AND 3)`
+> + índice único filtrado. El 400 del servicio solo pone el mensaje. Destacadas = categorías
+> (tipo de prenda); el género es una **etiqueta**, no una categoría (`planning/28`).
 
 ### 1.4 `ProductController` — `/api/v1/Product`
 
@@ -89,6 +95,8 @@ Base: `http://localhost:8021/api/v1/…` — todas las rutas van versionadas por
 | GET | `/category/{categoryId}` | 🔓 | Productos de una categoría (404 si la categoría no existe) |
 | **GET** | `/category/slug/{categorySlug}` | 🔓 | Lo mismo, con la categoría citada por su slug. Cada producto trae `categorySlug` |
 | GET | `/search?name=` | 🔓 | Búsqueda por nombre |
+| **GET** | `/category/slug/{categorySlug}/paged` | 🔓 | Una página de la categoría (`?page=&pageSize=`, máx. 100). Para infinite scroll |
+| **GET** | `/search/paged?name=` | 🔓 | Una página de la búsqueda. Sin `name`, página vacía. Orden total `createdAt` desc + `id` desc; si se crea un producto durante el scroll puede repetirse uno: **deduplicar por `id`** |
 | **GET** | `/slug/{slug}` | 🔓 | La ficha por su URL pública. Ruta aparte de `/{id:int}` porque un slug numérico caería en la del id |
 | POST | `/` | 👑 | Crea |
 | PATCH | `/{id}` | 👑 | Actualiza parcial. **Concurrencia optimista**: `If-Match` con el `ETag` → 412 si otro admin editó antes |

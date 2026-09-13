@@ -2,19 +2,23 @@
   "categories": [
     {
       "name": "Shirts",
-      "description": "Camisetas, camisas y chaquetas"
+      "description": "Camisetas, camisas y chaquetas",
+      "featuredPosition": 1
     },
     {
       "name": "Pants",
-      "description": "Pantalones"
+      "description": "Pantalones",
+      "featuredPosition": null
     },
     {
       "name": "Hoodies",
-      "description": "Sudaderas con capucha"
+      "description": "Sudaderas con capucha",
+      "featuredPosition": 2
     },
     {
       "name": "Hats",
-      "description": "Gorras y gorros"
+      "description": "Gorras y gorros",
+      "featuredPosition": 3
     }
   ],
   "products": [

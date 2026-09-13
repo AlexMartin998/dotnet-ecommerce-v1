@@ -31,6 +31,15 @@ public interface IProductRepository : IBaseRepository<Product>
   Task<ICollection<Product>> GetProductsForCategoryAsync(int categoryId, CancellationToken ct = default);
 
 
+  /// <summary>Una página de los productos de una categoría, del más nuevo al más antiguo.</summary>
+  Task<PagedResult<Product>> GetPagedForCategoryAsync(
+      int categoryId, int page, int pageSize, CancellationToken ct = default);
+
+  /// <summary>Una página de los productos cuyo nombre contiene <paramref name="name"/>.</summary>
+  /// <remarks>Sin <paramref name="name"/> devuelve una página vacía, no el catálogo entero.</remarks>
+  Task<PagedResult<Product>> SearchPagedAsync(
+      string name, int page, int pageSize, CancellationToken ct = default);
+
   /// <summary>Productos cuyo nombre contiene <paramref name="name"/>.</summary>
   Task<ICollection<Product>> SearchProductAsync(string name, CancellationToken ct = default);
 

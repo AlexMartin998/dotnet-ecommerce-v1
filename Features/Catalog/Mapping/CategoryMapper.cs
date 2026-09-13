@@ -47,6 +47,8 @@ public partial class CategoryMapper
   [MapperIgnoreTarget(nameof(Category.CreatedAt))]
   [MapperIgnoreTarget(nameof(Category.UpdatedAt))]
   [MapperIgnoreTarget(nameof(Category.Slug))]
+  // Destacar no es parte del alta: va por PUT /category/featured, que vigila el límite.
+  [MapperIgnoreTarget(nameof(Category.FeaturedPosition))]
   private partial Category Build(CreateCategoryDto dto);
 
 }
