@@ -74,6 +74,7 @@ Base: `http://localhost:8021/api/v1/…` — todas las rutas van versionadas por
 | GET | `/` | 🔓 | Todas las categorías. **Cacheada en Redis** (`CachedCategoryService`, decorador) |
 | GET | `/paged` | 🔓 | Paginado (`?page=&pageSize=`) |
 | GET | `/{id}` | 🔓 | Una categoría |
+| **GET** | `/slug/{slug}` | 🔓 | La categoría por su URL pública. El slug sale del nombre al crearla y **no cambia** al renombrarla |
 | POST | `/` | 👑 | Crea. **201 sin cuerpo**: el id viaja en la cabecera `Location` (no es un fallo) |
 | PATCH | `/{id}` | 👑 | Actualiza parcial. Todo campo del DTO es nullable |
 | DELETE | `/{id}` | 👑 | Borra. Invalida la cache |
@@ -86,6 +87,7 @@ Base: `http://localhost:8021/api/v1/…` — todas las rutas van versionadas por
 | GET | `/paged` | 🔓 | Paginado |
 | GET | `/{id}` | 🔓 | Un producto |
 | GET | `/category/{categoryId}` | 🔓 | Productos de una categoría (404 si la categoría no existe) |
+| **GET** | `/category/slug/{categorySlug}` | 🔓 | Lo mismo, con la categoría citada por su slug. Cada producto trae `categorySlug` |
 | GET | `/search?name=` | 🔓 | Búsqueda por nombre |
 | **GET** | `/slug/{slug}` | 🔓 | La ficha por su URL pública. Ruta aparte de `/{id:int}` porque un slug numérico caería en la del id |
 | POST | `/` | 👑 | Crea |
@@ -129,13 +131,18 @@ Base: `http://localhost:8021/api/v1/…` — todas las rutas van versionadas por
 | Método | Ruta | Qué hace |
 |---|---|---|
 | **POST** | `/` | **El checkout.** Multi-línea, congela precios, numera la orden, aparta stock. Devuelve 201 con `status: "placed"` y `receiptStatus: "pending"` — **la orden NO nace pagada**. Idempotente |
-| GET | `/{id}` | Una orden **del comprador autenticado**. La de otro devuelve **404**, no 403 |
+| GET | `/{publicId}` | Una orden **del comprador autenticado**. La de otro devuelve **404**, no 403 |
 | GET | `/paged` | Las órdenes **del comprador autenticado**, de la más reciente a la más antigua |
 | GET | `/all` 👑 | **Todas las órdenes, de cualquier comprador.** Paginado + `?number=` (prefijo del número de orden). Ruta aparte, no un parámetro de `/paged` |
-| **PATCH** | `/{id}/status` 👑 | Mueve la orden por su ciclo de entrega: `paid → preparing → shipped → delivered`. **204** también al repetir |
+| **PATCH** | `/{publicId}/status` 👑 | Mueve la orden por su ciclo de entrega: `paid → preparing → shipped → delivered`. **204** también al repetir |
 | GET | `/stats` 👑 | Recuento de órdenes por estado, para el panel |
-| GET | `/{id}/receipt` | Descarga el PDF. 409 `receipt_not_ready` si aún se está generando, 409 `receipt_failed` si murió, 404 si la orden no es tuya |
+| GET | `/{publicId}/receipt` | Descarga el PDF. 409 `receipt_not_ready` si aún se está generando, 409 `receipt_failed` si murió, 404 si la orden no es tuya |
 
+> ⚠️ **Una orden se cita por su `publicId` (UUID v7), nunca por la clave primaria**, que no
+> sale en ningún DTO. Con un entero en la ruta basta con sumar uno para descubrir órdenes y
+> medir el volumen. La ruta con el entero da **404**: la restricción es `:guid`. Ojo:
+> `number` sigue siendo secuencial y deja **estimar** el volumen, aunque ya no enumerar.
+>
 > ⚠️ **`/Product/buy` y `/Order` conviven a propósito.** El primero es una operación de
 > *catálogo*: mueve stock y **no deja rastro** — por eso no aparece en `/Order/paged`.
 > El segundo es el *checkout* completo. Si esperas ver una orden, el endpoint es `POST /Order`.
@@ -146,7 +153,7 @@ Base: `http://localhost:8021/api/v1/…` — todas las rutas van versionadas por
 > compras de terceros no es quien puede ver las suyas, y separar las rutas hace imposible que
 > un fallo de filtrado convierta un listado propio en uno global.
 
-> ⚠️ **`PATCH /{id}/status` no lleva `Idempotency-Key`, y es correcto.** La transición es un
+> ⚠️ **`PATCH /{publicId}/status` no lleva `Idempotency-Key`, y es correcto.** La transición es un
 > UPDATE condicional (`WHERE Status = @origen`), así que reenviarla no repite nada: si la
 > orden ya estaba en el destino son **204**, y si venía de otro estado es **409
 > `invalid_transition`**. Medido: 8 administradores simultáneos sobre la misma transición →
@@ -164,8 +171,8 @@ Base: `http://localhost:8021/api/v1/…` — todas las rutas van versionadas por
 
 | Método | Ruta | Qué hace |
 |---|---|---|
-| **POST** | `/` | Empieza a pagar una orden: `{ orderId, provider }`. Devuelve 201 con la referencia y el `clientSecret` de la pasarela. ⚠️ **201 NO significa cobrado**: solo que la pasarela aceptó el intento. Idempotente |
-| GET | `/{id}` | Un pago del comprador autenticado |
+| **POST** | `/` | Empieza a pagar una orden: `{ orderPublicId, provider }`. Devuelve 201 con la referencia y el `clientSecret` de la pasarela. ⚠️ **201 NO significa cobrado**: solo que la pasarela aceptó el intento. Idempotente |
+| GET | `/{publicId}` | Un pago del comprador autenticado. El DTO trae `publicId` y `orderPublicId`, nunca las claves primarias |
 | GET | `/paged` | Los pagos del comprador |
 | GET | `/all` 👑 | Todos los pagos, con `?reference=` (prefijo) |
 | **POST** | `/webhook/{provider}` 🔓 | Lo llama la pasarela. **Anónimo porque la firma ES la autenticación**, y sin rate limiter porque las pasarelas reintentan en ráfaga. Vive en un controller **aparte** (`PaymentWebhookController`, `[Route("api/v{version}/payment/webhook")]`): los `[Authorize]` se combinan con AND, así que la única forma de que una acción no herede el de su clase es no estar en esa clase |
@@ -263,7 +270,7 @@ sequenceDiagram
     O-->>C: 201 status=placed, receiptStatus=pending
     Note over C: ~40 ms. Ni pagada ni con PDF.
 
-    C->>P: POST /api/v1/payment { orderId, provider }
+    C->>P: POST /api/v1/payment { orderPublicId, provider }
     rect rgb(255, 248, 235)
     Note over S,G: T2 — la llamada a la pasarela va DENTRO
     S->>DB: INSERT Payments(pending)
@@ -299,7 +306,7 @@ sequenceDiagram
     S->>DB: Orders.ReceiptDocumentKey + Available
     end
 
-    C->>O: GET /api/v1/order/{id}/receipt
+    C->>O: GET /api/v1/order/{publicId}/receipt
     O-->>C: 200 application/pdf
 ```
 
@@ -606,16 +613,16 @@ curl -s $API/Product/paged | jq '.items[] | {sku, name, stock}'
 ORDER=$(curl -s -X POST $API/Order -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" \
   -d '{"items":[{"sku":"MQ-20722","quantity":1}],"customerName":"Adrian"}')
-echo $ORDER | jq '{id, number, receiptStatus}'      # -> receiptStatus: "pending"
+echo $ORDER | jq '{publicId, number, receiptStatus}'      # -> receiptStatus: "pending"
 
 # 4. mis órdenes (solo las MÍAS)
 curl -s "$API/Order/paged?page=1&pageSize=5" -H "Authorization: Bearer $TOKEN" | jq '.items[].number'
 
 # 4b. PAGAR: la orden sigue en "placed" hasta que la pasarela lo confirme
-ID=$(echo $ORDER | jq -r .id)
+ID=$(echo $ORDER | jq -r .publicId)
 curl -s -X POST $API/Payment -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" \
-  -d "{\"orderId\":$ID,\"provider\":\"stripe\"}" | jq '{reference, status, clientSecret}'
+  -d "{\"orderPublicId\":\"$ID\",\"provider\":\"stripe\"}" | jq '{reference, status, clientSecret}'
 #    Sin credenciales de Stripe esto responde 503 no_payment_provider, que es lo correcto.
 
 # 5. el comprobante, un par de segundos DESPUES de que el webhook confirme el cobro
@@ -667,9 +674,9 @@ stateDiagram-v2
     [*] --> Placed: POST /order (stock ya apartado)
     Placed --> Paid: webhook firmado -> payment.captured
     Placed --> Cancelled: nadie paga en 30 min (AbandonedOrderCleaner, devuelve el stock)
-    Paid --> Preparing: PATCH /order/id/status (admin)
-    Preparing --> Shipped: PATCH /order/id/status (admin)
-    Shipped --> Delivered: PATCH /order/id/status (admin)
+    Paid --> Preparing: PATCH /order/publicId/status (admin)
+    Preparing --> Shipped: PATCH /order/publicId/status (admin)
+    Shipped --> Delivered: PATCH /order/publicId/status (admin)
     Paid --> [*]: order.paid -> comprobante en PDF
     note right of Placed
         Aqui NO hay comprobante.
@@ -702,7 +709,7 @@ tocan.
 ## 12. Lo que NO existe todavía
 
 - **`Shipping`** está previsto como contexto acotado y no existe. Hoy el envío es un cambio de
-  estado que hace un administrador a mano (`PATCH /order/{id}/status`), sin transportista ni
+  estado que hace un administrador a mano (`PATCH /order/{publicId}/status`), sin transportista ni
   seguimiento.
 - **Cancelar o reembolsar una orden.** `PATCH /status` solo cubre el camino de entrega.
 - **Reembolsos, pagos parciales y PayPal.** El diseño está hecho para que PayPal quepa; no se

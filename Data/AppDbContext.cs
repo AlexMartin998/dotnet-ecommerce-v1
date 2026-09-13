@@ -149,6 +149,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         .IsUnique()
         .HasDatabaseName("IX_Orders_Number");
 
+    // Único: es lo que citan las rutas públicas en lugar de la clave primaria.
+    modelBuilder.Entity<Order>()
+        .HasIndex(o => o.PublicId)
+        .IsUnique()
+        .HasDatabaseName("IX_Orders_PublicId");
+
     // Por aquí consulta "mis órdenes", la lectura más frecuente del slice.
     modelBuilder.Entity<Order>()
         .HasIndex(o => new { o.BuyerUserId, o.PlacedAt })
@@ -171,6 +177,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         .HasIndex(p => p.Reference)
         .IsUnique()
         .HasDatabaseName("IX_Payments_Reference");
+
+    modelBuilder.Entity<Payment>()
+        .HasIndex(p => p.PublicId)
+        .IsUnique()
+        .HasDatabaseName("IX_Payments_PublicId");
 
     // Único y filtrado: es lo que ata un webhook a SU fila, y repetido movería dos pagos.
     // Filtrado porque la fila existe antes de que la pasarela conteste.

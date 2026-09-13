@@ -47,11 +47,11 @@ public sealed class OrderService(
   }
 
   public async Task<OrderDto> GetForBuyerAsync(
-      int id, string buyerUserId, CancellationToken ct = default)
+      Guid publicId, string buyerUserId, CancellationToken ct = default)
   {
-    var order = await repository.FindForBuyerAsync(id, buyerUserId, ct)
+    var order = await repository.FindForBuyerAsync(publicId, buyerUserId, ct)
         // 404 y no 403: "existe pero no es tuya" ya filtra que existe.
-        ?? throw new NotFoundAppException("Order", id.ToString());
+        ?? throw new NotFoundAppException("Order", publicId);
 
     return ToDto(order);
   }
@@ -79,11 +79,11 @@ public sealed class OrderService(
   }
 
   public async Task<DocumentContent> GetReceiptAsync(
-      int orderId, string buyerUserId, CancellationToken ct = default)
+      Guid publicId, string buyerUserId, CancellationToken ct = default)
   {
     // Filtrada por comprador: el comprobante de otro es indistinguible de uno que no existe.
-    var order = await repository.FindForBuyerAsync(orderId, buyerUserId, ct)
-        ?? throw new NotFoundAppException("Order", orderId.ToString());
+    var order = await repository.FindForBuyerAsync(publicId, buyerUserId, ct)
+        ?? throw new NotFoundAppException("Order", publicId);
 
     if (order.ReceiptDocumentKey is null)
       // Dos códigos porque "todavía no" es reintentable y "ya no va a estar" no lo es.
@@ -111,7 +111,7 @@ public sealed class OrderService(
 
 
   public async Task AdvanceAsync(
-      int orderId, UpdateOrderStatusDto dto, CancellationToken ct = default)
+      Guid publicId, UpdateOrderStatusDto dto, CancellationToken ct = default)
   {
     ArgumentNullException.ThrowIfNull(dto);
 
@@ -122,15 +122,15 @@ public sealed class OrderService(
           $"'{dto.Status}' is not a reachable order status. " +
           $"Valid targets: {string.Join(", ", OrderFulfillment.Targets)}.");
 
-    if (await repository.TryTransitionAsync(orderId, from, to, ct))
+    if (await repository.TryTransitionAsync(publicId, from, to, ct))
     {
-      logger.LogInformation("Order {OrderId} moved to {Status}", orderId, to);
+      logger.LogInformation("Order {PublicId} moved to {Status}", publicId, to);
       return;
     }
 
     // El UPDATE no movió nada. Solo AHORA se lee, y para distinguir tres casos distintos.
-    var current = await repository.FindStatusAsync(orderId, ct)
-        ?? throw new NotFoundAppException("Order", orderId.ToString());
+    var current = await repository.FindStatusAsync(publicId, ct)
+        ?? throw new NotFoundAppException("Order", publicId);
 
     // Ya estaba donde se la quería dejar: es un reenvío, no un error.
     if (current == to) return;
@@ -225,7 +225,7 @@ public sealed class OrderService(
 
   private static OrderDto ToDto(Order order) => new()
   {
-    Id = order.Id,
+    PublicId = order.PublicId,
     Number = order.Number,
     BuyerUserId = order.BuyerUserId,
     Status = order.Status.ToString().ToLowerInvariant(),

@@ -23,6 +23,12 @@ public class CategoryRepository(AppDbContext db) : BaseRepository<Category>(db),
     return await query.AnyAsync(ct);
   }
 
+  public async Task<bool> SlugExistsAsync(string slug, CancellationToken ct = default)
+      => await _db.Categories.AnyAsync(c => c.Slug == slug, ct);
+
+  public async Task<Category?> GetBySlugAsync(string slug, CancellationToken ct = default)
+      => await _db.Categories.AsNoTracking().FirstOrDefaultAsync(c => c.Slug == slug, ct);
+
   public async Task<bool> HasProductsAsync(int categoryId, CancellationToken ct = default)
       => await _db.Products.AnyAsync(p => p.CategoryId == categoryId, ct);
 }

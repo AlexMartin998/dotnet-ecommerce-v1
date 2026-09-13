@@ -4,8 +4,8 @@
 > **Se actualiza en el mismo commit que el código.** El diseño objetivo vive en
 > `docs/06-estado-y-roadmap.md`; esto es la foto de ejecución.
 
-Última actualización: **2026-09-13** (la IP LAN del host pasa a `192.168.3.76`.
-377/377 tests).
+Última actualización: **2026-09-13** (identificadores públicos: `publicId` en órdenes y
+pagos, slug en categorías. 385/385 tests).
 
 ---
 
@@ -36,6 +36,7 @@
 | 21 | Recuperar de la DLQ y recoger basura | ✅ | [`features/21`](features/21_recuperar-comprobantes-y-recoger-basura.feature) · [`planning/21`](planning/21_recuperar-comprobantes-y-recoger-basura.md) | — |
 | 22 | **Pagos (Stripe) y el ciclo de vida de la orden** | ✅ ⚠️ camino feliz contra Stripe **sin verificar**: necesita `sk_test_…` y URL pública | [`features/22`](features/22_pagos.feature) · [`planning/22`](planning/22_pagos.md) | `3769e99` |
 | 23 | Salir de AutoMapper (`Riok.Mapperly`) | ✅ | [`planning/23`](planning/23_mapeador-sin-licencia.md) | — |
+| 25 | Identificadores públicos no enumerables | ✅ | [`features/25`](features/25_identificadores-publicos.feature) · [`planning/25`](planning/25_identificadores-publicos.md) | — |
 | 24 | **Paridad con TesloShop**: carrito, fulfillment, contadores y catálogo | ✅ pasos 1–4; 5–6 abiertos | [`features/24`](features/24_carrito-y-fulfillment.feature) · [`planning/24`](planning/24_paridad-con-tesloshop.md) | — |
 
 **Ya no queda ningún ⚠️.** El 09 se cerró el 2026-09-05 contra un RabbitMQ real, y esa
@@ -44,6 +45,37 @@ verificación destapó un bug que el build y el smoke test no veían (abajo).
 ---
 
 ## 2. Bitácora
+
+### 2026-09-13 — La clave primaria deja de salir en las rutas
+
+`planning/25`, pedido por el front Angular: con `/cuenta/pedidos/71` basta con sumar uno para
+descubrir órdenes. **Órdenes y pagos** pasan a un `publicId` (UUID v7) con índice único, y sus
+DTOs dejan de llevar `id`/`orderId`; **las categorías** ganan `slug` (inmutable, como el de
+producto), con `GET /category/slug/{slug}` y `GET /product/category/slug/{slug}`. El catálogo
+conserva su `id` en las rutas de admin: es público y no filtra nada.
+
+🔴 **EF volvió a generar la migración mal**, igual que el día anterior: 96 órdenes con el mismo
+`Guid.Empty` y un índice único encima. Reordenada a mano: columnas → relleno (`NEWID()`, copia de
+`OrderPublicId`, slug colapsando espacios en T-SQL) → índices. Antes de aplicarla se miró la
+base: 158 categorías, todas con letras, dígitos y espacios, 0 colisiones de slug, 0 pagos.
+
+⚠️ `number` y `reference` siguen siendo secuenciales: ya no enumeran, pero dejan estimar el
+volumen. Queda como decisión del owner.
+
+**Verificado ejecutando** contra la base de desarrollo migrada:
+
+| Prueba | Resultado |
+|---|---|
+| Los 158 slugs rellenados en SQL | iguales a `Slugs.From` en los 158 |
+| `GET /category/slug/…` y `/product/category/slug/…` anónimos | 200, con `categorySlug` |
+| `POST /order` | 201, `Location` con el UUID v7, sin `id` en el cuerpo |
+| `GET /order/{publicId}` · `GET /order/{su PK}` | 200 · **404** |
+| receipt · `PATCH status` · `POST /payment {orderPublicId}` por `publicId` | 409 `receipt_not_ready` · 409 `invalid_transition` · 503 `no_payment_provider` (sin Stripe) |
+| `POST /payment` sin `orderPublicId` | 400 de validación |
+
+Suite **385/385** (+8), build limpio con `-warnaserror`. De paso: `GetProductsForCategoryAsync`
+ordenaba sin desempate por PK (CLAUDE.md §9).
+
 
 ### 2026-09-13 — La IP del host cambió: `192.168.3.82` → `192.168.3.76`
 

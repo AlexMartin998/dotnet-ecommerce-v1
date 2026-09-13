@@ -38,6 +38,13 @@ public class Order : IAuditable
 {
   public int Id { get; set; }
 
+  /// <summary>Identificador de las rutas públicas. La clave primaria no sale de la base.</summary>
+  /// <remarks>
+  /// UUID v7: no se puede enumerar como un entero, y al ordenarse por tiempo no fragmenta
+  /// el índice único con cada INSERT.
+  /// </remarks>
+  public Guid PublicId { get; set; } = Guid.CreateVersion7();
+
   /// <summary>Número legible (<c>ORD-2026-000012</c>). Es lo que cita el cliente.</summary>
   /// <remarks>
   /// Columna real con índice único, no una propiedad calculada: se busca por él.

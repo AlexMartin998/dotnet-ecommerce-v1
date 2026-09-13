@@ -2,6 +2,8 @@ using ApiEcommerce.Shared.Paging;
 using ApiEcommerce.Shared.Crud;
 using ApiEcommerce.Features.Catalog.Dtos;
 using ApiEcommerce.Features.Catalog.Models;
+using ApiEcommerce.Features.Catalog.Repository;
+using ApiEcommerce.Exceptions;
 
 namespace ApiEcommerce.Features.Catalog.Service;
 
@@ -13,10 +15,17 @@ namespace ApiEcommerce.Features.Catalog.Service;
 public class CategoryService : ICategoryService
 {
   private readonly ICrudService<CategoryDto, CreateCategoryDto, UpdateCategoryDto> _crud;
+  private readonly ICategoryRepository _repository;
+  private readonly IEntityMapper<Category, CategoryDto, CreateCategoryDto, UpdateCategoryDto> _mapper;
 
-  public CategoryService(ICrudService<CategoryDto, CreateCategoryDto, UpdateCategoryDto> crud)
+  public CategoryService(
+      ICrudService<CategoryDto, CreateCategoryDto, UpdateCategoryDto> crud,
+      ICategoryRepository repository,
+      IEntityMapper<Category, CategoryDto, CreateCategoryDto, UpdateCategoryDto> mapper)
   {
     _crud = crud;
+    _repository = repository;
+    _mapper = mapper;
   }
 
   // ---- CRUD delegado ------------------------------------------------------
@@ -40,7 +49,10 @@ public class CategoryService : ICategoryService
       => _crud.DeleteAsync(id, ct);
 
   // ---- operaciones propias de Category ------------------------------------
-  // (por ahora ninguna)
+
+  public async Task<CategoryDto> GetBySlugAsync(string slug, CancellationToken ct = default)
+      => _mapper.ToDto(await _repository.GetBySlugAsync(slug, ct)
+          ?? throw new NotFoundAppException("Category", slug));
 }
 
 

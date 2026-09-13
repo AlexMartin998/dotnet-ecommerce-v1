@@ -6,8 +6,10 @@ namespace ApiEcommerce.Features.Payments.Dtos;
 /// <summary>Lo que manda el cliente para empezar a pagar una orden.</summary>
 public class StartPaymentDto
 {
-  [Range(1, int.MaxValue)]
-  public int OrderId { get; set; }
+  /// <summary>El <c>publicId</c> de la orden.</summary>
+  /// <remarks>Nullable con <c>[Required]</c>: sin él es un 400, no un 404 contra <c>Guid.Empty</c>.</remarks>
+  [Required]
+  public Guid? OrderPublicId { get; set; }
 
   /// <summary>Con qué se paga (<c>stripe</c>). Lo elige el comprador, no el servidor.</summary>
   [Required]
@@ -19,9 +21,10 @@ public class StartPaymentDto
 /// <summary>Un pago, tal y como lo ve el cliente.</summary>
 public record PaymentDto
 {
-  public int Id { get; set; }
+  /// <summary>El identificador de las rutas (<c>/payment/{publicId}</c>).</summary>
+  public Guid PublicId { get; set; }
   public string Reference { get; set; } = string.Empty;
-  public int OrderId { get; set; }
+  public Guid OrderPublicId { get; set; }
   public string OrderNumber { get; set; } = string.Empty;
   public string BuyerUserId { get; set; } = string.Empty;
   public string Provider { get; set; } = string.Empty;

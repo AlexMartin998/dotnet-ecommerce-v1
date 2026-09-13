@@ -39,12 +39,18 @@ public class Payment : IAuditable
 {
   public int Id { get; set; }
 
+  /// <summary>Identificador de las rutas públicas. UUID v7, igual que <c>Order.PublicId</c>.</summary>
+  public Guid PublicId { get; set; } = Guid.CreateVersion7();
+
   /// <summary>Referencia legible (<c>PAY-2026-000012</c>). Es lo que cita el cliente.</summary>
   [Required]
   [MaxLength(32)]
   public required string Reference { get; set; }
 
   public int OrderId { get; set; }
+
+  /// <summary>Copiado de la orden, como el número: el cliente solo conoce este.</summary>
+  public Guid OrderPublicId { get; set; }
 
   /// <summary>Copiado de la orden para no tener que unirla en cada listado.</summary>
   [Required]

@@ -16,7 +16,7 @@ public interface IPaymentRepository
   void Add(Payment payment);
 
   /// <summary>Un pago del comprador. La de otro es indistinguible de una que no existe.</summary>
-  Task<Payment?> FindForBuyerAsync(int id, string buyerUserId, CancellationToken ct = default);
+  Task<Payment?> FindForBuyerAsync(Guid publicId, string buyerUserId, CancellationToken ct = default);
 
   /// <summary>El pago que la pasarela identifica con ese id, o <c>null</c> si no lo conocemos.</summary>
   Task<Payment?> FindByProviderIdAsync(

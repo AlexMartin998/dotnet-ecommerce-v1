@@ -28,6 +28,10 @@ public sealed class CachedCategoryService(ICategoryService inner, ICacheService 
   public Task<CategoryDto> GetByIdAsync(int id, CancellationToken ct = default)
       => cache.GetOrSetAsync(CatalogCacheKeys.Category(id), token => inner.GetByIdAsync(id, token), Ttl, ct);
 
+  // Sin cache: el slug no cambia, pero el nombre sí, y la invalidación solo conoce el id.
+  public Task<CategoryDto> GetBySlugAsync(string slug, CancellationToken ct = default)
+      => inner.GetBySlugAsync(slug, ct);
+
   // Las páginas no se cachean: cada combinación de page/pageSize sería una clave que
   // ninguna invalidación conoce, y eso exigiría invalidar por prefijo.
   public Task<PagedResult<CategoryDto>> GetPagedAsync(PageQuery query, CancellationToken ct = default)

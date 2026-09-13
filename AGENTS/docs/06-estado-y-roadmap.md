@@ -12,7 +12,7 @@ paginación y seeding.
 | `AppDbContext` + migraciones | ✅ | 14 migraciones aplicadas (la última, `UniqueEmailAndSessionRevocationIndex`); auditoría automática en `SaveChangesAsync` |
 | `IEntity` / `IAuditable` | ✅ | implementadas por `Category` y `Product`; sin reflexión en los genéricos |
 | `IBaseRepository<T>` / `BaseRepository<T>` | ✅ | `where T : class, IEntity`, `CancellationToken`, orden genérico por `CreatedAt` |
-| `CategoryRepository` | ✅ | `NameExistsAsync(excludeId)`, `HasProductsAsync` |
+| `CategoryRepository` | ✅ | `NameExistsAsync(excludeId)`, `SlugExistsAsync`, `GetBySlugAsync`, `HasProductsAsync` |
 | `ProductRepository` | ✅ | lecturas con `Include(Category)`, `GetBySkuAsync`, `SkuExistsAsync`, búsqueda |
 | Registro DI de `IProductRepository` | ✅ | corregido |
 | `ICrudService` / `CrudService` (DTO-facing) | ✅ | `sealed`, compuesto, sin reflexión |
@@ -375,7 +375,7 @@ arreglar → reemitir → la orden vuelve a `available` con su PDF.
 [`planning/24`](../planning/24_paridad-con-tesloshop.md). De la comparación con un e-commerce
 Next.js con panel de administración salieron tres huecos, ya cerrados: **cotizar el carrito**
 (`POST /cart/quote`, anónimo y sin apartar stock), **mover la orden** por su ciclo de entrega
-(`PATCH /order/{id}/status`, UPDATE condicional sin `Idempotency-Key`) y **los contadores del
+(`PATCH /order/{publicId}/status`, UPDATE condicional sin `Idempotency-Key`) y **los contadores del
 panel**, uno por contexto en vez de un `/admin/dashboard` que obligaría a un slice a conocer a
 los otros tres.
 
@@ -394,6 +394,18 @@ desbloquea poder cancelar una orden ya pagada.
 junto al borrado lógico que lo hace viable. ⚠️ Y trajo una consecuencia que conviene conocer:
 **dos productos ya no pueden llamarse igual**, porque el slug se deriva del nombre y es único
 entre los productos vivos.
+
+### Paso 14 — Identificadores públicos no enumerables — ✅ **hecho** (2026-09-13)
+
+[`planning/25`](../planning/25_identificadores-publicos.md), pedido por el front. **Órdenes y
+pagos** se citan por un `publicId` (UUID v7) y la clave primaria deja de salir en sus DTOs;
+**las categorías** ganan `slug`, igual que los productos. La PK sigue siendo la PK: una
+columna aparte con índice único, no un cambio que obligaría a reescribir las FK.
+
+⚠️ **Lo que queda abierto a propósito**: `number` (`ORD-2026-…`) y `reference` (`PAY-2026-…`)
+siguen saliendo de una secuencia. Ya no enumeran nada (no son ruta), pero dejan **estimar el
+volumen** de ventas. Cambiarlos es decisión del owner: son lo que cita el cliente y lo que va
+impreso en el comprobante.
 
 ## Cómo mantener este documento
 

@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using ApiEcommerce.Shared.Auth;
 using ApiEcommerce.Shared.Http;
 using ApiEcommerce.Shared.Paging;
@@ -64,6 +65,20 @@ public class CategoryController : ControllerBase
         // GetByIdAsync lanza NotFoundAppException si no existe -> 404
         var category = await _service.GetByIdAsync(id, ct);
         return Ok(category);
+    }
+
+    /// <summary>La categoría por su slug, que es lo que el front usa en la URL pública.</summary>
+    [AllowAnonymous]
+    [HttpGet("slug/{slug}", Name = "GetCategoryBySlug")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<CategoryDto>> GetCategoryBySlug(
+        [StringLength(60, MinimumLength = 1)] string slug, CancellationToken ct)
+    {
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        return Ok(await _service.GetBySlugAsync(slug, ct));
     }
 
     [Authorize(Roles = Roles.Admin)]

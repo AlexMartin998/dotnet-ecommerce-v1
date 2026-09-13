@@ -25,7 +25,7 @@ public interface IOrderRepository
   /// El filtro por comprador va en la consulta y no en un <c>if</c> posterior: "existe pero
   /// no puedes verla" ya filtra que existe.
   /// </remarks>
-  Task<Order?> FindForBuyerAsync(int id, string buyerUserId, CancellationToken ct = default);
+  Task<Order?> FindForBuyerAsync(Guid publicId, string buyerUserId, CancellationToken ct = default);
 
   /// <summary>Una orden con sus líneas, sin filtrar por comprador. Para el generador.</summary>
   Task<Order?> FindWithItemsAsync(int id, CancellationToken ct = default);
@@ -64,6 +64,10 @@ public interface IOrderRepository
   Task<bool> TryTransitionAsync(
       int orderId, OrderStatus from, OrderStatus to, CancellationToken ct = default);
 
+  /// <summary>Igual que la de arriba, con la orden citada por su identificador público.</summary>
+  Task<bool> TryTransitionAsync(
+      Guid publicId, OrderStatus from, OrderStatus to, CancellationToken ct = default);
+
   /// <summary>Cuántas órdenes hay en cada estado, en una sola consulta.</summary>
   /// <remarks>Se cuenta en la base: traer las filas para contarlas no escala con la tabla.</remarks>
   Task<IReadOnlyDictionary<OrderStatus, int>> CountByStatusAsync(CancellationToken ct = default);
@@ -73,7 +77,7 @@ public interface IOrderRepository
   /// Solo se consulta cuando el UPDATE condicional no movió nada, para distinguir «ya
   /// estaba ahí» de «venía de otro estado». Nunca para decidir antes de escribir.
   /// </remarks>
-  Task<OrderStatus?> FindStatusAsync(int orderId, CancellationToken ct = default);
+  Task<OrderStatus?> FindStatusAsync(Guid publicId, CancellationToken ct = default);
 
   /// <summary>Órdenes que siguen esperando pago desde antes del corte.</summary>
   /// <remarks>Por lotes: el recolector no puede traerse la tabla entera.</remarks>

@@ -1,5 +1,6 @@
 using ApiEcommerce.Features.Catalog.Dtos;
 using ApiEcommerce.Features.Catalog.Models;
+using ApiEcommerce.Features.Catalog.Service;
 using ApiEcommerce.Shared.Crud;
 using Riok.Mapperly.Abstractions;
 
@@ -23,6 +24,8 @@ public partial class CategoryMapper
   {
     var entity = Build(dto);
     entity.Name = entity.Name.Trim();
+    // El DTO solo admite letras, dígitos y espacios, así que el slug nunca sale vacío.
+    entity.Slug = Slugs.From(entity.Name) ?? string.Empty;
 
     return entity;
   }
@@ -33,6 +36,7 @@ public partial class CategoryMapper
     ArgumentNullException.ThrowIfNull(dto);
     ArgumentNullException.ThrowIfNull(entity);
 
+    // El slug NO se actualiza: cambiarlo rompería los enlaces que ya circulan.
     entity.Name = dto.Name?.Trim() ?? entity.Name;
     entity.Description = dto.Description ?? entity.Description;
   }
@@ -42,6 +46,7 @@ public partial class CategoryMapper
   [MapperIgnoreTarget(nameof(Category.Id))]
   [MapperIgnoreTarget(nameof(Category.CreatedAt))]
   [MapperIgnoreTarget(nameof(Category.UpdatedAt))]
+  [MapperIgnoreTarget(nameof(Category.Slug))]
   private partial Category Build(CreateCategoryDto dto);
 
 }

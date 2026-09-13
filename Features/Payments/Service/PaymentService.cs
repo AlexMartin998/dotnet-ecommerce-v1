@@ -36,9 +36,12 @@ public sealed class PaymentService(
 
     return runner.RunAsync(intent, dto, async token =>
     {
-      var order = await orders.FindPayableAsync(dto.OrderId, buyerUserId, token)
+      // [Required] lo garantiza en HTTP; el Value lanzaría ante un llamador que se lo salte.
+      var orderPublicId = dto.OrderPublicId!.Value;
+
+      var order = await orders.FindPayableAsync(orderPublicId, buyerUserId, token)
           // 404 y no 403: la orden de otro es indistinguible de una que no existe.
-          ?? throw new NotFoundAppException("Order", dto.OrderId.ToString());
+          ?? throw new NotFoundAppException("Order", orderPublicId);
 
       if (order.AlreadyPaid)
         throw new ConflictAppException($"Order '{order.Number}' is not awaiting payment.");
@@ -50,6 +53,7 @@ public sealed class PaymentService(
       {
         Reference = $"PAY-{DateTime.Now:yyyy}-{await repository.NextReferenceAsync(token):D6}",
         OrderId = order.Id,
+        OrderPublicId = order.PublicId,
         OrderNumber = order.Number,
         BuyerUserId = buyerUserId,
         Provider = provider,
@@ -127,9 +131,9 @@ public sealed class PaymentService(
   }
 
   public async Task<PaymentDto> GetForBuyerAsync(
-      int id, string buyerUserId, CancellationToken ct = default)
-      => ToDto(await repository.FindForBuyerAsync(id, buyerUserId, ct)
-               ?? throw new NotFoundAppException("Payment", id.ToString()));
+      Guid publicId, string buyerUserId, CancellationToken ct = default)
+      => ToDto(await repository.FindForBuyerAsync(publicId, buyerUserId, ct)
+               ?? throw new NotFoundAppException("Payment", publicId));
 
   public async Task<PagedResult<PaymentDto>> GetPagedForBuyerAsync(
       PageQuery query, string buyerUserId, CancellationToken ct = default)
@@ -216,9 +220,9 @@ public sealed class PaymentService(
 
   private static PaymentDto ToDto(Payment payment) => new()
   {
-    Id = payment.Id,
+    PublicId = payment.PublicId,
     Reference = payment.Reference,
-    OrderId = payment.OrderId,
+    OrderPublicId = payment.OrderPublicId,
     OrderNumber = payment.OrderNumber,
     BuyerUserId = payment.BuyerUserId,
     Provider = payment.Provider.ToString().ToLowerInvariant(),

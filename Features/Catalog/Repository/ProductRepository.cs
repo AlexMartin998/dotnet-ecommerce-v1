@@ -60,6 +60,7 @@ public class ProductRepository(AppDbContext db)
         .Include(p => p.Images)
         .Where(p => p.CategoryId == categoryId)
         .OrderByDescending(p => p.CreatedAt)
+        .ThenByDescending(p => p.Id)   // CreatedAt no es único: sin desempate el orden no es estable
         .ToListAsync(ct);
   }
 

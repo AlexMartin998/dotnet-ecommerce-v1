@@ -13,6 +13,7 @@ namespace ApiEcommerce.Features.Catalog.Models;
 /// un 409 con mensaje útil, pero entre ella y el INSERT cabe otra petición.
 /// </remarks>
 [Index(nameof(Name), IsUnique = true)]
+[Index(nameof(Slug), IsUnique = true)]
 public class Category : IAuditable
 {
 
@@ -24,6 +25,11 @@ public class Category : IAuditable
   [Required]
   [MaxLength(50)]
   public required string Name { get; set; }
+
+  /// <summary>Identificador de la URL pública. Sale del nombre al crearla y no cambia.</summary>
+  [Required]
+  [MaxLength(60)]
+  public string Slug { get; set; } = string.Empty;
 
   [MaxLength(200)]
   public string? Description { get; set; }

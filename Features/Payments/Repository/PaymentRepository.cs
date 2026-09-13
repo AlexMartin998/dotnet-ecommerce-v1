@@ -24,10 +24,10 @@ public sealed class PaymentRepository(AppDbContext db) : IPaymentRepository
 
   public void Add(Payment payment) => db.Payments.Add(payment);
 
-  public Task<Payment?> FindForBuyerAsync(int id, string buyerUserId, CancellationToken ct = default)
+  public Task<Payment?> FindForBuyerAsync(Guid publicId, string buyerUserId, CancellationToken ct = default)
       => db.Payments
           .AsNoTracking()
-          .FirstOrDefaultAsync(p => p.Id == id && p.BuyerUserId == buyerUserId, ct);
+          .FirstOrDefaultAsync(p => p.PublicId == publicId && p.BuyerUserId == buyerUserId, ct);
 
   public Task<Payment?> FindByProviderIdAsync(
       PaymentProvider provider, string providerPaymentId, CancellationToken ct = default)

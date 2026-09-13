@@ -146,7 +146,7 @@ public class StorefrontCatalogTests(ApiFactory factory)
 
     // Y la orden sigue contando lo que se compró, con sus datos congelados.
     var placed = await order.Content.ReadFromJsonAsync<JsonElement>();
-    var orderId = placed.GetProperty("id").GetInt32();
+    var orderId = placed.PublicId();
 
     var reread = await buyer.GetFromJsonAsync<JsonElement>($"/api/v1/order/{orderId}");
     Assert.Equal(sku, reread.GetProperty("items")[0].GetProperty("sku").GetString());
@@ -213,7 +213,90 @@ public class StorefrontCatalogTests(ApiFactory factory)
     Assert.Equal("not_found", quote.GetProperty("items")[0].GetProperty("status").GetString());
   }
 
+  // ---- slug de categoría ---------------------------------------------------
+
+  [Fact]
+  public async Task ACategoryIsServedByTheSlugDerivedFromItsName()
+  {
+    using var admin = await factory.AsAdminAsync();
+    var suffix = Guid.NewGuid().ToString("N")[..8];
+    var id = await CreateCategoryAsync(admin, $"Ropa  Hombre {suffix}");
+
+    // Una tanda de espacios da un solo guion, igual que en los productos.
+    var expected = $"ropa-hombre-{suffix}";
+
+    using var anonymous = factory.Anonymous();
+    var bySlug = await anonymous.GetFromJsonAsync<JsonElement>($"/api/v1/category/slug/{expected}");
+
+    Assert.Equal(id, bySlug.GetProperty("id").GetInt32());
+    Assert.Equal(expected, bySlug.GetProperty("slug").GetString());
+  }
+
+  [Fact]
+  public async Task AnUnknownCategorySlugIs404()
+  {
+    using var anonymous = factory.Anonymous();
+
+    Assert.Equal(HttpStatusCode.NotFound,
+        (await anonymous.GetAsync($"/api/v1/category/slug/no-existe-{Guid.NewGuid():N}")).StatusCode);
+    Assert.Equal(HttpStatusCode.NotFound,
+        (await anonymous.GetAsync($"/api/v1/product/category/slug/no-existe-{Guid.NewGuid():N}")).StatusCode);
+  }
+
+  [Fact]
+  public async Task RenamingACategoryDoesNotChangeItsSlug()
+  {
+    // Cambiarlo rompería los enlaces que ya circulan.
+    using var admin = await factory.AsAdminAsync();
+    var suffix = Guid.NewGuid().ToString("N")[..8];
+    var id = await CreateCategoryAsync(admin, $"Original {suffix}");
+
+    var patch = await admin.PatchAsJsonAsync($"/api/v1/category/{id}", new { name = $"Renombrada {suffix}" });
+    Assert.Equal(HttpStatusCode.NoContent, patch.StatusCode);
+
+    var category = await admin.GetFromJsonAsync<JsonElement>($"/api/v1/category/{id}");
+
+    Assert.Equal($"Renombrada {suffix}", category.GetProperty("name").GetString());
+    Assert.Equal($"original-{suffix}", category.GetProperty("slug").GetString());
+  }
+
+  [Fact]
+  public async Task TwoNamesThatGiveTheSameSlugConflict()
+  {
+    // El nombre es único, pero "A B" y "A  B" no chocan en ese índice y sí en el del slug.
+    using var admin = await factory.AsAdminAsync();
+    var suffix = Guid.NewGuid().ToString("N")[..8];
+    await CreateCategoryAsync(admin, $"Ropa Hombre {suffix}");
+
+    var response = await admin.PostAsJsonAsync("/api/v1/category", new { name = $"Ropa  Hombre {suffix}" });
+
+    Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+  }
+
+  [Fact]
+  public async Task TheProductsOfACategoryAreServedByItsSlug()
+  {
+    using var admin = await factory.AsAdminAsync();
+    var (productId, _) = await CreateAsync(admin);
+
+    var product = await admin.GetFromJsonAsync<JsonElement>($"/api/v1/product/{productId}");
+    var categorySlug = product.GetProperty("categorySlug").GetString();
+
+    using var anonymous = factory.Anonymous();
+    var products = await anonymous.GetFromJsonAsync<JsonElement>($"/api/v1/product/category/slug/{categorySlug}");
+
+    Assert.Contains(products.EnumerateArray(), p => p.GetProperty("id").GetInt32() == productId);
+  }
+
   // ---- helpers -------------------------------------------------------------
+
+  private static async Task<int> CreateCategoryAsync(HttpClient admin, string name)
+  {
+    var response = await admin.PostAsJsonAsync("/api/v1/category", new { name });
+    response.EnsureSuccessStatusCode();
+
+    return int.Parse(response.Headers.Location!.Segments[^1]);
+  }
 
   private static async Task<HttpResponseMessage> PostAsync(
       HttpClient admin, string? name = null, string? slug = null, string? sku = null,

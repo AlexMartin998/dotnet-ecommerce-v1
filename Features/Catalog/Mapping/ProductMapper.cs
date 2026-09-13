@@ -16,6 +16,7 @@ public partial class ProductMapper
   /// <inheritdoc />
   // CategoryName viaja plano porque la navegación puede venir sin cargar.
   [MapProperty("Category.Name", nameof(ProductDto.CategoryName))]
+  [MapProperty("Category.Slug", nameof(ProductDto.CategorySlug))]
   [MapperIgnoreSource(nameof(Product.DeletedAt))]
   public partial ProductDto ToDto(Product entity);
 

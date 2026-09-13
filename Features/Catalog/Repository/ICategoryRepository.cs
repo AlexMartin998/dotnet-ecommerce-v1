@@ -12,6 +12,12 @@ public interface ICategoryRepository : IBaseRepository<Category>
   Task<bool> NameExistsAsync(string name, int? excludeId = null, CancellationToken ct = default);
 
 
+  /// <summary>¿Hay ya una categoría con ese slug?</summary>
+  Task<bool> SlugExistsAsync(string slug, CancellationToken ct = default);
+
+  /// <summary>La categoría con ese slug, o <c>null</c>.</summary>
+  Task<Category?> GetBySlugAsync(string slug, CancellationToken ct = default);
+
   /// <summary>¿La categoría tiene productos asociados?</summary>
   Task<bool> HasProductsAsync(int categoryId, CancellationToken ct = default);
 

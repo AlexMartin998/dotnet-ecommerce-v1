@@ -54,6 +54,12 @@ public class PaymentsTests(ApiFactory factory) : IDisposable
     Assert.Equal("stripe", payment.GetProperty("provider").GetString());
     Assert.Equal(order.Total, payment.GetProperty("amount").GetDecimal());
 
+    // Lo público es el publicId: la clave primaria no sale de la base.
+    Assert.Equal(order.Id, payment.GetProperty("orderPublicId").GetGuid());
+    Assert.NotEqual(Guid.Empty, payment.PublicId());
+    Assert.False(payment.TryGetProperty("id", out _));
+    Assert.False(payment.TryGetProperty("orderId", out _));
+
     // Sin el clientSecret el front no puede confirmar nada; y NO se persiste.
     Assert.False(string.IsNullOrWhiteSpace(payment.GetProperty("clientSecret").GetString()));
   }
@@ -97,13 +103,30 @@ public class PaymentsTests(ApiFactory factory) : IDisposable
   }
 
   [Fact]
+  public async Task WithoutTheOrderPublicIdTheBodyIsInvalid()
+  {
+    // Sin [Required] sobre un Guid? llegaría Guid.Empty y saldría un 404 engañoso.
+    var (buyer, _) = await AnOrderAsync();
+
+    using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/payment")
+    {
+      Content = JsonContent.Create(new { provider = "stripe" })
+    };
+    request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+
+    var response = await buyer.SendAsync(request);
+
+    Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+  }
+
+  [Fact]
   public async Task AnUnknownProviderIs400AndSaysWhichOnesExist()
   {
     var (buyer, order) = await AnOrderAsync();
 
     using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/payment")
     {
-      Content = JsonContent.Create(new { orderId = order.Id, provider = "bitcoin" })
+      Content = JsonContent.Create(new { orderPublicId = order.Id, provider = "bitcoin" })
     };
 
     var response = await buyer.SendAsync(request);
@@ -214,7 +237,7 @@ public class PaymentsTests(ApiFactory factory) : IDisposable
 
     Assert.Contains(
         mine.GetProperty("items").EnumerateArray(),
-        p => p.GetProperty("id").GetInt32() == payment.GetProperty("id").GetInt32());
+        p => p.PublicId() == payment.PublicId());
   }
 
   [Fact]
@@ -227,7 +250,7 @@ public class PaymentsTests(ApiFactory factory) : IDisposable
 
   // ---- helpers -------------------------------------------------------------
 
-  private async Task<(HttpClient Buyer, (int Id, decimal Total) Order)> AnOrderAsync()
+  private async Task<(HttpClient Buyer, (Guid Id, decimal Total) Order)> AnOrderAsync()
   {
     using var admin = await factory.AsAdminAsync();
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
@@ -251,7 +274,7 @@ public class PaymentsTests(ApiFactory factory) : IDisposable
 
     var order = await response.Content.ReadFromJsonAsync<JsonElement>();
 
-    return (buyer, (order.GetProperty("id").GetInt32(), order.GetProperty("total").GetDecimal()));
+    return (buyer, (order.PublicId(), order.GetProperty("total").GetDecimal()));
   }
 
   private static async Task RegisterAsync(HttpClient client)
@@ -273,7 +296,7 @@ public class PaymentsTests(ApiFactory factory) : IDisposable
     client.DefaultRequestHeaders.Authorization = new("Bearer", body.GetProperty("token").GetString());
   }
 
-  private async Task<JsonElement> StartAsync(HttpClient buyer, int orderId, string? key = null)
+  private async Task<JsonElement> StartAsync(HttpClient buyer, Guid orderId, string? key = null)
   {
     var response = await PostStartAsync(buyer, orderId, key);
 
@@ -283,11 +306,11 @@ public class PaymentsTests(ApiFactory factory) : IDisposable
   }
 
   private async Task<HttpResponseMessage> PostStartAsync(
-      HttpClient buyer, int orderId, string? key = null)
+      HttpClient buyer, Guid orderId, string? key = null)
   {
     using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/payment")
     {
-      Content = JsonContent.Create(new { orderId, provider = "stripe" })
+      Content = JsonContent.Create(new { orderPublicId = orderId, provider = "stripe" })
     };
 
     request.Headers.Add("Idempotency-Key", key ?? Guid.NewGuid().ToString());
@@ -318,13 +341,11 @@ public class PaymentsTests(ApiFactory factory) : IDisposable
 
   private static async Task<string?> PaymentStatusAsync(HttpClient buyer, JsonElement payment)
   {
-    var id = payment.GetProperty("id").GetInt32();
-
-    return (await buyer.GetFromJsonAsync<JsonElement>($"/api/v1/payment/{id}"))
+    return (await buyer.GetFromJsonAsync<JsonElement>($"/api/v1/payment/{payment.PublicId()}"))
         .GetProperty("status").GetString();
   }
 
-  private static async Task<string?> OrderStatusAsync(HttpClient buyer, int orderId)
+  private static async Task<string?> OrderStatusAsync(HttpClient buyer, Guid orderId)
       => (await buyer.GetFromJsonAsync<JsonElement>($"/api/v1/order/{orderId}"))
           .GetProperty("status").GetString();
 

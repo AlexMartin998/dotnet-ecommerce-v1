@@ -120,6 +120,16 @@ public class ProductService : IProductService
     return [.. products.Select(_mapper.ToDto)];
   }
 
+  public async Task<IEnumerable<ProductDto>> GetForCategorySlugAsync(
+      string categorySlug, CancellationToken ct = default)
+  {
+    var category = await _categoryRepository.GetBySlugAsync(categorySlug, ct)
+        ?? throw new NotFoundAppException("Category", categorySlug);
+
+    var products = await _repository.GetProductsForCategoryAsync(category.Id, ct);
+    return [.. products.Select(_mapper.ToDto)];
+  }
+
   public async Task<IEnumerable<ProductDto>> SearchAsync(string name, CancellationToken ct = default)
   {
     var products = await _repository.SearchProductAsync(name, ct);

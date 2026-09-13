@@ -7,7 +7,7 @@ namespace ApiEcommerce.Features.Payments.Ports;
 /// porque la orden cambie después.
 /// </remarks>
 public readonly record struct PayableOrder(
-    int Id, string Number, decimal Total, string Currency, bool AlreadyPaid);
+    int Id, Guid PublicId, string Number, decimal Total, string Currency, bool AlreadyPaid);
 
 
 /// <summary>Lo único de Payments que conoce el contexto de órdenes.</summary>
@@ -19,5 +19,5 @@ public interface IOrderingGateway
 {
   /// <summary>La orden de ese comprador, o <c>null</c> si no existe o no es suya.</summary>
   Task<PayableOrder?> FindPayableAsync(
-      int orderId, string buyerUserId, CancellationToken ct = default);
+      Guid orderPublicId, string buyerUserId, CancellationToken ct = default);
 }

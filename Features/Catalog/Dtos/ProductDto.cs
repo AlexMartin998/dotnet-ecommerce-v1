@@ -36,6 +36,7 @@ public class ProductDto
   // Se expone el id, no la navegación: el nombre viaja plano porque lo necesita el listado.
   public int CategoryId { get; set; }
   public string? CategoryName { get; set; }
+  public string? CategorySlug { get; set; }
 
 
   /// <summary>

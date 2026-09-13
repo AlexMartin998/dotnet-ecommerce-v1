@@ -145,6 +145,20 @@ public class ProductController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>Productos de una categoría, citada por su slug como en la URL pública.</summary>
+    [AllowAnonymous]
+    [HttpGet("category/slug/{categorySlug}", Name = "GetProductsForCategorySlug")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<IEnumerable<ProductDto>>> GetProductsForCategorySlug(
+        [StringLength(60, MinimumLength = 1)] string categorySlug, CancellationToken ct)
+    {
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
+        return Ok(await _service.GetForCategorySlugAsync(categorySlug, ct));
+    }
+
     /// <summary>Búsqueda por nombre. Sin resultados devuelve 200 con lista vacía, no 404.</summary>
     [AllowAnonymous]
     [HttpGet("search", Name = "SearchProducts")]

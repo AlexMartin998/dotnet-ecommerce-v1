@@ -86,7 +86,8 @@ public class OrderItemDto
 /// <summary>Una orden, como la ve su comprador.</summary>
 public class OrderDto
 {
-  public int Id { get; set; }
+  /// <summary>El identificador de las rutas (<c>/order/{publicId}</c>).</summary>
+  public Guid PublicId { get; set; }
   public string Number { get; set; } = string.Empty;
   public string Status { get; set; } = string.Empty;
   public string Currency { get; set; } = string.Empty;

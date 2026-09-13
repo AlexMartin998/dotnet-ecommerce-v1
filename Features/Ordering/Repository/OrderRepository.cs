@@ -25,11 +25,11 @@ public sealed class OrderRepository(AppDbContext db) : IOrderRepository
 
   public void Add(Order order) => db.Orders.Add(order);
 
-  public Task<Order?> FindForBuyerAsync(int id, string buyerUserId, CancellationToken ct = default)
+  public Task<Order?> FindForBuyerAsync(Guid publicId, string buyerUserId, CancellationToken ct = default)
       => db.Orders
           .AsNoTracking()
           .Include(o => o.Items)
-          .FirstOrDefaultAsync(o => o.Id == id && o.BuyerUserId == buyerUserId, ct);
+          .FirstOrDefaultAsync(o => o.PublicId == publicId && o.BuyerUserId == buyerUserId, ct);
 
   public Task<Order?> FindWithItemsAsync(int id, CancellationToken ct = default)
       => db.Orders
@@ -94,10 +94,10 @@ public sealed class OrderRepository(AppDbContext db) : IOrderRepository
           .Select(g => new { Status = g.Key, Count = g.Count() })
           .ToDictionaryAsync(x => x.Status, x => x.Count, ct);
 
-  public async Task<OrderStatus?> FindStatusAsync(int orderId, CancellationToken ct = default)
+  public async Task<OrderStatus?> FindStatusAsync(Guid publicId, CancellationToken ct = default)
       => await db.Orders
           .AsNoTracking()
-          .Where(o => o.Id == orderId)
+          .Where(o => o.PublicId == publicId)
           .Select(o => (OrderStatus?)o.Status)
           .FirstOrDefaultAsync(ct);
 
@@ -106,14 +106,22 @@ public sealed class OrderRepository(AppDbContext db) : IOrderRepository
   /// La condición va DENTRO del UPDATE: leer el estado y escribir después dejaría hueco a
   /// que un webhook y el recolector movieran la misma orden a la vez.
   /// </remarks>
-  public async Task<bool> TryTransitionAsync(
+  public Task<bool> TryTransitionAsync(
       int orderId, OrderStatus from, OrderStatus target, CancellationToken ct = default)
+      => TransitionAsync(db.Orders.Where(o => o.Id == orderId), from, target, ct);
+
+  public Task<bool> TryTransitionAsync(
+      Guid publicId, OrderStatus from, OrderStatus target, CancellationToken ct = default)
+      => TransitionAsync(db.Orders.Where(o => o.PublicId == publicId), from, target, ct);
+
+  private static async Task<bool> TransitionAsync(
+      IQueryable<Order> order, OrderStatus from, OrderStatus target, CancellationToken ct)
   {
     // Fuera del árbol de expresión: dentro, DateTime.Now se traduciría a GETDATE().
     var now = DateTime.Now;
 
-    var affected = await db.Orders
-        .Where(o => o.Id == orderId && o.Status == from)
+    var affected = await order
+        .Where(o => o.Status == from)
         .ExecuteUpdateAsync(setters => setters
             .SetProperty(o => o.Status, target)
             .SetProperty(o => o.UpdatedAt, now), ct);

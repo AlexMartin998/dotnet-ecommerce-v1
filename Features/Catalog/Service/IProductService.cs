@@ -17,6 +17,9 @@ public interface IProductService
   /// <summary>Productos de una categoría. Si la categoría no existe, lanza <c>NotFoundAppException</c>.</summary>
   Task<IEnumerable<ProductDto>> GetForCategoryAsync(int categoryId, CancellationToken ct = default);
 
+  /// <summary>Productos de la categoría con ese slug. Si no existe, lanza <c>NotFoundAppException</c>.</summary>
+  Task<IEnumerable<ProductDto>> GetForCategorySlugAsync(string categorySlug, CancellationToken ct = default);
+
   /// <summary>Búsqueda por coincidencia parcial de nombre. Sin resultados devuelve lista vacía, no 404.</summary>
   Task<IEnumerable<ProductDto>> SearchAsync(string name, CancellationToken ct = default);
 

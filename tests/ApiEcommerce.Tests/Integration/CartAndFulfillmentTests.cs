@@ -98,7 +98,7 @@ public class CartAndFulfillmentTests(ApiFactory factory)
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 5);
 
     using var buyer = await factory.AsNewUserAsync();
-    var id = (await PlaceAsync(buyer, (sku, 1))).GetProperty("id").GetInt32();
+    var id = (await PlaceAsync(buyer, (sku, 1))).PublicId();
 
     var response = await buyer.PatchAsJsonAsync(
         $"/api/v1/order/{id}/status", new { status = "preparing" });
@@ -115,7 +115,7 @@ public class CartAndFulfillmentTests(ApiFactory factory)
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 5);
 
     using var buyer = await factory.AsNewUserAsync();
-    var id = (await PlaceAsync(buyer, (sku, 1))).GetProperty("id").GetInt32();
+    var id = (await PlaceAsync(buyer, (sku, 1))).PublicId();
 
     var response = await admin.PatchAsJsonAsync(
         $"/api/v1/order/{id}/status", new { status = "preparing" });
@@ -133,7 +133,7 @@ public class CartAndFulfillmentTests(ApiFactory factory)
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 5);
 
     using var buyer = await factory.AsNewUserAsync();
-    var id = (await PlaceAsync(buyer, (sku, 1))).GetProperty("id").GetInt32();
+    var id = (await PlaceAsync(buyer, (sku, 1))).PublicId();
     await MarkPaidAsync(id);
 
     foreach (var step in new[] { "preparing", "shipped", "delivered" })
@@ -160,7 +160,7 @@ public class CartAndFulfillmentTests(ApiFactory factory)
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 5);
 
     using var buyer = await factory.AsNewUserAsync();
-    var id = (await PlaceAsync(buyer, (sku, 1))).GetProperty("id").GetInt32();
+    var id = (await PlaceAsync(buyer, (sku, 1))).PublicId();
     await MarkPaidAsync(id);
 
     await admin.PatchAsJsonAsync($"/api/v1/order/{id}/status", new { status = "preparing" });
@@ -177,7 +177,7 @@ public class CartAndFulfillmentTests(ApiFactory factory)
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 5);
 
     using var buyer = await factory.AsNewUserAsync();
-    var id = (await PlaceAsync(buyer, (sku, 1))).GetProperty("id").GetInt32();
+    var id = (await PlaceAsync(buyer, (sku, 1))).PublicId();
     await MarkPaidAsync(id);
 
     // Simultáneas, no en fila: es la única forma de que aparezca un read-then-write.
@@ -198,7 +198,7 @@ public class CartAndFulfillmentTests(ApiFactory factory)
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 5);
 
     using var buyer = await factory.AsNewUserAsync();
-    var id = (await PlaceAsync(buyer, (sku, 1))).GetProperty("id").GetInt32();
+    var id = (await PlaceAsync(buyer, (sku, 1))).PublicId();
 
     // `paid` lo mueve un cobro capturado, nunca un administrador.
     var response = await admin.PatchAsJsonAsync(
@@ -282,7 +282,7 @@ public class CartAndFulfillmentTests(ApiFactory factory)
     return await response.Content.ReadFromJsonAsync<JsonElement>();
   }
 
-  private static async Task<string?> StatusOf(HttpClient client, int orderId)
+  private static async Task<string?> StatusOf(HttpClient client, Guid orderId)
       => (await client.GetFromJsonAsync<JsonElement>($"/api/v1/order/{orderId}"))
           .GetProperty("status").GetString();
 
@@ -302,7 +302,7 @@ public class CartAndFulfillmentTests(ApiFactory factory)
   /// Pone la orden en <c>paid</c> por el mismo camino que el cobro: la transición
   /// condicional del repositorio. Sin broker en el host de tests, es la mitad determinista.
   /// </summary>
-  private async Task MarkPaidAsync(int orderId)
+  private async Task MarkPaidAsync(Guid orderId)
   {
     using var scope = factory.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -310,7 +310,7 @@ public class CartAndFulfillmentTests(ApiFactory factory)
     var now = DateTime.Now;
 
     await db.Orders
-        .Where(o => o.Id == orderId && o.Status == OrderStatus.Placed)
+        .Where(o => o.PublicId == orderId && o.Status == OrderStatus.Placed)
         .ExecuteUpdateAsync(setters => setters
             .SetProperty(o => o.Status, OrderStatus.Paid)
             .SetProperty(o => o.UpdatedAt, now));

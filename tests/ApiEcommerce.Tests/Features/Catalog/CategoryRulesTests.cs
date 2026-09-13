@@ -45,10 +45,27 @@ public class CategoryRulesTests
   {
     _repository.Setup(r => r.NameExistsAsync("Bebidas", null, It.IsAny<CancellationToken>()))
                .ReturnsAsync(false);
+    _repository.Setup(r => r.SlugExistsAsync("bebidas", It.IsAny<CancellationToken>()))
+               .ReturnsAsync(false);
 
     await Sut().EnsureCanCreateAsync(new CreateCategoryDto { Name = "Bebidas" });
 
     _repository.VerifyAll();
+  }
+
+  [Fact]
+  public async Task EnsureCanCreateAsync_WhenTheDerivedSlugIsTaken_ThrowsConflict()
+  {
+    // "Ropa  Hombre" pasa el índice del nombre, pero su slug es el de "Ropa Hombre".
+    _repository.Setup(r => r.NameExistsAsync("Ropa  Hombre", null, It.IsAny<CancellationToken>()))
+               .ReturnsAsync(false);
+    _repository.Setup(r => r.SlugExistsAsync("ropa-hombre", It.IsAny<CancellationToken>()))
+               .ReturnsAsync(true);
+
+    var ex = await Assert.ThrowsAsync<ConflictAppException>(
+        () => Sut().EnsureCanCreateAsync(new CreateCategoryDto { Name = "Ropa  Hombre" }));
+
+    Assert.Contains("ropa-hombre", ex.Message);
   }
 
   // ---- actualizar ---------------------------------------------------------

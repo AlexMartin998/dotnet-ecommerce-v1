@@ -105,11 +105,11 @@ public static class DataSeeder
 
     var categories = new List<Category>
     {
-      new() { Name = "Electronica", Description = "Telefonos, portatiles y accesorios" },
-      new() { Name = "Ropa", Description = "Prendas y complementos" },
-      new() { Name = "Hogar", Description = "Menaje y decoracion" },
-      new() { Name = "Deportes", Description = "Material deportivo" },
-      new() { Name = "Libros", Description = "Papel y digital" }
+      new() { Name = "Electronica", Slug = Slugs.From("Electronica")!, Description = "Telefonos, portatiles y accesorios" },
+      new() { Name = "Ropa", Slug = Slugs.From("Ropa")!, Description = "Prendas y complementos" },
+      new() { Name = "Hogar", Slug = Slugs.From("Hogar")!, Description = "Menaje y decoracion" },
+      new() { Name = "Deportes", Slug = Slugs.From("Deportes")!, Description = "Material deportivo" },
+      new() { Name = "Libros", Slug = Slugs.From("Libros")!, Description = "Papel y digital" }
     };
 
     db.Categories.AddRange(categories);

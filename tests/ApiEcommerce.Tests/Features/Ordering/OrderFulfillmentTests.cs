@@ -20,6 +20,8 @@ public class OrderFulfillmentTests
 {
   private readonly Mock<IOrderRepository> _repository = new();
 
+  private static readonly Guid Order = Guid.CreateVersion7();
+
   private OrderService Sut() => new(
       _repository.Object,
       Mock.Of<ICatalogGateway>(),
@@ -28,12 +30,12 @@ public class OrderFulfillmentTests
       NullLogger<OrderService>.Instance);
 
   private void TransitionSucceeds(OrderStatus from, OrderStatus to)
-      => _repository.Setup(r => r.TryTransitionAsync(7, from, to, It.IsAny<CancellationToken>()))
+      => _repository.Setup(r => r.TryTransitionAsync(Order, from, to, It.IsAny<CancellationToken>()))
                     .ReturnsAsync(true);
 
   private void NothingMoves()
       => _repository.Setup(r => r.TryTransitionAsync(
-              It.IsAny<int>(), It.IsAny<OrderStatus>(), It.IsAny<OrderStatus>(),
+              It.IsAny<Guid>(), It.IsAny<OrderStatus>(), It.IsAny<OrderStatus>(),
               It.IsAny<CancellationToken>()))
           .ReturnsAsync(false);
 
@@ -50,10 +52,10 @@ public class OrderFulfillmentTests
   {
     TransitionSucceeds(from, to);
 
-    await Sut().AdvanceAsync(7, To(target));
+    await Sut().AdvanceAsync(Order, To(target));
 
     // El origen lo pone el servidor: si viniera del cliente se podría saltar un paso.
-    _repository.Verify(r => r.TryTransitionAsync(7, from, to, It.IsAny<CancellationToken>()), Times.Once);
+    _repository.Verify(r => r.TryTransitionAsync(Order, from, to, It.IsAny<CancellationToken>()), Times.Once);
   }
 
   [Fact]
@@ -61,7 +63,7 @@ public class OrderFulfillmentTests
   {
     TransitionSucceeds(OrderStatus.Paid, OrderStatus.Preparing);
 
-    await Sut().AdvanceAsync(7, To("PREPARING"));
+    await Sut().AdvanceAsync(Order, To("PREPARING"));
   }
 
   [Fact]
@@ -71,10 +73,10 @@ public class OrderFulfillmentTests
     // saltarse un paso. Y leer después, si movió, es un viaje de más.
     TransitionSucceeds(OrderStatus.Paid, OrderStatus.Preparing);
 
-    await Sut().AdvanceAsync(7, To("preparing"));
+    await Sut().AdvanceAsync(Order, To("preparing"));
 
     _repository.Verify(
-        r => r.FindStatusAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        r => r.FindStatusAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
   }
 
   // ---- los tres casos en que el UPDATE no mueve nada ------------------------
@@ -85,21 +87,21 @@ public class OrderFulfillmentTests
     // Reenviar la misma transición no es un error: es un duplicado, y por eso este endpoint
     // no necesita Idempotency-Key.
     NothingMoves();
-    _repository.Setup(r => r.FindStatusAsync(7, It.IsAny<CancellationToken>()))
+    _repository.Setup(r => r.FindStatusAsync(Order, It.IsAny<CancellationToken>()))
                .ReturnsAsync(OrderStatus.Shipped);
 
-    await Sut().AdvanceAsync(7, To("shipped"));
+    await Sut().AdvanceAsync(Order, To("shipped"));
   }
 
   [Fact]
   public async Task AdvanceAsync_FromTheWrongState_Conflicts()
   {
     NothingMoves();
-    _repository.Setup(r => r.FindStatusAsync(7, It.IsAny<CancellationToken>()))
+    _repository.Setup(r => r.FindStatusAsync(Order, It.IsAny<CancellationToken>()))
                .ReturnsAsync(OrderStatus.Placed);
 
     var error = await Assert.ThrowsAsync<CustomAppException>(
-        () => Sut().AdvanceAsync(7, To("preparing")));
+        () => Sut().AdvanceAsync(Order, To("preparing")));
 
     Assert.Equal("invalid_transition", error.Code);
   }
@@ -108,10 +110,10 @@ public class OrderFulfillmentTests
   public async Task AdvanceAsync_OnAnOrderThatDoesNotExist_IsNotFound()
   {
     NothingMoves();
-    _repository.Setup(r => r.FindStatusAsync(7, It.IsAny<CancellationToken>()))
+    _repository.Setup(r => r.FindStatusAsync(Order, It.IsAny<CancellationToken>()))
                .ReturnsAsync((OrderStatus?)null);
 
-    await Assert.ThrowsAsync<NotFoundAppException>(() => Sut().AdvanceAsync(7, To("preparing")));
+    await Assert.ThrowsAsync<NotFoundAppException>(() => Sut().AdvanceAsync(Order, To("preparing")));
   }
 
   // ---- destinos que un administrador no alcanza ----------------------------
@@ -125,13 +127,13 @@ public class OrderFulfillmentTests
   public async Task AdvanceAsync_WithAnUnreachableTarget_IsABadRequest(string target)
   {
     var error = await Assert.ThrowsAsync<BadOperationAppException>(
-        () => Sut().AdvanceAsync(7, To(target)));
+        () => Sut().AdvanceAsync(Order, To(target)));
 
     // Enumera los válidos, igual que con los proveedores de pago.
     Assert.Contains("preparing", error.Message);
 
     _repository.Verify(
-        r => r.TryTransitionAsync(It.IsAny<int>(), It.IsAny<OrderStatus>(),
+        r => r.TryTransitionAsync(It.IsAny<Guid>(), It.IsAny<OrderStatus>(),
                                   It.IsAny<OrderStatus>(), It.IsAny<CancellationToken>()),
         Times.Never);
   }

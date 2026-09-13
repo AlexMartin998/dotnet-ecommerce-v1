@@ -20,6 +20,11 @@ public sealed class CategoryRules(ICategoryRepository repository)
   {
     if (await repository.NameExistsAsync(dto.Name, ct: ct))
       throw new ConflictAppException($"Category '{dto.Name}' already exists.");
+
+    // Solo choca con nombres que difieren en espacios: el nombre ya es único.
+    if (Slugs.From(dto.Name) is { } slug && await repository.SlugExistsAsync(slug, ct))
+      throw new ConflictAppException(
+          $"The slug '{slug}', derived from the category name, is already in use.");
   }
 
   public async Task EnsureCanUpdateAsync(

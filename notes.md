@@ -4552,3 +4552,56 @@ public ICollection<ProductImage> Images { ... } // tabla: cada una tiene orden y
        y de toda la reserva, que es la parte mas cuidada del repo. **La tienda de origen
        tampoco lo hace**
   - -- ⭐ la regla: traer una *feature* de otro proyecto no es traer su *modelo*
+
+
+
+
+
+
+## 47. Identificadores publicos  <- la PK no sale de la base
+
+- --- ⭐ **El problema: un entero en la URL se puede ir sumando**
+```
+/cuenta/pedidos/71  ->  prueba 72, 73...  (enumeracion / IDOR)
+```
+  - -- el 404 para la orden ajena ya impedia LEERLA, pero no **medir el volumen**: el id que te
+       dan al comprar hoy y el de dentro de una semana dicen cuantas ventas hubo en medio
+  - -- la solucion NO es cambiar la PK: una columna aparte con indice unico. Las FK, los
+       eventos (`OrderPaid.OrderId`) y los UPDATE internos siguen en `int`
+```cs
+public Guid PublicId { get; set; } = Guid.CreateVersion7();   // .NET 9
+modelBuilder.Entity<Order>().HasIndex(o => o.PublicId).IsUnique();
+[HttpGet("{publicId:guid}")]   // el entero ya ni casa con la ruta -> 404
+```
+
+- --- **v7 y no v4** (`Guid.NewGuid()` es v4)
+  - -- v4 es aleatorio entero: cada INSERT cae en un sitio random del indice y lo **fragmenta**
+  - -- v7 lleva el milisegundo delante: se inserta casi al final, como un IDENTITY. Filtra
+       la hora de creacion, que la orden ya expone en `placedAt`; el volumen no (74 bits random)
+  - -- ⚠️ T-SQL no genera v7: las filas viejas se rellenaron con `NEWID()` (v4). Da igual, lo
+       historico no se inserta mas
+
+- --- ⚠️ **Lo que NO arregla**: `ORD-2026-000071` sigue saliendo de una SECUENCIA
+  - -- ya no enumera (no es ruta de nada), pero sigue dejando **estimar** el volumen
+  - -- es lo que cita el cliente y va impreso en el PDF: cambiarlo es decision de negocio
+
+- --- ⭐ **`Guid?` + `[Required]`, no `Guid`**
+```cs
+[Required] public Guid  OrderPublicId { get; set; }   // MAL: sin el campo llega Guid.Empty -> 404 enganoso
+[Required] public Guid? OrderPublicId { get; set; }   // BIEN: sin el campo -> 400 de validacion
+```
+  - -- `[Required]` sobre un tipo de valor **no valida nada**: nunca es null
+
+- --- 🔴 **EF genero la migracion MAL otra vez, igual que en el cap. 46**
+```
+AddColumn PublicId ... defaultValue: 00000000-0000-...   -> 96 ordenes con el MISMO guid
+CreateIndex IX_Orders_PublicId unique                      -> revienta
+```
+  - -- el arreglo es el mismo, el ORDEN: columnas -> `UPDATE` de relleno -> indices unicos
+  - -- el slug de categoria se relleno en T-SQL sin regex: el truco de colapsar espacios
+```sql
+REPLACE(REPLACE(REPLACE(Name, ' ', '<>'), '><', ''), '<>', '-')   -- "a   b" -> "a-b"
+```
+  - -- ⚠️ solo vale porque el DTO de categoria solo admite letras, digitos y espacios. **Se
+       comprobo contra la base ANTES** (158 nombres, 0 raros, 0 colisiones) y **despues**
+       (los 158 slugs iguales a los de `Slugs.From`)

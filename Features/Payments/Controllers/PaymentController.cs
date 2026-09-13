@@ -60,18 +60,18 @@ public class PaymentController : ControllerBase
 
         return CreatedAtRoute(
             "GetPayment",
-            new { version = HttpContext.ApiVersionValue(), id = outcome.Result.Id },
+            new { version = HttpContext.ApiVersionValue(), publicId = outcome.Result.PublicId },
             outcome.Result);
     }
 
     /// <summary>Un pago del comprador autenticado.</summary>
-    [HttpGet("{id:int}", Name = "GetPayment")]
+    [HttpGet("{publicId:guid}", Name = "GetPayment")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<PaymentDto>> GetPayment(int id, CancellationToken ct)
+    public async Task<ActionResult<PaymentDto>> GetPayment(Guid publicId, CancellationToken ct)
         // El pago de otro devuelve 404, no 403.
-        => Ok(await _service.GetForBuyerAsync(id, User.GetRequiredUserId(), ct));
+        => Ok(await _service.GetForBuyerAsync(publicId, User.GetRequiredUserId(), ct));
 
     /// <summary>Los pagos del comprador, del más reciente al más antiguo.</summary>
     [HttpGet("paged", Name = "GetPaymentsPaged")]

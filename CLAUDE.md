@@ -293,13 +293,13 @@ Rutas **versionadas por segmento**: `[Route("api/v{version:apiVersion}/[controll
 
 | Controller | Endpoints |
 |---|---|
-| `CategoryController` | CRUD + `/paged`. Lecturas anónimas, escrituras `admin` |
-| `ProductController` | CRUD + `/paged` + `/category/{id}` + `/search` + **`GET /slug/{slug}`** + `POST`/`DELETE /{id}/image` + `GET /stats` (`admin`) + **`POST /buy`** |
+| `CategoryController` | CRUD + `/paged` + **`GET /slug/{slug}`**. Lecturas anónimas, escrituras `admin` |
+| `ProductController` | CRUD + `/paged` + `/category/{id}` + `/category/slug/{slug}` + `/search` + **`GET /slug/{slug}`** + `POST`/`DELETE /{id}/image` + `GET /stats` (`admin`) + **`POST /buy`** |
 | `AuthController` | `register`, `login`, `refresh`, `logout`, `logout-all`, `password`, `me` |
 | `UserController` | listado, detalle, roles, bloqueo, `GET /stats` — todo `admin` |
 | `CartController` | **`POST /cart/quote`** — cotiza el carrito. **Anónimo**: existe antes que la sesión |
-| `OrderController` | `POST /order`, `GET /{id}`, `GET /paged`, **`GET /{id}/receipt`** (PDF), `GET /all` + `GET /stats` + **`PATCH /{id}/status`** (`admin`) |
-| `PaymentController` | `POST /payment`, `GET /{id}`, `GET /paged`, `GET /all` (`admin`) |
+| `OrderController` | `POST /order`, `GET /{publicId}`, `GET /paged`, **`GET /{publicId}/receipt`** (PDF), `GET /all` + `GET /stats` + **`PATCH /{publicId}/status`** (`admin`) |
+| `PaymentController` | `POST /payment`, `GET /{publicId}`, `GET /paged`, `GET /all` (`admin`) |
 | `PaymentWebhookController` | `POST /payment/webhook/{provider}` — **anónimo: la firma es la autenticación** |
 | `DeadLetterController` | `GET /dead-letter`, `POST /{queue}/replay` — solo `admin` |
 | `HealthController` | `GET /health` — `[ApiVersionNeutral]` |
@@ -313,6 +313,11 @@ Rutas **versionadas por segmento**: `[Route("api/v{version:apiVersion}/[controll
   (`HttpContext.ApiVersionValue()`), o el `Location` falla con un 500 sin relación.
 - Swagger genera **un documento por versión descubierta**, así que añadir una v2 no toca
   `Program.cs`.
+
+⚠️ **Órdenes y pagos se citan por `publicId` (UUID v7), nunca por la clave primaria**, que no
+sale en ningún DTO: con un entero en la ruta se enumeran recursos de terceros. La PK sigue
+siendo la de las FK, los eventos y los UPDATE internos. El catálogo sí expone su `id` (es
+público) y lee por **slug**; `number`/`reference` siguen siendo secuenciales (§ `memory.md`).
 
 ⚠️ **Retirar un producto es un borrado LÓGICO** (`DeletedAt` + filtro global). `OrderItems`
 tiene clave foránea a `Products`, así que un borrado real fallaría o dejaría la línea
@@ -332,7 +337,7 @@ stock vuelve **marcada dentro de un 200**, no como 409 — el front tiene que po
 ⚠️ **El desglose lo calcula UNA pieza** (`OrderPricing`), que usan la cotización y
 `OrderService`. Calcularlo en los dos sitios es cómo se acaba cobrando un total distinto del
 que el cliente vio; es el bug conocido del proyecto del que se trajo esta feature.
-⚠️ **`PATCH /order/{id}/status` no lleva `Idempotency-Key`, y es correcto**: la transición es
+⚠️ **`PATCH /order/{publicId}/status` no lleva `Idempotency-Key`, y es correcto**: la transición es
 un UPDATE condicional (`WHERE Status = @origen`), así que reenviarla no repite nada. 0 filas
 → se relee: si ya estaba en el destino es un reenvío (**204**), si no, **409
 `invalid_transition`**. Solo `paid → preparing → shipped → delivered`; cancelar y reembolsar

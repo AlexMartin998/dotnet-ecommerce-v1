@@ -145,7 +145,7 @@ public class OrphanReceiptCollectorTests(ApiFactory factory)
 
   // ---- helpers -------------------------------------------------------------
 
-  private static async Task<int> PlaceOrderAsync(HttpClient client, string sku)
+  private async Task<int> PlaceOrderAsync(HttpClient client, string sku)
   {
     var response = await client.PostAsJsonAsync("/api/v1/order", new
     {
@@ -155,8 +155,9 @@ public class OrphanReceiptCollectorTests(ApiFactory factory)
 
     response.EnsureSuccessStatusCode();
 
-    return (await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>())
-        .GetProperty("id").GetInt32();
+    var publicId = (await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>()).PublicId();
+
+    return await factory.OrderIdAsync(publicId);
   }
 
   private async Task<string?> ReceiptKeyOf(int orderId)

@@ -115,7 +115,7 @@ public class OrderingTests(ApiFactory factory)
     var first = await PlaceAsync(user, [(sku, 2)], key);
     var second = await PlaceAsync(user, [(sku, 2)], key);
 
-    Assert.Equal(first.GetProperty("id").GetInt32(), second.GetProperty("id").GetInt32());
+    Assert.Equal(first.PublicId(), second.PublicId());
 
     // Lo que de verdad importa no es el id repetido, es que solo se cobró una vez.
     Assert.Equal(8, await StockOf(admin, sku));
@@ -136,12 +136,33 @@ public class OrderingTests(ApiFactory factory)
 
     using var owner = await factory.AsNewUserAsync();
     var order = await PlaceAsync(owner, [(sku, 1)]);
-    var id = order.GetProperty("id").GetInt32();
+    var publicId = order.PublicId();
 
     using var stranger = await factory.AsNewUserAsync();
 
-    Assert.Equal(HttpStatusCode.NotFound, (await stranger.GetAsync($"/api/v1/order/{id}")).StatusCode);
-    Assert.Equal(HttpStatusCode.NotFound, (await stranger.GetAsync($"/api/v1/order/{id}/receipt")).StatusCode);
+    Assert.Equal(HttpStatusCode.NotFound, (await stranger.GetAsync($"/api/v1/order/{publicId}")).StatusCode);
+    Assert.Equal(HttpStatusCode.NotFound, (await stranger.GetAsync($"/api/v1/order/{publicId}/receipt")).StatusCode);
+  }
+
+  [Fact]
+  public async Task TheOrderIsIdentifiedByItsPublicIdAndNeverByItsPrimaryKey()
+  {
+    // Con la clave primaria en la ruta basta con sumar uno para descubrir órdenes.
+    using var admin = await factory.AsAdminAsync();
+    var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
+
+    using var user = await factory.AsNewUserAsync();
+    using var response = await user.PostAsJsonAsync("/api/v1/order", Body([(sku, 1)]));
+    var order = await response.Content.ReadFromJsonAsync<JsonElement>();
+    var publicId = order.PublicId();
+
+    Assert.False(order.TryGetProperty("id", out _));
+    Assert.EndsWith($"/order/{publicId}", response.Headers.Location?.ToString(), StringComparison.OrdinalIgnoreCase);
+    Assert.Equal(HttpStatusCode.OK, (await user.GetAsync($"/api/v1/order/{publicId}")).StatusCode);
+
+    // La clave primaria ni siquiera casa con la ruta: la restricción es :guid.
+    var id = await factory.OrderIdAsync(publicId);
+    Assert.Equal(HttpStatusCode.NotFound, (await user.GetAsync($"/api/v1/order/{id}")).StatusCode);
   }
 
   [Fact]
@@ -149,8 +170,8 @@ public class OrderingTests(ApiFactory factory)
   {
     using var anonymous = factory.Anonymous();
 
-    Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/v1/order/1")).StatusCode);
-    Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/v1/order/1/receipt")).StatusCode);
+    Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync($"/api/v1/order/{Guid.NewGuid()}")).StatusCode);
+    Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync($"/api/v1/order/{Guid.NewGuid()}/receipt")).StatusCode);
     Assert.Equal(HttpStatusCode.Unauthorized,
         (await anonymous.PostAsJsonAsync("/api/v1/order", Body([("X", 1)]))).StatusCode);
   }
@@ -195,9 +216,9 @@ public class OrderingTests(ApiFactory factory)
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
 
     using var user = await factory.AsNewUserAsync();
-    var id = (await PlaceAsync(user, [(sku, 1)])).GetProperty("id").GetInt32();
+    var publicId = (await PlaceAsync(user, [(sku, 1)])).PublicId();
 
-    var response = await user.GetAsync($"/api/v1/order/{id}/receipt");
+    var response = await user.GetAsync($"/api/v1/order/{publicId}/receipt");
 
     // 409 y no 404: el documento EXISTIRÁ. Un 404 le diría al cliente que deje de pedirlo.
     Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
@@ -214,19 +235,20 @@ public class OrderingTests(ApiFactory factory)
 
     using var user = await factory.AsNewUserAsync();
     var order = await PlaceAsync(user, [(sku, 2)]);
-    var id = order.GetProperty("id").GetInt32();
+    var publicId = order.PublicId();
+    var id = await factory.OrderIdAsync(publicId);
     var number = order.GetProperty("number").GetString();
 
     await GenerateReceiptAsync(id, number!);
 
     // Ahora la orden lo dice, que es lo que el cliente consulta para saber si puede bajar.
-    var refreshed = await user.GetFromJsonAsync<JsonElement>($"/api/v1/order/{id}");
+    var refreshed = await user.GetFromJsonAsync<JsonElement>($"/api/v1/order/{publicId}");
     Assert.Equal("available", refreshed.GetProperty("receiptStatus").GetString());
 
     // Y la clave del documento NO se expone: es un detalle del almacén.
     Assert.False(refreshed.TryGetProperty("receiptDocumentKey", out _));
 
-    var response = await user.GetAsync($"/api/v1/order/{id}/receipt");
+    var response = await user.GetAsync($"/api/v1/order/{publicId}/receipt");
 
     Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     Assert.Equal("application/pdf", response.Content.Headers.ContentType?.MediaType);
@@ -248,7 +270,8 @@ public class OrderingTests(ApiFactory factory)
 
     using var user = await factory.AsNewUserAsync();
     var order = await PlaceAsync(user, [(sku, 1)]);
-    var id = order.GetProperty("id").GetInt32();
+    var publicId = order.PublicId();
+    var id = await factory.OrderIdAsync(publicId);
     var number = order.GetProperty("number").GetString()!;
 
     await GenerateReceiptAsync(id, number);
@@ -271,9 +294,11 @@ public class OrderingTests(ApiFactory factory)
     using var user = await factory.AsNewUserAsync();
     var order = await PlaceAsync(user, [(sku, 1)]);
 
-    await GenerateReceiptAsync(order.GetProperty("id").GetInt32(), order.GetProperty("number").GetString()!);
+    var id = await factory.OrderIdAsync(order.PublicId());
 
-    var key = await DocumentKeyOf(order.GetProperty("id").GetInt32());
+    await GenerateReceiptAsync(id, order.GetProperty("number").GetString()!);
+
+    var key = await DocumentKeyOf(id);
 
     Assert.NotNull(key);
     Assert.DoesNotContain("App_Data", key);
@@ -294,7 +319,8 @@ public class OrderingTests(ApiFactory factory)
 
     using var user = await factory.AsNewUserAsync();
     var order = await PlaceAsync(user, [(sku, 1)]);
-    var id = order.GetProperty("id").GetInt32();
+    var publicId = order.PublicId();
+    var id = await factory.OrderIdAsync(publicId);
 
     var messageId = Guid.NewGuid();
 
@@ -318,7 +344,8 @@ public class OrderingTests(ApiFactory factory)
 
     using var user = await factory.AsNewUserAsync();
     var order = await PlaceAsync(user, [(sku, 1)]);
-    var id = order.GetProperty("id").GetInt32();
+    var publicId = order.PublicId();
+    var id = await factory.OrderIdAsync(publicId);
     var number = order.GetProperty("number").GetString()!;
 
     var messageId = Guid.NewGuid();
@@ -350,15 +377,16 @@ public class OrderingTests(ApiFactory factory)
     var sku = await AuthorizationTests.CreateProductAsync(admin, stock: 10);
 
     using var user = await factory.AsNewUserAsync();
-    var id = (await PlaceAsync(user, [(sku, 1)])).GetProperty("id").GetInt32();
+    var publicId = (await PlaceAsync(user, [(sku, 1)])).PublicId();
+    var id = await factory.OrderIdAsync(publicId);
 
     using (var scope = factory.Services.CreateScope())
       await scope.ServiceProvider.GetRequiredService<IOrderRepository>().SetReceiptFailedAsync(id);
 
-    var refreshed = await user.GetFromJsonAsync<JsonElement>($"/api/v1/order/{id}");
+    var refreshed = await user.GetFromJsonAsync<JsonElement>($"/api/v1/order/{publicId}");
     Assert.Equal("failed", refreshed.GetProperty("receiptStatus").GetString());
 
-    var response = await user.GetAsync($"/api/v1/order/{id}/receipt");
+    var response = await user.GetAsync($"/api/v1/order/{publicId}/receipt");
     var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
 
     Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
@@ -376,17 +404,18 @@ public class OrderingTests(ApiFactory factory)
 
     using var user = await factory.AsNewUserAsync();
     var order = await PlaceAsync(user, [(sku, 1)]);
-    var id = order.GetProperty("id").GetInt32();
+    var publicId = order.PublicId();
+    var id = await factory.OrderIdAsync(publicId);
 
     await GenerateReceiptAsync(id, order.GetProperty("number").GetString()!);
 
     using (var scope = factory.Services.CreateScope())
       await scope.ServiceProvider.GetRequiredService<IOrderRepository>().SetReceiptFailedAsync(id);
 
-    var refreshed = await user.GetFromJsonAsync<JsonElement>($"/api/v1/order/{id}");
+    var refreshed = await user.GetFromJsonAsync<JsonElement>($"/api/v1/order/{publicId}");
 
     Assert.Equal("available", refreshed.GetProperty("receiptStatus").GetString());
-    Assert.Equal(HttpStatusCode.OK, (await user.GetAsync($"/api/v1/order/{id}/receipt")).StatusCode);
+    Assert.Equal(HttpStatusCode.OK, (await user.GetAsync($"/api/v1/order/{publicId}/receipt")).StatusCode);
   }
 
   [Fact]
@@ -413,9 +442,9 @@ public class OrderingTests(ApiFactory factory)
     using var user = await factory.AsNewUserAsync();
     var order = await PlaceAsync(user, [(sku, 1)]);
 
-    await GenerateReceiptAsync(order.GetProperty("id").GetInt32(), order.GetProperty("number").GetString()!);
+    await GenerateReceiptAsync(await factory.OrderIdAsync(order.PublicId()), order.GetProperty("number").GetString()!);
 
-    var response = await user.GetAsync($"/api/v1/order/{order.GetProperty("id").GetInt32()}/receipt");
+    var response = await user.GetAsync($"/api/v1/order/{order.PublicId()}/receipt");
 
     Assert.True(response.Headers.CacheControl?.NoStore);
   }

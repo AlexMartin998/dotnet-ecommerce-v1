@@ -62,18 +62,18 @@ public class OrderController : ControllerBase
         // 201 con cuerpo: el cliente necesita número y totales para pintar la confirmación.
         return CreatedAtRoute(
             "GetOrder",
-            new { version = HttpContext.ApiVersionValue(), id = outcome.Result.Id },
+            new { version = HttpContext.ApiVersionValue(), publicId = outcome.Result.PublicId },
             outcome.Result);
     }
 
     /// <summary>Una orden del comprador autenticado.</summary>
-    [HttpGet("{id:int}", Name = "GetOrder")]
+    [HttpGet("{publicId:guid}", Name = "GetOrder")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<OrderDto>> GetOrder(int id, CancellationToken ct)
+    public async Task<ActionResult<OrderDto>> GetOrder(Guid publicId, CancellationToken ct)
         // La orden de otro devuelve 404, no 403: ver IOrderService.
-        => Ok(await _service.GetForBuyerAsync(id, User.GetRequiredUserId(), ct));
+        => Ok(await _service.GetForBuyerAsync(publicId, User.GetRequiredUserId(), ct));
 
     /// <summary>Las órdenes del comprador, de la más reciente a la más antigua.</summary>
     [HttpGet("paged", Name = "GetOrdersPaged")]
@@ -131,7 +131,7 @@ public class OrderController : ControllerBase
     /// que repetirla no repite nada y devuelve 204 igual.
     /// </remarks>
     [Authorize(Roles = Roles.Admin)]
-    [HttpPatch("{id:int}/status", Name = "UpdateOrderStatus")]
+    [HttpPatch("{publicId:guid}/status", Name = "UpdateOrderStatus")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -139,12 +139,12 @@ public class OrderController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> UpdateOrderStatus(
-        int id, [FromBody] UpdateOrderStatusDto dto, CancellationToken ct)
+        Guid publicId, [FromBody] UpdateOrderStatusDto dto, CancellationToken ct)
     {
         if (!ModelState.IsValid)
             return ValidationProblem(ModelState);
 
-        await _service.AdvanceAsync(id, dto, ct);
+        await _service.AdvanceAsync(publicId, dto, ct);
 
         return NoContent();
     }
@@ -155,16 +155,16 @@ public class OrderController : ControllerBase
     /// <c>wwwroot/</c>, su clave es aleatoria y esta acción comprueba de quién es la orden.
     /// Devuelve un <c>Stream</c> para no cargar el documento entero en memoria.
     /// </remarks>
-    [HttpGet("{id:int}/receipt", Name = "GetOrderReceipt")]
+    [HttpGet("{publicId:guid}/receipt", Name = "GetOrderReceipt")]
     [Produces("application/pdf")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     // 409 y no 404: el comprobante existirá, y un 404 diría al cliente que deje de pedirlo.
     [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public async Task<IActionResult> GetOrderReceipt(int id, CancellationToken ct)
+    public async Task<IActionResult> GetOrderReceipt(Guid publicId, CancellationToken ct)
     {
-        var receipt = await _service.GetReceiptAsync(id, User.GetRequiredUserId(), ct);
+        var receipt = await _service.GetReceiptAsync(publicId, User.GetRequiredUserId(), ct);
 
         // El documento lleva datos personales: `Authorization` ya descarta las caches
         // compartidas, pero no el disco del navegador, que conserva el PDF tras cerrar sesión.

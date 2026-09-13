@@ -25,7 +25,7 @@ public interface IOrderService
 
   /// <summary>Una orden del comprador. 404 si no es suya.</summary>
   /// <exception cref="Exceptions.NotFoundAppException">No existe, o no es de ese comprador.</exception>
-  Task<OrderDto> GetForBuyerAsync(int id, string buyerUserId, CancellationToken ct = default);
+  Task<OrderDto> GetForBuyerAsync(Guid publicId, string buyerUserId, CancellationToken ct = default);
 
   /// <summary>Las órdenes del comprador, de la más reciente a la más antigua.</summary>
   Task<PagedResult<OrderDto>> GetPagedForBuyerAsync(
@@ -53,7 +53,7 @@ public interface IOrderService
   /// <c>receipt_failed</c> si su generación falló (definitivo).
   /// </exception>
   Task<DocumentContent> GetReceiptAsync(
-      int orderId, string buyerUserId, CancellationToken ct = default);
+      Guid publicId, string buyerUserId, CancellationToken ct = default);
 
   /// <summary>Mueve una orden por su ciclo de vida de entrega. Solo para administradores.</summary>
   /// <remarks>
@@ -62,9 +62,9 @@ public interface IOrderService
   /// <c>order.shipped</c> y publicar sin cola que lo acepte agota el outbox en silencio.
   /// </remarks>
   /// <exception cref="Exceptions.BadOperationAppException">El destino no es alcanzable.</exception>
-  /// <exception cref="Exceptions.NotFoundAppException">No hay ninguna orden con ese id.</exception>
+  /// <exception cref="Exceptions.NotFoundAppException">No hay ninguna orden con ese publicId.</exception>
   /// <exception cref="Exceptions.ConflictAppException">La orden no venía del estado que ese destino exige.</exception>
-  Task AdvanceAsync(int orderId, UpdateOrderStatusDto dto, CancellationToken ct = default);
+  Task AdvanceAsync(Guid publicId, UpdateOrderStatusDto dto, CancellationToken ct = default);
 
   /// <summary>Contadores de órdenes por estado, para el panel. Solo administración.</summary>
   Task<OrderStatsDto> GetStatsAsync(CancellationToken ct = default);

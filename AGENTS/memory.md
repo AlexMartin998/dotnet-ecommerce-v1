@@ -14,6 +14,12 @@ nunca hace push (`rules.md` §12).
 
 ### Estado medido hoy (2026-09-13)
 
+**Lo último**: `planning/25` — **identificadores públicos**. Órdenes y pagos se citan por
+`publicId` (UUID v7) y la PK ya no sale en sus DTOs; categorías con `slug`. Migración
+`PublicIdentifiers` **aplicada** a la base de desarrollo (EF la generó mal otra vez: relleno
+antes de los índices únicos). **385/385 tests**. El contrato nuevo se le pasó al front
+(sesión `ecom_angular`).
+
 **La IP LAN del host cambió a `192.168.3.76`** (la `.82` ya no responde). Actualizados
 `appsettings.Development.json` (Redis, RabbitMQ) y la cadena de conexión en user-secrets.
 `dotnet build -warnaserror` **limpio**, API arrancada con `/health/ready` → `Healthy` y las
@@ -171,6 +177,7 @@ binding), pero se ven en la UI. Se borran a mano cuando estorben.
 | **Umbral de QuestPDF** | Community es gratis —también comercialmente— **por debajo de 1 M USD** de ingresos brutos anuales, con 90 días de transición. No es «gratis para siempre» |
 | **Subir la CI** | El workflow está commiteado pero **sin push**; falta activarlo y proteger la rama |
 | **Migrar a `net10.0`** | Hoy resuelto instalando el runtime 9 |
+| **`number`/`reference` secuenciales** | `ORD-2026-000071` y `PAY-2026-…` salen de una secuencia: tras `planning/25` ya no enumeran (no son ruta), pero dejan **estimar el volumen** de ventas. Van impresos en el comprobante; cambiarlos es decisión de negocio |
 | **IP del host en `appsettings.Development.json`** | Quedó `192.168.3.76` (antes `.82`: **ya cambió una vez por DHCP**) (la LAN del autor), que **cambia con DHCP**, en un fichero commiteado. `172.17.0.1` —la puerta del bridge— es estable desde el dev container. Decidir cuál se deja |
 
 ---

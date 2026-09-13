@@ -35,7 +35,7 @@ public interface IPaymentService
       CancellationToken ct = default);
 
   /// <exception cref="Exceptions.NotFoundAppException">No existe o no es suyo.</exception>
-  Task<PaymentDto> GetForBuyerAsync(int id, string buyerUserId, CancellationToken ct = default);
+  Task<PaymentDto> GetForBuyerAsync(Guid publicId, string buyerUserId, CancellationToken ct = default);
 
   Task<PagedResult<PaymentDto>> GetPagedForBuyerAsync(
       PageQuery query, string buyerUserId, CancellationToken ct = default);

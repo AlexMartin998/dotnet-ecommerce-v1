@@ -164,7 +164,7 @@ public class OrderPaymentTests(ApiFactory factory)
 
     var order = await response.Content.ReadFromJsonAsync<JsonElement>();
 
-    return (buyer, order.GetProperty("id").GetInt32(), order.GetProperty("number").GetString()!);
+    return (buyer, await factory.OrderIdAsync(order.PublicId()), order.GetProperty("number").GetString()!);
   }
 
   /// <summary>Entrega un <c>payment.captured</c> como lo entregaría el consumidor.</summary>
@@ -232,8 +232,8 @@ public class OrderPaymentTests(ApiFactory factory)
         .CountAsync();
   }
 
-  private static async Task<string?> StatusAsync(HttpClient buyer, int orderId)
-      => (await buyer.GetFromJsonAsync<JsonElement>($"/api/v1/order/{orderId}"))
+  private async Task<string?> StatusAsync(HttpClient buyer, int orderId)
+      => (await buyer.GetFromJsonAsync<JsonElement>($"/api/v1/order/{await factory.OrderPublicIdAsync(orderId)}"))
           .GetProperty("status").GetString();
 
   private static Task<int> StockOf(HttpClient admin, string sku)
