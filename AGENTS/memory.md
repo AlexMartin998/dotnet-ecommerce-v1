@@ -279,7 +279,7 @@ con otros proyectos, en la red `backend`:
 
 | Servicio | Host desde la app | Estado |
 |---|---|---|
-| `sqlserver_ecommerce` | `192.168.3.82,1434` · BD `ApiEcommerceNET8` | ✅ arriba · ⚠️ desde 2026-09-14 lo **comparte** `EcommerceApi` (sesión `api_clean`) con sus bases `EcommerceClean*`. Nuestros tests borran solo por nombre exacto (`ApiEcommerceNET8_Tests`, `_Tests_Rcsi`, `_Tests_RateLimit`): **nunca por patrón** |
+| `sqlserver_ecommerce` | `192.168.3.82,1434` · BD `ApiEcommerceNET8` | ✅ arriba · ⚠️ desde 2026-09-14 lo **comparte** `EcommerceApi` (sesión `api_clean`) con sus bases `EcommerceClean*`. Nuestros tests borran solo por nombre exacto (`ApiEcommerceNET8_Tests`, `_Tests_Rcsi`, `_Tests_RateLimit`): **nunca por patrón**. Acuerdo: **avisar a `api_clean` antes de lanzar la suite** y no correrla a la vez que la suya (la memoria del host no da); sus prefijos Redis son `ecommerce-clean:` / `ecommerce-clean-tests:` |
 | `redis_generic` | `192.168.3.82:6999` | ✅ arriba · `maxmemory 0` / `noeviction` |
 | `rabbitmq_generic` | `192.168.3.82:5672` | ✅ arriba (desde 2026-09-05; UI en `:15672`, guest/guest) |
 
