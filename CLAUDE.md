@@ -27,7 +27,7 @@ arquitectura**, antes de saltar a Clean Architecture, DDD táctico, hexagonal o 
 
 **Idioma** (`rules.md` §1): comentarios, XML docs, `AGENTS/**`, `notes.md` y este archivo en
 **español**; identificadores, rutas y nombres de tabla en **inglés**; mensajes de excepción
-de dominio en inglés (viajan al cliente); mensajes de commit en español.
+de dominio en inglés (viajan al cliente); mensajes de commit en **inglés**, Conventional Commits (§11).
 
 ## 2. Dónde vive la verdad
 
@@ -658,8 +658,13 @@ Para toda tarea no trivial: **spec → planning → código**.
 
 ### Versionado (`rules.md` §12)
 
-- El agente **sí** commitea, con mensaje en español que explique el **porqué** y liste lo
-  verificado. El agente **nunca** hace `git push` ni toca ramas remotas.
+- El agente **sí** commitea, en **inglés** y con **Conventional Commits**: `type(scope): subject`
+  en imperativo, máx. 72 caracteres, y como mucho un cuerpo de 1-3 líneas con el porqué. Lo
+  verificado va en `AGENTS/progress.md`, no en el mensaje. El agente **nunca** hace `git push`
+  ni toca ramas remotas.
+- 🔴 **Sin marcas de IA en los commits**: nada de `Co-Authored-By`, `Claude-Session` ni
+  menciones a Claude. Autor único: `Adrian <alextravc.342@gmail.com>` (config **local** del
+  repo; la cuenta del trabajo quedó fuera). El historial se reescribió así el 2026-09-14.
 - Se trabaja en `dev`, **nunca** directamente en `main`.
 - **`AGENTS/docs/06-estado-y-roadmap.md` y `AGENTS/progress.md` se actualizan en el MISMO
   commit** que el cambio que describen. Un roadmap desactualizado hace que quien lo lea

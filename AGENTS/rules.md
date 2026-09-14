@@ -20,7 +20,7 @@
   `ProductService.BuyAsync`, no `ServicioProducto.ComprarAsync`.
 - **Mensajes de excepción de dominio en inglés**: viajan al cliente en `ProblemDetails`
   y son parte del contrato de la API (`"Insufficient stock for SKU 'X'"`).
-- **Mensajes de commit en español.**
+- **Mensajes de commit en inglés**, con Conventional Commits (ver §12).
 
 ### 1.1 Los comentarios explican el PORQUÉ, y son BREVES
 
@@ -395,8 +395,11 @@ migración crea.
 **Práctica establecida en este repo** (a diferencia del repo de frontend del autor, donde
 el agente no commitea):
 
-- El agente **sí** hace `git commit`, con mensaje descriptivo en español que explique el
-  **porqué** y liste lo verificado.
+- El agente **sí** hace `git commit`, en **inglés** y con **Conventional Commits**:
+  `type(scope): subject` en imperativo, máx. 72 caracteres, y como mucho un cuerpo de 1-3
+  líneas con el porqué. Lo verificado va en `progress.md`, no en el mensaje.
+- **Sin marcas de IA**: ni `Co-Authored-By`, ni `Claude-Session`, ni menciones a Claude en el
+  mensaje. Autor único `Adrian <alextravc.342@gmail.com>`, fijado en la config local del repo.
 - El agente **nunca** hace `git push` ni toca ramas remotas.
 - Se trabaja en `dev`, **nunca directamente en `main`**.
 - Nada destructivo ni hacia fuera sin confirmación explícita.
